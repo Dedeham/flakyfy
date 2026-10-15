@@ -88,6 +88,7 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (TRANSITIONS_EXTENSION, &[TRANSITIONS_EXTENSION_VERSION]),
     (STATIONS_EXTENSION, &[STATIONS_EXTENSION_VERSION]),
     (PLACES_EXTENSION, &[PLACES_EXTENSION_VERSION]),
+    (ANIMATED_ART_EXTENSION, &[ANIMATED_ART_EXTENSION_VERSION]),
 ];
 
 /// The OpenSubsonic extension a client checks for before it offers imports (getImports,
@@ -123,6 +124,12 @@ pub const TRANSITIONS_EXTENSION_VERSION: i32 = 1;
 /// served as playlists.
 pub const STATIONS_EXTENSION: &str = "octoStations";
 pub const STATIONS_EXTENSION_VERSION: i32 = 1;
+
+/// getAnimatedArt, and `animatedArt` on getAlbum for an Octo app: an album's animated art from
+/// Apple Music, a square loop and a tall one, each an HLS playlist with a still frame and a
+/// background color. Listed while animated art is on.
+pub const ANIMATED_ART_EXTENSION: &str = "octoAnimatedArt";
+pub const ANIMATED_ART_EXTENSION_VERSION: i32 = 1;
 
 /// Fields only a file in the library can truthfully have.
 pub const FILE_ONLY_FIELDS: &[&str] = &[
@@ -668,6 +675,7 @@ impl SubsonicResponseBuilder {
             false,
             false,
             false,
+            false,
         )
     }
 
@@ -675,8 +683,9 @@ impl SubsonicResponseBuilder {
     /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
     /// discovery being off hides, octoRadioSources while radio can answer (`radio_sources`),
     /// octoTransitions while octo-sonic makes profiles (`transitions`), octoStations while
-    /// radio stations are served as playlists (`stations`), and octoPlaces while the place data
-    /// can be read (`places`).
+    /// radio stations are served as playlists (`stations`), octoPlaces while the place data
+    /// can be read (`places`), and octoAnimatedArt while animated art is on
+    /// (`animated_art`).
     pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
@@ -689,6 +698,7 @@ impl SubsonicResponseBuilder {
         transitions: bool,
         stations: bool,
         places: bool,
+        animated_art: bool,
     ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
         // octoLyrics is only listed while its lookups can run, so a client never offers a
@@ -705,6 +715,7 @@ impl SubsonicResponseBuilder {
             .filter(|(name, _)| transitions || *name != TRANSITIONS_EXTENSION)
             .filter(|(name, _)| stations || *name != STATIONS_EXTENSION)
             .filter(|(name, _)| places || *name != PLACES_EXTENSION)
+            .filter(|(name, _)| animated_art || *name != ANIMATED_ART_EXTENSION)
             .collect();
 
         if let Some(upstream) = upstream.filter(|u| !u.is_empty()) {

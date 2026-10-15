@@ -199,14 +199,29 @@ impl LastFmRadioStateStore {
             .collect()
     }
 
+    /// Listeners radio builds for: everyone but a listener cleared from the dashboard who has
+    /// not played since, who has nothing to build from.
     pub fn known_users(&self) -> Vec<String> {
         let mut guard = self.state.lock();
         let state = self.load_locked(&mut guard);
         state
             .users
             .values()
-            .map(|(_, user)| user.username.clone())
+            .filter_map(|(_, user)| {
+                let idle = user.history_cleared_utc.is_some() && user.plays.is_empty();
+                (!idle).then(|| user.username.clone())
+            })
             .collect()
+    }
+
+    /// Whether a starting profile may be learned for the listener: they have no plays and were
+    /// never cleared from the dashboard. Read in place, without copying the listener.
+    pub fn wants_starting_profile(&self, username: &str) -> bool {
+        let mut guard = self.state.lock();
+        let state = self.load_locked(&mut guard);
+        state
+            .get(&user_key(username))
+            .is_none_or(|user| user.plays.is_empty() && user.history_cleared_utc.is_none())
     }
 
     pub fn find_station(&self, username: &str, station_id: &str) -> Option<LastFmRadioStation> {
@@ -336,6 +351,16 @@ impl LastFmRadioStateStore {
         let state = self.load_locked(&mut guard);
         let now = self.clock.now();
         let user = get_or_create(state, username, now);
+        // Every refresh stamps its start (`mark_refreshing`). One that started before the
+        // listener was cleared built from the history that was dropped, so its result is
+        // discarded.
+        if let Some(cleared) = user.history_cleared_utc
+            && user
+                .last_refresh_attempt_utc
+                .is_none_or(|started| started <= cleared)
+        {
+            return;
+        }
         let existing = std::mem::take(&mut user.stations);
         let prior_of = |id: &str| existing.iter().find(|station| station.id == id);
         user.stations = stations
@@ -383,17 +408,24 @@ impl LastFmRadioStateStore {
         self.save_locked(state);
     }
 
+    /// Clears everything held for a listener (plays, stations, unplayable tracks, bans) but
+    /// keeps the entry, stamped `history_cleared_utc`. Dropping the entry instead let the next
+    /// playlist listing learn a starting profile from the listener's stars, which brought the
+    /// history back at once. False for an unknown listener.
     pub fn reset(&self, username: &str) -> bool {
         let mut guard = self.state.lock();
         let state = self.load_locked(&mut guard);
-        let removed = state
-            .users
-            .remove(&dotnet::ordinal_ignore_case_key(&user_key(username)))
-            .is_some();
-        if removed {
-            self.save_locked(state);
-        }
-        removed
+        let now = self.clock.now();
+        let Some(user) = state.get_mut(&user_key(username)) else {
+            return false;
+        };
+        let name = std::mem::take(&mut user.username);
+        *user = LastFmRadioUserState::default();
+        user.username = name;
+        user.last_seen_utc = now;
+        user.history_cleared_utc = Some(now);
+        self.save_locked(state);
+        true
     }
 
     fn load_locked<'a>(&self, guard: &'a mut Option<Document>) -> &'a mut Document {

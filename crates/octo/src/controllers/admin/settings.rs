@@ -13,8 +13,8 @@ use axum::response::Response;
 use octo_core::common::dotnet::{is_blank, ordinal_ignore_case_key, utf16_len};
 use octo_core::json::dom::Node;
 use octo_core::settings::{
-    FamilySettings, GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction, LibraryActionSettings,
-    LyricsSaveTo, SettingsWriteError,
+    AnimatedArtMode, FamilySettings, GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction,
+    LibraryActionSettings, LyricsSaveTo, SettingsWriteError,
 };
 use std::collections::HashSet;
 use tracing::{error, info, warn};
@@ -506,6 +506,14 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 n_num(metadata.replay_gain_timeout_seconds),
             ),
             ("TagRehearsal", Node::Bool(metadata.tag_rehearsal)),
+            (
+                "AnimatedArt",
+                n_str(match metadata.animated_art() {
+                    AnimatedArtMode::Direct => AnimatedArtMode::DIRECT,
+                    AnimatedArtMode::Relay => AnimatedArtMode::RELAY,
+                    AnimatedArtMode::Off => AnimatedArtMode::OFF,
+                }),
+            ),
         ]),
     );
     doc.insert(

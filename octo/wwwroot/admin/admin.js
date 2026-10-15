@@ -623,6 +623,7 @@ async function loadSettings() {
   loadTidy();
   loadExplicitBackfill();
   loadCoverUpgrade();
+  loadAnimatedArt();
   loadLyricsLibrary();
   loadLyricsChoices();
   loadRadioStatus();
@@ -983,6 +984,7 @@ document.querySelectorAll('form[data-section]').forEach(form => {
       renderSetupChecklist();
       // The scrobbling card reads the running settings, which catch up with the file a moment later.
       if (form.dataset.section?.startsWith('lastfm')) setTimeout(loadLastFmScrobbling, 700);
+      if (form.dataset.section === 'animated-art') setTimeout(loadAnimatedArt, 700);
       // The re-check offer on the Verify card follows the saved match score.
       if (form.dataset.section === 'soulseek-verify' || form.dataset.section?.startsWith('library-actions')) {
         setTimeout(loadReviewSweep, 700);
@@ -9036,4 +9038,88 @@ ready.then(() => {
   loadSignedIn();
   loadUpdate();
   renderSlskdOpen();
+});
+
+// ── Animated art: what is known, the library sweep, and hiding a cover ──────────────────────
+
+let artPoll = null;
+let artShown = 0;
+const ART_PAGE = 60;
+
+function artTile(album) {
+  const name = `${album.album} by ${album.artist}`;
+  const art = album.poster ? `<img loading="lazy" alt="" src="${esc(album.poster)}" onerror="this.remove()">` : '';
+  // One badge: Hidden says the most, and a full-screen loop is worth knowing otherwise.
+  const badges = album.hidden
+    ? '<span class="cover-badge warn">Hidden</span>'
+    : album.tall ? '<span class="cover-badge">Full screen</span>' : '';
+  return `<button type="button" class="cover-tile art-tile" role="switch" aria-checked="${!album.hidden}" data-art-key="${esc(album.key)}"
+      aria-label="${esc(name)}" title="${esc(album.hidden ? 'Hidden in every app. Pick to show it again.' : 'Shown in the Octo apps. Pick to hide it.')}">
+    <span class="cover-art">${art}${badges}</span>
+    <span class="cover-title">${esc(album.album)}</span>
+    <span class="cover-artist">${esc(album.artist)}</span>
+  </button>`;
+}
+
+async function loadAnimatedArt() {
+  const card = document.getElementById('art-card');
+  if (!card) return;
+  const response = await api('/api/admin/animated-art').catch(() => null);
+  if (!response?.ok) { card.hidden = true; return; }
+  const summary = await response.json();
+  card.hidden = summary.mode === 'off';
+  if (card.hidden) return;
+  const sweep = summary.sweep || {};
+  const found = Number(summary.found || 0);
+  document.getElementById('art-count').textContent = found === 1
+    ? '1 album has animated art'
+    : `${found.toLocaleString()} albums have animated art`;
+  let line;
+  if (sweep.running) line = `Looking up your library: ${Number(sweep.checked).toLocaleString()} of ${Number(sweep.total).toLocaleString()} albums.`;
+  else if (sweep.finishedUtc) line = `Library looked up ${new Date(sweep.finishedUtc).toLocaleString()}. New albums are looked up daily.`;
+  else line = 'Your library is looked up a couple of minutes after Octo starts, then daily.';
+  if (summary.hidden) line += ` ${Number(summary.hidden).toLocaleString()} hidden.`;
+  document.getElementById('art-sweep').textContent = line;
+  const progress = document.getElementById('art-progress');
+  progress.hidden = !sweep.running;
+  if (sweep.running && sweep.total) document.getElementById('art-progress-fill').style.width = `${Math.round(100 * sweep.checked / sweep.total)}%`;
+  document.getElementById('art-look-up').disabled = !!sweep.running;
+  await loadArtWall(true);
+  if (sweep.running) {
+    if (!artPoll) artPoll = setInterval(loadAnimatedArt, 4000);
+  } else if (artPoll) {
+    clearInterval(artPoll);
+    artPoll = null;
+  }
+}
+
+async function loadArtWall(fromStart) {
+  const wall = document.getElementById('art-wall');
+  const more = document.getElementById('art-more');
+  const count = fromStart ? Math.max(artShown, ART_PAGE) : artShown + ART_PAGE;
+  const response = await api(`/api/admin/animated-art/albums?offset=0&limit=${Math.min(count, 200)}`).catch(() => null);
+  if (!response?.ok) return;
+  const page = await response.json();
+  artShown = page.albums.length;
+  wall.innerHTML = page.albums.map(artTile).join('');
+  document.getElementById('art-hint').hidden = artShown === 0;
+  more.hidden = artShown >= page.total || artShown >= 200;
+}
+
+document.getElementById('art-look-up')?.addEventListener('click', async event => {
+  event.currentTarget.disabled = true;
+  await api('/api/admin/animated-art/sweep', { method: 'POST' }).catch(() => null);
+  setTimeout(loadAnimatedArt, 800);
+});
+document.getElementById('art-more')?.addEventListener('click', () => loadArtWall(false));
+document.getElementById('art-wall')?.addEventListener('click', async event => {
+  const tile = event.target.closest('.art-tile');
+  if (!tile) return;
+  const hidden = tile.getAttribute('aria-checked') === 'true';
+  const response = await api('/api/admin/animated-art/hide', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: tile.dataset.artKey, hidden }),
+  }).catch(() => null);
+  if (response?.ok) loadAnimatedArt();
 });

@@ -143,7 +143,11 @@ impl RequestStore {
             if let Some(existing) = requests.iter().find(|r| same(r)) {
                 return Ok((existing.clone(), false));
             }
-            let used = quota_used(&requests, &request.username, now);
+            // `now` was taken before the lock, so a request another call kept while this one
+            // waited can be newer than it. Counting at `now` would treat that request as not
+            // yet made and miss it; count at the latest moment either knows instead.
+            let latest = requests.iter().map(|r| r.created).fold(now, DateTime::max);
+            let used = quota_used(&requests, &request.username, latest);
             decide(used, &mut request)?;
             requests.push(request.clone());
             prune(&mut requests, now);

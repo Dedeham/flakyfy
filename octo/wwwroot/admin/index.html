@@ -1976,6 +1976,40 @@
             </div>
           </form>
         </div>
+
+        <div class="set-section">
+          <div class="set-head">
+            <h3 class="set-title">Animated art</h3>
+            <p class="set-desc">Apple Music&rsquo;s animated album art in the Octo apps, where an album has it.</p>
+          </div>
+          <form data-section="animated-art" class="set-card">
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Play animated art</div>
+                <div class="set-info-d"><strong>From Apple</strong> plays it straight from Apple&rsquo;s video network, the fastest anywhere. <strong>Through Octo</strong> sends it through this server, so the apps reach nothing else.</div>
+                <div class="set-info-more">Octo reads each album&rsquo;s Apple Music page once and keeps the answer for a month. Albums have a square loop for the cover and often a tall one for a full-screen player; each app chooses which to show. Other Subsonic apps see no difference.</div>
+              </div>
+              <select class="set-input" name="Metadata.AnimatedArt" aria-label="Play animated art">
+                <option value="direct">From Apple</option>
+                <option value="relay">Through Octo</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+          </form>
+          <div class="set-card cover-tool art-card" id="art-card" hidden>
+            <div class="art-head">
+              <div class="art-text">
+                <span class="set-info-t" id="art-count"></span>
+                <span class="set-info-d" id="art-sweep"></span>
+              </div>
+              <button class="btn btn-ghost" type="button" id="art-look-up"><svg class="icon" aria-hidden="true"><use href="#i-arrows-clockwise"/></svg><span>Look up my library now</span></button>
+            </div>
+            <div class="cover-progress" id="art-progress" hidden><span id="art-progress-fill"></span></div>
+            <p class="set-info-d art-hint" id="art-hint" hidden>Pick a cover to hide it in every app; pick it again to bring it back.</p>
+            <div class="cover-wall" id="art-wall" role="list"></div>
+            <button class="btn btn-ghost art-more" type="button" id="art-more" hidden>Show more</button>
+          </div>
+        </div>
       </section>
 
       <section data-pane="lyrics">

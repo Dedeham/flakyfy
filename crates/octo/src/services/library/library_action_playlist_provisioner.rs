@@ -1,8 +1,14 @@
 //! One provisioner per request, over that request's proxy, so its once-per-boot set is once per
 //! request in practice. A caller builds it with `new(request's proxy, settings)`.
+//!
+//! Requests can overlap (an app listing playlists twice as it starts, two devices at once), and
+//! each sees the same playlist missing. [`PENDING`] is shared by all of them, so a title is
+//! created by whichever request claims it first.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 use indexmap::IndexMap;
 use octo_core::common::dotnet;
@@ -14,6 +20,48 @@ use octo_core::family::abilities::{AddToLibrary, RequestQuality};
 
 use crate::services::family::FamilyStore;
 use crate::services::subsonic::SubsonicProxyService;
+
+/// Titles being created, or created within [`HOLD`], keyed by Navidrome address, user and title,
+/// folded for case. It stays a few titles per user; stale entries are swept once it grows.
+static PENDING: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(Default::default);
+
+/// How long a created title stays claimed: longer than a listing relayed before it existed takes
+/// to reach [`LibraryActionPlaylistProvisioner::missing`].
+const HOLD: Duration = Duration::from_secs(120);
+
+fn pending_key(server: &str, username: &str, title: &str) -> String {
+    let mut key = dotnet::ordinal_ignore_case_key(server.trim());
+    key.push('\n');
+    key.push_str(&dotnet::ordinal_ignore_case_key(username.trim()));
+    key.push('\n');
+    key.push_str(&dotnet::ordinal_ignore_case_key(title));
+    key
+}
+
+/// Claims `title` for this request; false when another request holds it.
+fn claim(server: &str, username: &str, title: &str) -> bool {
+    let now = Instant::now();
+    let mut pending = PENDING.lock();
+    if pending.len() > 64 {
+        pending.retain(|_, at| now.duration_since(*at) < HOLD);
+    }
+    match pending.entry(pending_key(server, username, title)) {
+        Entry::Occupied(held) if now.duration_since(*held.get()) < HOLD => false,
+        Entry::Occupied(mut stale) => {
+            stale.insert(now);
+            true
+        }
+        Entry::Vacant(free) => {
+            free.insert(now);
+            true
+        }
+    }
+}
+
+/// Gives a title back after its create failed, so the next listing tries again.
+fn release(server: &str, username: &str, title: &str) {
+    PENDING.lock().remove(&pending_key(server, username, title));
+}
 
 /// Makes sure an allowed user has a playlist for each enabled action.
 ///
@@ -52,6 +100,13 @@ impl LibraryActionPlaylistProvisioner {
         existing_names: &[String],
         auth_parameters: &IndexMap<String, String>,
     ) {
+        let titles = self.missing(username, existing_names);
+        self.create(username, titles, auth_parameters).await;
+    }
+
+    /// The titles this request should create: wanted, absent from `existing_names`, and claimed
+    /// from every other request. No I/O, so a caller can skip spawning when it is empty.
+    pub fn missing(&self, username: &str, existing_names: &[String]) -> Vec<String> {
         let current = self.settings.current();
         let settings = &current.library_actions;
         let family_titles = self.family_titles(username);
@@ -59,10 +114,10 @@ impl LibraryActionPlaylistProvisioner {
             && (settings.playlists_enabled || settings.notices_enabled())
             && settings.is_allowed(Some(username));
         if !actions_on && family_titles.is_empty() {
-            return;
+            return Vec::new();
         }
         if !self.done.lock().insert(dotnet::ordinal_ignore_case_key(username)) {
-            return;
+            return Vec::new();
         }
 
         // The notice playlists Octo fills are the user's own too, for the same reason: they are
@@ -96,11 +151,20 @@ impl LibraryActionPlaylistProvisioner {
                 wanted.push(title);
             }
         }
-        if wanted.is_empty() {
-            return;
-        }
+        let server = current.subsonic.url.as_deref().unwrap_or_default();
+        wanted.retain(|title| claim(server, username, title));
+        wanted
+    }
 
-        for title in wanted {
+    /// Creates `titles` with the user's own sign-in; each one that fails is released.
+    pub async fn create(
+        &self,
+        username: &str,
+        titles: Vec<String>,
+        auth_parameters: &IndexMap<String, String>,
+    ) {
+        let server = self.settings.current().subsonic.url.clone().unwrap_or_default();
+        for title in titles {
             // The user's own credentials, so the playlist belongs to them. Drop anything that
             // would make this look like an edit of an existing playlist. Keys compare ignoring
             // case.
@@ -136,6 +200,7 @@ impl LibraryActionPlaylistProvisioner {
             {
                 info!("Created action playlist '{title}' for {username}");
             } else {
+                release(&server, username, &title);
                 warn!("Could not create action playlist '{title}' for {username}");
             }
         }
@@ -254,6 +319,115 @@ mod tests {
             })
             .collect();
         assert_eq!(created, [("🛠 Keep".to_string(), "alice".to_string(), false)]);
+    }
+
+    fn keep_settings(navidrome: &MockServer) -> Arc<SettingsStore> {
+        Arc::new(SettingsStore::for_tests(AppSettings {
+            library_actions: LibraryActionSettings {
+                enabled: true,
+                review_enabled: true,
+                allowed_users: vec!["alice".into()],
+                ..Default::default()
+            },
+            subsonic: SubsonicSettings {
+                url: Some(navidrome.uri()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+    }
+
+    fn creates(requests: &[wiremock::Request]) -> usize {
+        requests
+            .iter()
+            .filter(|r| r.url.path() == "/rest/createPlaylist")
+            .count()
+    }
+
+    /// Requests overlap: several listings, each from its own request, all saw the playlist
+    /// missing. Only one creates it, and a listing started a moment later still does not.
+    #[tokio::test]
+    async fn overlapping_listings_create_a_missing_playlist_once() {
+        let navidrome = MockServer::start().await;
+        Mock::given(path("/rest/createPlaylist"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(r#"{"subsonic-response":{"status":"ok"}}"#, "application/json")
+                    .set_delay(std::time::Duration::from_millis(50)),
+            )
+            .mount(&navidrome)
+            .await;
+        let settings = keep_settings(&navidrome);
+        let auth: IndexMap<String, String> = [("u", "alice"), ("t", "tok"), ("s", "salt")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let listing = |user: &'static str| {
+            let settings = settings.clone();
+            let auth = auth.clone();
+            async move {
+                LibraryActionPlaylistProvisioner::new(SubsonicProxyService::new(settings.clone()), settings)
+                    .ensure(user, &["▸ review".to_string()], &auth)
+                    .await;
+            }
+        };
+        tokio::join!(listing("alice"), listing("ALICE"), listing(" alice"));
+        listing("alice").await;
+
+        let requests = navidrome.received_requests().await.expect("recorded");
+        assert_eq!(creates(&requests), 1);
+    }
+
+    /// A create Navidrome refused gives the title back, so the next listing tries again.
+    #[tokio::test]
+    async fn a_failed_create_is_tried_again_by_the_next_listing() {
+        let navidrome = MockServer::start().await;
+        Mock::given(path("/rest/createPlaylist"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .mount(&navidrome)
+            .await;
+        Mock::given(path("/rest/createPlaylist"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(r#"{"subsonic-response":{"status":"ok"}}"#, "application/json"),
+            )
+            .mount(&navidrome)
+            .await;
+        let settings = keep_settings(&navidrome);
+        let auth: IndexMap<String, String> = [("u", "alice"), ("t", "tok"), ("s", "salt")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        for _ in 0..3 {
+            LibraryActionPlaylistProvisioner::new(
+                SubsonicProxyService::new(settings.clone()),
+                settings.clone(),
+            )
+            .ensure("alice", &["▸ review".to_string()], &auth)
+            .await;
+        }
+
+        let requests = navidrome.received_requests().await.expect("recorded");
+        assert_eq!(creates(&requests), 2, "the refused one, then the one that worked");
+    }
+
+    /// Nothing missing means nothing to spawn: the listing path skips the create step.
+    #[test]
+    fn nothing_is_missing_when_every_title_is_listed() {
+        let settings = Arc::new(SettingsStore::for_tests(AppSettings {
+            library_actions: LibraryActionSettings {
+                enabled: true,
+                review_enabled: true,
+                allowed_users: vec!["alice".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        let provisioner =
+            LibraryActionPlaylistProvisioner::new(SubsonicProxyService::new(settings.clone()), settings);
+        let listed = ["▸ Review".to_string(), "🛠 KEEP".to_string()];
+        assert!(provisioner.missing("alice", &listed).is_empty());
     }
 }
 

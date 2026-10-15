@@ -363,6 +363,32 @@ fn what_was_learned_survives_a_restart_and_forget_clears_it() {
 }
 
 #[test]
+fn forgetting_one_listener_leaves_the_others() {
+    let f = Fixture::new();
+    let store = f.store(true);
+    for listener in ["alice", "bob"] {
+        served(&store, listener, &[("a", LAST_FM)], t0(), true);
+        play(
+            &store,
+            listener,
+            "a",
+            t0() + minutes(1.0),
+            Some(t0() + minutes(2.0)),
+        );
+    }
+    // Served to alice and not yet played: in flight, and hers too.
+    served(&store, "alice", &[("b", LAST_FM)], t0() + minutes(3.0), true);
+
+    assert!(store.forget_listener(" ALICE "));
+    assert!(!store.forget_listener("alice"), "nothing left of hers");
+    let kept: Vec<String> = store.state().listeners.keys().cloned().collect();
+    assert_eq!(kept, ["bob"]);
+
+    let again = f.store(true);
+    assert_eq!(row(&again, LAST_FM, t0() + minutes(4.0)).plays, 1);
+}
+
+#[test]
 fn one_serving_teaches_once() {
     let f = Fixture::new();
     let store = f.store(true);

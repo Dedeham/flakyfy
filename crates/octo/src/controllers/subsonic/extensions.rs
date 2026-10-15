@@ -122,6 +122,7 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
             super::transitions::offered(&state),
             super::stations::offered(&state),
             places_available(&state).await,
+            state.animated_art.offered(),
         );
     if capped && let Some(body) = audio_gate::without_extension(&reply.body, format == "json", "transcoding")
     {

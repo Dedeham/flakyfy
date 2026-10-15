@@ -282,6 +282,80 @@ fn the_store_keeps_keys_and_finds_them_ignoring_case() {
     assert!(fixture.store.known_users().is_empty());
 }
 
+fn one_station(owner: &str) -> LastFmRadioStation {
+    LastFmRadioStation {
+        id: station_id(owner, "mix"),
+        name: "Mix".into(),
+        owner: owner.into(),
+        tracks: vec![LastFmRadioTrack {
+            artist: "A".into(),
+            title: "T".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_cleared_listener_keeps_the_entry_but_nothing_learned() {
+    let fixture = StateFixture::new(None, None);
+    fixture.store.record_play("alice", play("A", "T", None));
+    fixture.store.replace_stations("alice", &[one_station("alice")]);
+    assert!(!fixture.store.wants_starting_profile("alice"));
+    assert!(fixture.store.wants_starting_profile("nobody yet"));
+
+    assert!(fixture.store.reset("ALICE"));
+    assert!(!fixture.store.reset("nobody yet"));
+
+    let alice = fixture.store.get_user("alice");
+    assert_eq!(alice.username, "alice");
+    assert!(alice.plays.is_empty() && alice.stations.is_empty());
+    assert!(alice.history_cleared_utc.is_some());
+    // No starting profile from stars, and no refresh work until a new play.
+    assert!(!fixture.store.wants_starting_profile("alice"));
+    assert!(fixture.store.known_users().is_empty());
+    // The dashboard still lists the listener, now with nothing held.
+    let summaries = fixture.store.get_summaries();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].play_count, 0);
+
+    fixture.store.record_play("alice", play("B", "U", None));
+    assert_eq!(fixture.store.known_users(), ["alice"]);
+
+    // The mark survives a restart.
+    let restarted = LastFmRadioStateStore::new(
+        fixture.path.clone(),
+        settings_store(LastFmSettings::default()),
+        Arc::new(ExternalIdRegistry::in_memory()),
+    );
+    assert!(restarted.get_user("alice").history_cleared_utc.is_some());
+}
+
+#[test]
+fn stations_from_a_refresh_begun_before_a_clear_are_discarded() {
+    let fixture = StateFixture::new(None, None);
+    fixture.store.record_play("alice", play("A", "T", None));
+    fixture.store.mark_refreshing("alice");
+    assert!(fixture.store.reset("alice"));
+
+    fixture.store.replace_stations("alice", &[one_station("alice")]);
+    assert!(fixture.store.get_user("alice").stations.is_empty());
+
+    fixture.store.mark_refreshing("alice");
+    fixture.store.replace_stations("alice", &[one_station("alice")]);
+    let alice = fixture.store.get_user("alice");
+    assert_eq!(alice.stations.len(), 1);
+    assert!(!alice.refreshing);
+}
+
+#[test]
+fn a_listener_never_cleared_leaves_no_mark_in_the_file() {
+    let fixture = StateFixture::new(None, None);
+    fixture.store.record_play("alice", play("A", "T", None));
+    let written = std::fs::read_to_string(&fixture.path).unwrap();
+    assert!(!written.contains("HistoryCleared"), "{written}");
+}
+
 /// Two keys that differ only in case fail the load, so it starts clean.
 #[test]
 fn keys_that_differ_only_in_case_start_clean() {

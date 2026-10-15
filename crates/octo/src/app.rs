@@ -55,7 +55,7 @@ use octo_media::cover::CoverArtService;
 use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
 use crate::services::common::IAcquisitionActivity;
 use crate::services::common::TopSongsService;
-use crate::services::cover_art::{ArtworkHints, HintedArtwork};
+use crate::services::cover_art::{AnimatedArt, ArtworkHints, HintedArtwork};
 use crate::services::family::LibraryWriteGate as FamilyWriteGate;
 use crate::services::family::request_service::{
     FamilyEvents, LiveRequestCatalog, LiveRequestFetcher, RequestParts, RequestService,
@@ -441,6 +441,8 @@ pub struct AppInner {
     pub top_songs: TopSongsService,
     /// The chart lists as read-only playlists for every listener.
     pub chart_playlists: Arc<ChartPlaylistService>,
+    /// Apple Music's animated album art for the Octo apps, kept in `animated-art.json`.
+    pub animated_art: Arc<AnimatedArt>,
     /// `SyncCatalogService`: the discovery catalog appended to a syncing client's library walk,
     /// built over the background proxy.
     pub sync_catalog: Arc<SyncCatalogService>,
@@ -2184,6 +2186,7 @@ struct Charts {
     top_songs: TopSongsService,
     playlists: Arc<ChartPlaylistService>,
     warm: Arc<ChartsWarmWorker>,
+    animated_art: Arc<AnimatedArt>,
 }
 
 impl Charts {
@@ -2196,6 +2199,7 @@ impl Charts {
         navidrome: &NavidromeServices,
         music_metadata: Arc<dyn IMusicMetadataService>,
         apple_base_url: Option<&str>,
+        config_dir: &Path,
     ) -> Charts {
         let apple = Arc::new(match apple_base_url {
             Some(base) => {
@@ -2203,6 +2207,12 @@ impl Charts {
             }
             None => AppleMusicPages::new(),
         });
+        let animated_art = Arc::new(AnimatedArt::new(
+            settings.clone(),
+            Arc::clone(&clients.itunes_cover_art),
+            Arc::clone(&apple),
+            Some(config_dir.join("animated-art.json")),
+        ));
         let top_songs = TopSongsService::new(
             (*clients.deezer_metadata).clone(),
             Some(integrations.last_fm.clone()),
@@ -2230,12 +2240,18 @@ impl Charts {
             top_songs,
             playlists: Arc::new(playlists),
             warm,
+            animated_art,
         }
     }
 
     fn register_workers(&self, workers: &WorkerSupervisor) {
         let warm = self.warm.clone();
         workers.register("ChartsWarmWorker", move |stopping| warm.clone().run(stopping));
+        let animated = self.animated_art.clone();
+        workers.register("AnimatedArt", move |stopping| {
+            let animated = animated.clone();
+            async move { animated.run_flush_loop(stopping).await }
+        });
     }
 }
 
@@ -2826,6 +2842,7 @@ impl AppState {
             &navidrome,
             metadata_service.clone(),
             None,
+            &config_dir,
         );
         charts.register_workers(&workers);
         let sync_catalog = Arc::new(SyncCatalogService::new(
@@ -2845,6 +2862,32 @@ impl AppState {
             LibrarySnapshot::new(Arc::clone(&navidrome.navidrome_playlist_api))
                 .with_scope(navidrome.library_scope.clone()),
         );
+        // The animated art sweep reads the library from the same snapshot, at Apple's pace.
+        let art_albums: crate::services::cover_art::animated_art::LibraryAlbums = {
+            let snapshot = Arc::clone(&library_snapshot);
+            Arc::new(move || {
+                let snapshot = Arc::clone(&snapshot);
+                Box::pin(async move {
+                    let index = snapshot.current().await?;
+                    Some(
+                        index
+                            .albums()
+                            .filter_map(|album| {
+                                let artist = album
+                                    .album_artist
+                                    .clone()
+                                    .or_else(|| album.songs.first().map(|song| song.artist.clone()))?;
+                                Some((artist, album.name.clone()))
+                            })
+                            .collect(),
+                    )
+                })
+            })
+        };
+        let animated = Arc::clone(&charts.animated_art);
+        workers.register("AnimatedArtSweep", move |stopping| {
+            Arc::clone(&animated).run_sweep_loop(Arc::clone(&art_albums), stopping)
+        });
         let album_ownership = Arc::new(AlbumOwnership::over(
             Arc::clone(&library_snapshot),
             Arc::clone(&clients.deezer_metadata),
@@ -3050,6 +3093,7 @@ impl AppState {
             generated_playlists: radio.generated_playlists,
             top_songs: charts.top_songs,
             chart_playlists: charts.playlists,
+            animated_art: charts.animated_art,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
             tag_edit_journal: stores.tag_edit_journal,
@@ -3258,6 +3302,7 @@ impl AppState {
             &navidrome,
             metadata_service.clone(),
             Some(&apple_base),
+            &config_dir,
         );
         let sync_catalog = Arc::new(SyncCatalogService::new(
             navidrome.subsonic_proxy.clone(),
@@ -3459,6 +3504,7 @@ impl AppState {
             generated_playlists: radio.generated_playlists,
             top_songs: charts.top_songs,
             chart_playlists: charts.playlists,
+            animated_art: charts.animated_art,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
             tag_edit_journal: stores.tag_edit_journal,

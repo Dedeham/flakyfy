@@ -1415,9 +1415,12 @@ async fn asks_from_two_members_at_once_never_pass_either_weekly_limit() {
         for ask in asks {
             let (user, outcome) = ask.await.expect("joins");
             match outcome {
-                Ok(request) => {
+                // A repeat that arrives after the first ask's song is in the member's library
+                // is answered from that copy, which uses no slot; count only what does.
+                Ok(request) if request.counts_toward_quota(chrono::Utc::now()) => {
                     made.insert((user.to_string(), request.id));
                 }
+                Ok(_) => {}
                 Err(e) => assert!(
                     e.message.contains("of your requests"),
                     "round {round}: {}",

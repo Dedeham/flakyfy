@@ -1308,6 +1308,7 @@ async fn the_list_carries_what_the_page_filters_on() {
                 findings: Vec::new(),
                 changes: Default::default(),
                 checked_utc: Some(Utc::now()),
+                ..CheckedSong::default()
             },
         );
     });

@@ -25,7 +25,7 @@ pub enum Against {
 
 /// Version markers a music database writes into a recording's title, never only into its
 /// disambiguation: their absence from a recording's title says the recording is not that take.
-const TITLED: [&str; 26] = [
+const TITLED: [&str; 25] = [
     "remix",
     "mix",
     "dub",
@@ -33,7 +33,6 @@ const TITLED: [&str; 26] = [
     "rework",
     "bootleg",
     "extended",
-    "radio edit",
     "sped up",
     "slowed",
     "reverb",

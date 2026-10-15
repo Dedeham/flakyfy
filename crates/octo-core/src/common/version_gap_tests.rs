@@ -46,7 +46,6 @@ fn every_titled_variant_against_the_original_is_another_version() {
         "Heat Waves (Extended Mix)",
         "Heat Waves (Club Mix)",
         "Heat Waves (VIP)",
-        "Heat Waves (Radio Edit)",
         "Heat Waves (Instrumental)",
         "Heat Waves (A Cappella)",
         "Heat Waves (Karaoke Version)",

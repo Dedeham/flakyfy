@@ -410,9 +410,9 @@ pub fn preview(state: &AppState, user: &str, keys: Option<&[String]>) -> Respons
     }))
 }
 
-async fn bound(request: Request) -> Result<(axum::http::request::Parts, VersionRequest), Response> {
+async fn bound(request: Request) -> Result<(axum::http::request::Parts, VersionRequest), Box<Response>> {
     let (parts, body) = split(request).await;
-    let bound: VersionRequest = bind_body(&parts, &body).map_err(|answer| *answer)?;
+    let bound: VersionRequest = bind_body(&parts, &body)?;
     Ok((parts, bound))
 }
 
@@ -420,7 +420,7 @@ async fn bound(request: Request) -> Result<(axum::http::request::Parts, VersionR
 async fn check_now(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,
-        Err(answer) => return answer,
+        Err(answer) => return *answer,
     };
     if navidrome_user_of(&state, &parts).is_none() {
         return not_signed_in();
@@ -452,7 +452,7 @@ async fn check_now(State(state): State<AppState>, request: Request) -> Response 
 async fn find(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,
-        Err(answer) => return answer,
+        Err(answer) => return *answer,
     };
     if navidrome_user_of(&state, &parts).is_none() {
         return not_signed_in();
@@ -481,7 +481,7 @@ const FIND_LIMIT: usize = 12;
 async fn keep_cover(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,
-        Err(answer) => return answer,
+        Err(answer) => return *answer,
     };
     if navidrome_user_of(&state, &parts).is_none() {
         return not_signed_in();
@@ -500,7 +500,7 @@ async fn keep_cover(State(state): State<AppState>, request: Request) -> Response
 async fn replace_cover(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,
-        Err(answer) => return answer,
+        Err(answer) => return *answer,
     };
     let Some(user) = navidrome_user_of(&state, &parts) else {
         return not_signed_in();
@@ -551,7 +551,7 @@ async fn replace_cover(State(state): State<AppState>, request: Request) -> Respo
 async fn keep(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,
-        Err(answer) => return answer,
+        Err(answer) => return *answer,
     };
     if navidrome_user_of(&state, &parts).is_none() {
         return not_signed_in();
@@ -569,7 +569,7 @@ async fn keep(State(state): State<AppState>, request: Request) -> Response {
 async fn replace(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,
-        Err(answer) => return answer,
+        Err(answer) => return *answer,
     };
     let Some(user) = navidrome_user_of(&state, &parts) else {
         return not_signed_in();
@@ -644,7 +644,7 @@ async fn replace(State(state): State<AppState>, request: Request) -> Response {
 async fn rematch(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,
-        Err(answer) => return answer,
+        Err(answer) => return *answer,
     };
     let Some(user) = navidrome_user_of(&state, &parts) else {
         return not_signed_in();
@@ -658,7 +658,7 @@ async fn rematch(State(state): State<AppState>, request: Request) -> Response {
 async fn put_back(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,
-        Err(answer) => return answer,
+        Err(answer) => return *answer,
     };
     let Some(user) = navidrome_user_of(&state, &parts) else {
         return not_signed_in();

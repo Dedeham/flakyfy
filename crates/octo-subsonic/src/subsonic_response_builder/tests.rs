@@ -1329,14 +1329,14 @@ fn library_actions_offer_what_is_enabled() {
     assert_eq!(json["subsonic-response"]["libraryActions"]["admin"], true);
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
-        json!(["remove", "upgrade", "lyrics", "cover-swap"])
+        json!(["remove", "upgrade", "lyrics", "cover-swap", "checkVersion"])
     );
     let json = json_of(
         &builder().create_library_actions_response(&on, None, 3, false, "Lidarr", true, false, false),
     );
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
-        json!(["remove", "lyrics", "cover-swap"])
+        json!(["remove", "lyrics", "cover-swap", "checkVersion"])
     );
     // Version 3: remove only for a Navidrome admin; the edits whenever the server can make them,
     // cover last and only with a cover finder.
@@ -1348,6 +1348,7 @@ fn library_actions_offer_what_is_enabled() {
             "upgrade",
             "lyrics",
             "cover-swap",
+            "checkVersion",
             "retag",
             "joinAlbum",
             "lookup",

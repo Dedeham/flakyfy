@@ -153,7 +153,7 @@ impl LastFmCoverArtLookup {
 }
 
 /// A text field, or an object's `name` or `#text`, as Last.fm writes an artist either way.
-fn text_of<'a>(value: Option<&'a Value>) -> anyhow::Result<Option<&'a str>> {
+fn text_of(value: Option<&Value>) -> anyhow::Result<Option<&str>> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -285,7 +285,7 @@ mod tests {
             .await;
         Mock::given(query_param("method", "track.getInfo"))
             .respond_with(ResponseTemplate::new(200).set_body_string(format!(
-                r##"{{"track":{{"album":{{"image":[
+                r##"{{"track":{{"name":"Sexy Boy","artist":{{"name":"Air"}},"album":{{"image":[
                     {{"size":"small","#text":"{}"}},
                     {{"size":"mega","#text":"https://x/i/u/2a96cbd8b46e442fc41c2b86b821562f.png"}},
                     {{"size":"extralarge","#text":"{}"}},

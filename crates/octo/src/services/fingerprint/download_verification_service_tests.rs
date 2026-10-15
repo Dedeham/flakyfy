@@ -1598,7 +1598,7 @@ fn decide_download(lookup: &AcoustIdLookup, title: &str, file_ms: i64) -> Verifi
         THRESHOLD,
         true,
         (((file_ms + 500) / 1000) as i32, Some(file_ms)),
-        &plain_download(),
+        &Takes::for_request(Some(title), None, &Default::default()),
         &FactsById::new(),
     )
 }

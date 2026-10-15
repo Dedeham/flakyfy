@@ -99,6 +99,7 @@ pub fn release_artist_fits(want: &[&str], got: &str) -> bool {
         .filter(|w| !SongIdentity::key(w).is_empty())
         .any(|want| {
             SongIdentity::same_artist_name(want, got)
+                || cover_name_score(want, got) >= 80
                 || lead_names(want).iter().any(|name| {
                     got_names
                         .iter()
@@ -112,8 +113,10 @@ pub fn release_artist_fits(want: &[&str], got: &str) -> bool {
 /// One 3").
 pub fn release_title_fits(want: &str, got: &str) -> bool {
     let (want_key, got_key) = (release_key(want), release_key(got));
+    let roman = |name: &str| romanized_key(&RELEASE_TAIL.replace(name.trim(), ""));
     !want_key.is_empty()
         && (want_key == got_key
+            || (!roman(want).is_empty() && roman(want) == roman(got))
             || SongIdentity::loose_key(&RELEASE_TAIL.replace(want.trim(), ""))
                 == SongIdentity::loose_key(&RELEASE_TAIL.replace(got.trim(), "")))
 }
@@ -185,6 +188,9 @@ mod tests {
         ));
         assert!(release_fits("Blond", &["The Weeknd"], "Blond - EP", "Weeknd"));
         assert!(!release_artist_fits(&["Drake"], ""));
+        assert!(release_artist_fits(&["Luis Fonsi"], "Fonsi, Luis"));
+        assert!(!release_artist_fits(&["Luis Fonsi"], "Luis Fonsiman"));
+        assert!(release_fits("Gruppa krovi", &["Kino"], "Группа крови", "Кино"));
         assert!(!release_title_fits("", "Anything"));
     }
 

@@ -11,7 +11,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use indexmap::IndexMap;
-use octo_core::common::cover_names::cover_name_score;
+use octo_core::common::cover_names::{cover_name_score, release_artist_fits, release_title_fits};
 use octo_core::common::{Clock, SongIdentity, SongMatchOptions, dotnet};
 // `BarcodeForms` came over with tagging, which reads it too.
 use octo_core::json::element::{array_length, enumerate_array, get_string, str_prop, try_get_property};
@@ -574,8 +574,16 @@ impl ITunesCoverArtLookup {
     /// Issue a search and rank the up-to-5 results by closeness of the artist
     /// match, returning the artworkUrl100 of the best one. Without scoring,
     /// "Drake: Hold On, We're Going Home" would frequently come back as the
-    /// karaoke version's cover when it appeared first in the index.
-    async fn search_and_score(&self, term: &str, entity: &str, expected_artist: &str) -> Option<String> {
+    /// karaoke version's cover when it appeared first in the index. With `release`, only a
+    /// hit whose album or track is that name, by the expected artist, counts: another artist's
+    /// record of a near name is never the cover.
+    async fn search_and_score(
+        &self,
+        term: &str,
+        entity: &str,
+        expected_artist: &str,
+        release: Option<&str>,
+    ) -> Option<String> {
         let attempt = async {
             let url = format!(
                 "{}/search?term={}&entity={entity}&limit=5",
@@ -608,6 +616,21 @@ impl ITunesCoverArtLookup {
                 let Some(artwork) = artwork.filter(|a| !a.is_empty()) else {
                     continue;
                 };
+                if let Some(release) = release {
+                    let named = |field: &str| -> anyhow::Result<bool> {
+                        Ok(match try_get_property(item, field)? {
+                            Some(value) => {
+                                get_string(value)?.is_some_and(|name| release_title_fits(release, name))
+                            }
+                            None => false,
+                        })
+                    };
+                    if !release_artist_fits(&[expected_artist], artist)
+                        || !(named("collectionName")? || named("trackName")?)
+                    {
+                        continue;
+                    }
+                }
 
                 let score = i32::from(cover_name_score(expected_artist, artist));
                 if score > best_score {
@@ -630,7 +653,12 @@ impl ITunesCoverArtLookup {
     /// but only as a track. Re-query with entity=song so we still get cover art.
     async fn search_song_fallback(&self, artist: &str, album_or_title: &str) -> Option<Bytes> {
         let hit = self
-            .search_and_score(&format!("{artist} {album_or_title}"), "song", artist)
+            .search_and_score(
+                &format!("{artist} {album_or_title}"),
+                "song",
+                artist,
+                Some(album_or_title),
+            )
             .await?;
         self.download_hi_res(&hit).await
     }
@@ -675,7 +703,7 @@ impl ICoverArtSource for ITunesCoverArtLookup {
                 // song title: iTunes may return a song-level hit shaped like an
                 // album anyway, or fall through to song-entity fallback below.
                 if let Some(hit) = self
-                    .search_and_score(&format!("{artist} {album}"), "album", artist)
+                    .search_and_score(&format!("{artist} {album}"), "album", artist, Some(album))
                     .await
                 {
                     return self.download_hi_res(&hit).await;
@@ -686,7 +714,7 @@ impl ICoverArtSource for ITunesCoverArtLookup {
                 if artist.is_empty() {
                     return None;
                 }
-                let hit = self.search_and_score(artist, "musicArtist", artist).await?;
+                let hit = self.search_and_score(artist, "musicArtist", artist, None).await?;
                 self.download_hi_res(&hit).await
             }
             RoutingKind::Song => {
@@ -695,7 +723,7 @@ impl ICoverArtSource for ITunesCoverArtLookup {
                     return None;
                 }
                 let hit = self
-                    .search_and_score(&format!("{artist} {title}"), "song", artist)
+                    .search_and_score(&format!("{artist} {title}"), "song", artist, Some(title))
                     .await?;
                 self.download_hi_res(&hit).await
             }

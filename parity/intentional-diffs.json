@@ -4975,6 +4975,57 @@
       "reason": "The Library health answers as the next update leaves them. The report carries tagCheck, the library tag check's state (whether it runs, how far it got, how many songs disagree with their audio and how many stray spaces it took off); the duplicates check carries keepRated, keepRatedLabel, keepRatedMeaning and keepRatedMore (the Keep every rated copy switch, off by default); a duplicates preview carries keepRated, skipped, skippedLine and per set skipped, kept, removed and each copy's marks, and every remove step carries into (the copy its stars, ratings and playlist places move to). The lines the reviewed health-lookups-uncapped and duplicates-keep-marks entries pin on these answers are kept: one answer is explained by one entry, so this entry pins the combined diff and supersedes them on these requests. Where the 26-song lookup is still going (lookup-slow) and the tag check's progress, the count is whatever it was when the answer was read.",
       "knownDiff": "Library health answers, next update",
       "reviewed": "Brandon 2026-10-14 (release go)"
+    },
+    {
+      "id": "dashboard-files-album-artist-names",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"EwBgJt3dLkW5w5D8QlhfKL\\+/XjDtGaOXyezNHAZPMcE=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ 13006026dddd2e45b9c390fc42585f28bfbf5e30ed19a397c9eccd1c064f31c1\\ \\(216740\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ 0\\-9/192988'\\]$",
+        "^B:\\ \\['bytes\\ 0\\-9/216740'\\]$",
+        "^A:\\ \\['bytes\\ \\*/192988'\\]$",
+        "^B:\\ \\['bytes\\ \\*/216740'\\]$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"yk1kcMzxILChyWr9mDPn5PPSr9loK/EdUrFcSIJGYrU=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ ca4d6470ccf120b0a1c96afd9833e7e4f3d2afd9682bf11d52b15c48824662b5\\ \\(130015\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"kHqcO5pIWqxHfoa9dfY7vV0zO3je72AdC4cIZfiPLsY=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 907a9c3b9a485aac477e86bd75f63bbd5d333b78deef601d0b870865f88f2ec6\\ \\(443788\\ bytes,\\ text\\)$"
+      ],
+      "reason": "A re-pin of the dashboard files: admin.js says how many songs the library tag check took the album artist's other names off by itself (\"Album artist's other names taken off N songs.\", from the tag check's new namesFixed count), beside its stray spaces count. index.html and admin.css are unchanged. One answer is explained by one entry, so this entry pins the combined files and supersedes dashboard-files-next-update.",
+      "knownDiff": "Dashboard files, album artist names"
     }
   ]
 }

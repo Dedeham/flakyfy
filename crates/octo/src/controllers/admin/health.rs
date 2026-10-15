@@ -748,6 +748,7 @@ fn tag_check_view(status: &IdentitySweepStatus) -> Value {
         "found": status.found,
         "sure": status.sure,
         "spacesFixed": status.spaces_fixed,
+        "namesFixed": status.names_fixed,
         "perHour": status.per_hour,
         "line": words::tag_check_line(&status.state, status.checked, status.total, status.per_hour),
         "lastCheckedUtc": utc_opt(&status.last_checked_utc),

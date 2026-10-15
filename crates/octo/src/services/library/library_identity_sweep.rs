@@ -22,8 +22,11 @@ use octo_core::fingerprint::verification::{InconclusiveReason, VerificationResul
 use octo_core::json::datetime;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::settings::SettingsStore;
-use octo_core::tagging::tag_audit::{self, AuditRule, FileTags, HeardAs, NamedRecording, TagAudit, TakeCopy};
+use octo_core::tagging::tag_audit::{
+    self, AuditRule, FileTags, HeardAs, NamedRecording, OtherAlbumArtists, TagAudit, TakeCopy,
+};
 use octo_media::tags::TagFile;
+use octo_media::tags::credit_names::StrayAlbumArtists;
 use octo_media::tags::tag_writer_extras::{self as extras, TagFields};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -247,6 +250,9 @@ pub struct CheckedSong {
     pub findings: Vec<KeptFinding>,
     /// The tags that would put the findings right: a value, or None to take a tag off.
     pub changes: IndexMap<String, Option<String>>,
+    /// The album artist's other names were looked for. A song checked before they were is read
+    /// again for them alone, without its audio.
+    pub names_checked: bool,
     #[serde(with = "datetime::utc_option")]
     pub checked_utc: Option<DateTime<Utc>>,
 }
@@ -273,6 +279,9 @@ pub struct IdentitySweepState {
     /// Songs whose stray spaces the check took off by itself.
     #[serde(default)]
     pub spaces_fixed: i32,
+    /// Songs whose album artist the check took off its other names by itself.
+    #[serde(default)]
+    pub names_fixed: i32,
     #[serde(default, with = "datetime::utc_option")]
     pub last_checked_utc: Option<DateTime<Utc>>,
     #[serde(default, with = "datetime::utc_option")]
@@ -290,6 +299,7 @@ impl Default for IdentitySweepState {
             pass: 1,
             total: 0,
             spaces_fixed: 0,
+            names_fixed: 0,
             last_checked_utc: None,
             pass_finished_utc: None,
             next_pass_utc: datetime::min_value(),
@@ -470,6 +480,7 @@ pub struct IdentitySweepStatus {
     pub found: usize,
     pub sure: usize,
     pub spaces_fixed: i32,
+    pub names_fixed: i32,
     pub per_hour: i32,
     pub last_checked_utc: Option<DateTime<Utc>>,
     pub pass_finished_utc: Option<DateTime<Utc>>,
@@ -618,6 +629,8 @@ impl LibraryIdentitySweep {
         let interval = Duration::from_secs_f64(3600.0 / f64::from(per_hour));
         let generation = self.generation.load(Ordering::SeqCst);
 
+        self.read_names_again(generation).await;
+
         // A song with findings whose file changed since (a fix, an undo, an edit) goes first.
         if let Some((id, song)) = self.changed_since() {
             return match self.check(generation, &id, &song, false).await {
@@ -720,6 +733,88 @@ impl LibraryIdentitySweep {
         }
     }
 
+    /// How many songs checked before the album artist's other names were looked for are read
+    /// again for them in one tick.
+    const NAMES_BATCH: usize = 50;
+
+    /// Reads songs checked before the album artist's other names were looked for again, for them
+    /// alone: copies of the album artist are taken off as stray spaces are, the rest join the
+    /// song's findings. A file changed since is left to its own full check.
+    async fn read_names_again(&self, generation: i32) {
+        let pending: Vec<(String, String, String)> = self.store.read(|s| {
+            s.songs
+                .iter()
+                .filter(|(_, kept)| !kept.names_checked)
+                .take(Self::NAMES_BATCH)
+                .map(|(id, kept)| (id.clone(), kept.path.clone(), kept.stamp.clone()))
+                .collect()
+        });
+        if pending.is_empty() {
+            return;
+        }
+        let read = tokio::task::spawn_blocking(move || {
+            pending
+                .into_iter()
+                .map(|(id, path, stamp)| {
+                    let same = !path.is_empty() && stamp_of(&path).is_some_and(|now| now == stamp);
+                    let other = same
+                        .then(|| {
+                            TagFile::open(&path)
+                                .ok()
+                                .as_ref()
+                                .and_then(other_album_artists_of)
+                        })
+                        .flatten();
+                    (id, stamp, other)
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+        for (id, stamp, other) in read {
+            let Some(other) = other else {
+                self.record(generation, |s| {
+                    if let Some(kept) = s.songs.get_mut(&id) {
+                        kept.names_checked = true;
+                    }
+                });
+                continue;
+            };
+            let Some(kept) = self.store.read(|s| s.songs.get(&id).cloned()) else {
+                continue;
+            };
+            let tags = FileTags {
+                title: kept.title.trim().to_string(),
+                album: kept.album.trim().to_string(),
+                other_album_artists: Some(other.clone()),
+                ..FileTags::default()
+            };
+            let found = tag_audit::album_artist_names(&other);
+            let fixed = self.put_right(&id, &tags, &found, Some(stamp)).await;
+            let written = fixed.as_ref().map(|_| stamp_of(&kept.path).unwrap_or_default());
+            self.record(generation, |s| {
+                let Some(kept) = s.songs.get_mut(&id) else {
+                    return;
+                };
+                kept.names_checked = true;
+                match written {
+                    Some(stamp) => {
+                        kept.stamp = stamp;
+                        s.names_fixed += 1;
+                    }
+                    None => {
+                        kept.findings.extend(found.findings.iter().map(|f| KeptFinding {
+                            rule: f.rule.name().to_string(),
+                            words: f.words.clone(),
+                        }));
+                        kept.changes.extend(found.changes.clone());
+                        kept.sure &= found.sure;
+                    }
+                }
+            });
+        }
+    }
+
     /// A song with findings whose file is not the one checked any more.
     fn changed_since(&self) -> Option<(String, SweepSong)> {
         let with_findings: Vec<(String, CheckedSong)> = self.store.read(|s| {
@@ -769,9 +864,10 @@ impl LibraryIdentitySweep {
                 title: song.title.clone(),
                 album: song.album.clone(),
                 checked_utc: Some(now),
+                names_checked: true,
                 ..CheckedSong::default()
             };
-            self.finish(generation, id, kept, in_order, false);
+            self.finish(generation, id, kept, in_order, Fixed::default());
             return Checked::Done;
         };
         let artist = if is_blank(&artist) {
@@ -802,19 +898,17 @@ impl LibraryIdentitySweep {
         let heard = self.heard_as(&verdict, &tags).await;
         let mut found = tag_audit::audit(&tags, heard.as_ref());
         let mut tags = tags;
-        let mut spaces_fixed = false;
-        if found.findings.iter().any(|f| f.rule == AuditRule::Spaces)
-            && let Some(written) = self.take_spaces_off(id, &tags, &found, read_stamp.clone()).await
-        {
+        let mut fixed = Fixed::default();
+        if let Some((written, now)) = self.put_right(id, &tags, &found, read_stamp.clone()).await {
             tags = written;
             found = tag_audit::audit(&tags, heard.as_ref());
-            spaces_fixed = true;
+            fixed = now;
         }
         let kept = CheckedSong {
             // The file whose tags were read; after the check's own write, the file as written, so
             // the next pass sees it as checked. A file replaced meanwhile is not the one these
             // answers are about, so it is checked again.
-            stamp: if spaces_fixed {
+            stamp: if fixed.any() {
                 stamp_of(&path).unwrap_or_default()
             } else {
                 read_stamp.unwrap_or_default()
@@ -842,6 +936,7 @@ impl LibraryIdentitySweep {
                 IndexMap::new()
             },
             checked_utc: Some(now),
+            names_checked: true,
         };
         if found.found() {
             info!(
@@ -859,11 +954,11 @@ impl LibraryIdentitySweep {
         // A lookup that failed every time is not an answer. The song is kept as it is now, marked
         // to be tried again next pass: kept, so a file changed since it was last checked is not
         // picked first again and again; marked, so the next pass does not take it as done.
-        self.finish(generation, id, kept, in_order, spaces_fixed);
+        self.finish(generation, id, kept, in_order, fixed);
         Checked::Done
     }
 
-    fn finish(&self, generation: i32, id: &str, kept: CheckedSong, in_order: bool, spaces_fixed: bool) {
+    fn finish(&self, generation: i32, id: &str, kept: CheckedSong, in_order: bool, fixed: Fixed) {
         let now = self.clock.now();
         self.record(generation, |s| {
             if in_order {
@@ -871,8 +966,11 @@ impl LibraryIdentitySweep {
             }
             s.songs.insert(id.to_string(), kept);
             s.last_checked_utc = Some(now);
-            if spaces_fixed {
+            if fixed.spaces {
                 s.spaces_fixed += 1;
+            }
+            if fixed.names {
+                s.names_fixed += 1;
             }
         });
     }
@@ -991,16 +1089,21 @@ impl LibraryIdentitySweep {
         })
     }
 
-    /// Takes stray spaces off through the journaled edit path, when library actions may change
-    /// files for the library keeper. The file's tags afterwards, or None when nothing was
-    /// written.
-    async fn take_spaces_off(
+    /// Puts right what needs no one to decide, through the journaled edit path, when library
+    /// actions may change files for the library keeper: stray spaces, and other names of the
+    /// album artist that only name it again. The file's tags afterwards and what was put right,
+    /// or None when nothing was written.
+    async fn put_right(
         &self,
         id: &str,
         tags: &FileTags,
         found: &TagAudit,
         read_stamp: Option<String>,
-    ) -> Option<FileTags> {
+    ) -> Option<(FileTags, Fixed)> {
+        let changes = found.automatic_changes(tags);
+        if changes.is_empty() {
+            return None;
+        }
         let edits = self.edits.as_ref()?;
         let settings = self.settings.current();
         if settings.library_actions.dry_run {
@@ -1013,21 +1116,20 @@ impl LibraryIdentitySweep {
         if edits.refusal(&user).is_some() {
             return None;
         }
-        let changes = found.space_changes(tags);
-        if changes.is_empty() {
-            return None;
-        }
+        let what = Fixed::of(&changes);
         let outcome = edits.retag(id, &user, changes.clone(), read_stamp).await;
         if outcome.state != "applied" {
             info!(
-                "Library tag check could not take the stray spaces off {}: {}",
+                "Library tag check could not put right {} on {}: {}",
+                what.words(),
                 tags.title.trim(),
                 outcome.detail.as_deref().unwrap_or(&outcome.state)
             );
             return None;
         }
         info!(
-            "Library tag check took the stray spaces off '{}'",
+            "Library tag check put right {} on '{}'",
+            what.words(),
             tags.title.trim()
         );
         let mut written = tags.clone();
@@ -1036,10 +1138,11 @@ impl LibraryIdentitySweep {
             match field.as_str() {
                 tag_audit::audit_fields::TITLE => written.title = value,
                 tag_audit::audit_fields::ALBUM => written.album = value,
+                tag_audit::audit_fields::ALBUM_ARTIST_NAMES => written.other_album_artists = None,
                 _ => {}
             }
         }
-        Some(written)
+        Some((written, what))
     }
 
     fn record(&self, generation: i32, change: impl FnOnce(&mut IdentitySweepState)) {
@@ -1125,10 +1228,40 @@ impl LibraryIdentitySweep {
                 .filter(|f| f.sure && !f.changes.is_empty())
                 .count(),
             spaces_fixed: s.spaces_fixed,
+            names_fixed: s.names_fixed,
             per_hour: settings.library_actions.effective_tag_check_per_hour(),
             last_checked_utc: s.last_checked_utc,
             pass_finished_utc: s.pass_finished_utc,
         })
+    }
+}
+
+/// What the check put right by itself on one song.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Fixed {
+    spaces: bool,
+    names: bool,
+}
+
+impl Fixed {
+    fn of(changes: &IndexMap<String, Option<String>>) -> Fixed {
+        let names = changes.contains_key(tag_audit::audit_fields::ALBUM_ARTIST_NAMES);
+        Fixed {
+            spaces: changes.len() > usize::from(names),
+            names,
+        }
+    }
+
+    fn any(self) -> bool {
+        self.spaces || self.names
+    }
+
+    fn words(self) -> &'static str {
+        match (self.spaces, self.names) {
+            (true, true) => "the stray spaces and the album artist's other names",
+            (false, true) => "the album artist's other names",
+            _ => "the stray spaces",
+        }
     }
 }
 
@@ -1217,8 +1350,19 @@ fn read_tags(path: &str) -> Option<(String, FileTags)> {
             release_track_id: extras::read_text(&file, TagFields::RELEASE_TRACK_ID),
             release_id: extras::read_text(&file, TagFields::ALBUM_ID),
             release_group_id: extras::read_text(&file, TagFields::RELEASE_GROUP_ID),
+            other_album_artists: other_album_artists_of(&file),
         },
     ))
+}
+
+/// The album artist written again under other names the library server reads beside it.
+fn other_album_artists_of(file: &TagFile) -> Option<OtherAlbumArtists> {
+    StrayAlbumArtists::of(file).map(|stray| OtherAlbumArtists {
+        album_artist: stray.album_artist.join("; "),
+        names: stray.names(),
+        values: stray.values(),
+        copies: stray.copies,
+    })
 }
 
 /// The file's size and last write, or None when it is not there.

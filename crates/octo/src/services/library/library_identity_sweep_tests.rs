@@ -11,6 +11,7 @@ use octo_core::settings::{AppSettings, LibraryActionSettings, SubsonicSettings};
 use super::*;
 use crate::services::library::library_tag_edits;
 use crate::services::test_support::mp3;
+use octo_media::tags::KeptIdentityTags;
 
 pub(crate) const STUDIO: &str = "28982738-0000-4000-8000-000000000001";
 pub(crate) const LIVE: &str = "eca90222-0000-4000-8000-000000000002";
@@ -869,4 +870,158 @@ fn kind_names_read_back() {
     }
     assert_eq!(kind_name(RecordingKind::Live), "Live");
     assert_eq!(kind_parse("Unknown"), None);
+}
+
+/// The song's album artist is `own`, written again under the other names given.
+fn spell_album_artist(path: &Path, own: &str, others: &[(&str, &str)]) {
+    let mut file = TagFile::open(path).expect("opens");
+    file.set_album_artists(&[own.to_string()]);
+    for (name, value) in others {
+        extras::set_multi_value(&mut file, name, &[value.to_string()]);
+    }
+    file.save().expect("saved");
+}
+
+fn album_artist_keys(path: &Path) -> Vec<(String, Vec<String>)> {
+    let view = KeptIdentityTags::navidrome_view(&TagFile::open(path).expect("opens"));
+    view.into_iter()
+        .filter(|(key, _)| key.starts_with("album") && key.contains("artist"))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_album_artist_written_again_under_other_names_is_taken_off_through_the_journal() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "industry plant", "industry plant", &[]);
+    let path = setup.dir.path().join("a.mp3");
+    spell_album_artist(
+        &path,
+        "miki",
+        &[
+            ("ALBUM ARTIST", "Miki"),
+            ("ALBUM_ARTIST", "Miki"),
+            ("ALBUMARTISTS", "Miki"),
+            ("ALBUM_ARTISTS", "Miki"),
+        ],
+    );
+    let sweep = setup.sweep(FakeVerifier::answering(Vec::new()), actions(360));
+    sweep.tick().await;
+
+    let asked = setup.edits.asked.lock().clone();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].1, "bob");
+    assert_eq!(asked[0].2.get("albumArtistNames"), Some(&None));
+    assert_eq!(
+        album_artist_keys(&path),
+        [("albumartist".to_string(), vec!["miki".to_string()])]
+    );
+    assert!(sweep.findings().is_empty());
+    let status = sweep.status();
+    assert_eq!((status.names_fixed, status.spaces_fixed), (1, 0));
+    // The write is the file as checked: it is not checked again.
+    assert_eq!(sweep.tick().await, LibraryIdentitySweep::IDLE_CHECK);
+}
+
+#[tokio::test]
+async fn another_album_artist_under_another_name_waits_for_a_person() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "Stronger", "Graduation", &[]);
+    let path = setup.dir.path().join("a.mp3");
+    spell_album_artist(&path, "Ye", &[("ALBUM ARTIST", "Kanye West")]);
+    let sweep = setup.sweep(FakeVerifier::answering(Vec::new()), actions(360));
+    sweep.tick().await;
+
+    assert!(setup.edits.asked.lock().is_empty());
+    let found = sweep.findings();
+    assert_eq!(found.len(), 1);
+    assert_eq!(rules(&found[0]), [AuditRule::AlbumArtistNames]);
+    assert!(!found[0].sure);
+    assert_eq!(found[0].changes.get("albumArtistNames"), Some(&None));
+
+    // The fix Library health sends keeps the file's own album artist.
+    assert!(library_tag_edits::write(&path, &found[0].changes).changed);
+    assert_eq!(
+        album_artist_keys(&path),
+        [("albumartist".to_string(), vec!["Ye".to_string()])]
+    );
+}
+
+/// The song as a check made before the album artist's other names were looked for kept it.
+fn checked_before_names(sweep: &LibraryIdentitySweep, setup: &Setup, id: &str, title: &str) {
+    let path = setup.dir.path().join(id);
+    let stamp = stamp_of(&path.to_string_lossy()).expect("a stamp");
+    sweep.store().update(|s| {
+        s.songs.insert(
+            id.to_string(),
+            CheckedSong {
+                stamp,
+                path: path.to_string_lossy().into_owned(),
+                artist: "My Chemical Romance".into(),
+                title: title.into(),
+                album: title.into(),
+                recording_id: Some(STUDIO.into()),
+                checked_utc: Some(Utc::now()),
+                ..CheckedSong::default()
+            },
+        );
+    });
+}
+
+#[tokio::test]
+async fn a_song_checked_before_is_read_again_for_the_album_artists_other_names_alone() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "industry plant", "industry plant", &[]);
+    let path = setup.dir.path().join("a.mp3");
+    spell_album_artist(
+        &path,
+        "miki",
+        &[("ALBUM ARTIST", "Miki"), ("ALBUMARTISTS", "Miki")],
+    );
+    let verifier = FakeVerifier::answering(Vec::new());
+    let sweep = setup.sweep(verifier.clone(), actions(360));
+    checked_before_names(&sweep, &setup, "a.mp3", "industry plant");
+
+    sweep.tick().await;
+    // Taken off without listening to it again.
+    assert!(verifier.asked().is_empty());
+    let asked = setup.edits.asked.lock().clone();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].2.get("albumArtistNames"), Some(&None));
+    assert_eq!(
+        album_artist_keys(&path),
+        [("albumartist".to_string(), vec!["miki".to_string()])]
+    );
+    assert_eq!(sweep.status().names_fixed, 1);
+    let kept = sweep.store().read(|s| s.songs["a.mp3"].clone());
+    assert!(kept.names_checked);
+    assert_eq!(kept.recording_id.as_deref(), Some(STUDIO));
+    // The file as written is the one checked: the pass does not listen to it again.
+    ticks(&sweep, 2).await;
+    assert!(verifier.asked().is_empty());
+    assert_eq!(setup.edits.asked.lock().len(), 1);
+}
+
+#[tokio::test]
+async fn in_rehearsal_a_song_checked_before_lists_its_album_artists_other_names() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "industry plant", "industry plant", &[]);
+    let path = setup.dir.path().join("a.mp3");
+    spell_album_artist(&path, "miki", &[("ALBUM ARTIST", "Miki")]);
+    let sweep = setup.sweep(
+        FakeVerifier::answering(Vec::new()),
+        LibraryActionSettings {
+            dry_run: true,
+            ..actions(360)
+        },
+    );
+    checked_before_names(&sweep, &setup, "a.mp3", "industry plant");
+    sweep.tick().await;
+    assert!(setup.edits.asked.lock().is_empty());
+    let found = sweep.findings();
+    assert_eq!(found.len(), 1);
+    assert_eq!(rules(&found[0]), [AuditRule::AlbumArtistNames]);
+    assert_eq!(found[0].changes.get("albumArtistNames"), Some(&None));
+    // Read once: the next tick does not add it again.
+    sweep.tick().await;
+    assert_eq!(rules(&sweep.findings()[0]), [AuditRule::AlbumArtistNames]);
 }

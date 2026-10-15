@@ -12,6 +12,7 @@ use octo_core::common::song_identity::SongIdentity;
 use octo_core::fingerprint::music_brainz_client;
 use octo_core::json::datetime;
 use octo_media::cover::cover_image;
+use octo_media::tags::credit_names::{self, NamedField, StrayAlbumArtists};
 use octo_media::tags::kept_identity::{KeptIdentity, KeptIdentityTags};
 use octo_media::tags::tag_writer_extras::{self as extras, TagFields};
 use octo_media::tags::{TagError, TagFile, TagPicture};
@@ -45,6 +46,11 @@ pub mod song_tag_fields {
 
     pub const IDENTITY: [&str; 4] = [RECORDING_ID, RELEASE_TRACK_ID, RELEASE_ID, RELEASE_GROUP_ID];
 
+    /// The album artist written again under other names the library server reads beside it
+    /// (ALBUM ARTIST, ALBUMARTISTS). An edit only takes them off; the journal keeps them, so
+    /// an undo puts them back. Read only when an edit names them or changes the album artist.
+    pub const ALBUM_ARTIST_NAMES: &str = "albumArtistNames";
+
     /// Never cleared: without them a song is filed under its file name and an unknown artist.
     pub const REQUIRED: [&str; 3] = [TITLE, ARTIST, ALBUM];
 
@@ -55,6 +61,7 @@ pub mod song_tag_fields {
     pub fn canonical(name: &str) -> Option<&'static str> {
         ALL.into_iter()
             .chain(IDENTITY)
+            .chain([ALBUM_ARTIST_NAMES])
             .find(|field| octo_core::common::dotnet::eq_ignore_case(field, name))
     }
 
@@ -214,6 +221,9 @@ pub fn invalid(changes: &IndexMap<String, Option<String>>) -> Option<String> {
             field if fields::is_identity(field) && !music_brainz_client::is_mbid(value) => {
                 return Some(format!("\"{value}\" is not a MusicBrainz id."));
             }
+            fields::ALBUM_ARTIST_NAMES => {
+                return Some("The album artist's other names can only be taken off.".into());
+            }
             _ => {}
         }
     }
@@ -232,10 +242,23 @@ pub fn write(path: &Path, changes: &IndexMap<String, Option<String>>) -> TagEdit
             }
         }
         let mut changed: IndexMap<&'static str, Option<String>> = IndexMap::new();
+        // The album artist's other names go once the album artist is written, and the journal
+        // keeps what went. They are dealt with last, so an undo puts them back after the album
+        // artist it restores.
+        let mut names_gone: Vec<NamedField> = Vec::new();
+        let mut names_back: Option<Option<String>> = None;
         for (name, raw) in changes {
             let Some(field) = fields::canonical(name) else {
                 continue;
             };
+            if field == fields::ALBUM_ARTIST_NAMES {
+                names_back = Some(
+                    raw.as_deref()
+                        .filter(|raw| !is_null_or_white_space(Some(raw)))
+                        .map(str::to_string),
+                );
+                continue;
+            }
             let mut value = raw
                 .as_deref()
                 .filter(|raw| !is_null_or_white_space(Some(raw)))
@@ -249,7 +272,37 @@ pub fn write(path: &Path, changes: &IndexMap<String, Option<String>>) -> TagEdit
                 continue;
             }
             set(&mut file, field, value.as_deref());
+            if field == fields::ALBUM_ARTIST
+                && let Some(stray) = StrayAlbumArtists::of(&file)
+            {
+                credit_names::remove_fields(&mut file, &stray.fields);
+                names_gone.extend(stray.fields);
+            }
             changed.insert(field, value);
+        }
+        match names_back {
+            Some(None) => {
+                if let Some(stray) = StrayAlbumArtists::of(&file) {
+                    credit_names::remove_fields(&mut file, &stray.fields);
+                    names_gone.extend(stray.fields);
+                }
+            }
+            Some(Some(text)) => {
+                if let Some(fields_back) = credit_names::from_text(&text) {
+                    let now = StrayAlbumArtists::of(&file).map(|stray| credit_names::to_text(&stray.fields));
+                    credit_names::restore_fields(&mut file, &fields_back);
+                    before.insert(fields::ALBUM_ARTIST_NAMES.to_string(), now);
+                    changed.insert(fields::ALBUM_ARTIST_NAMES, Some(text));
+                }
+            }
+            None => {}
+        }
+        if !names_gone.is_empty() {
+            before.insert(
+                fields::ALBUM_ARTIST_NAMES.to_string(),
+                Some(credit_names::to_text(&names_gone)),
+            );
+            changed.insert(fields::ALBUM_ARTIST_NAMES, None);
         }
         if changed.is_empty() {
             return Ok(TagEditResult::same(before));
@@ -486,6 +539,7 @@ pub fn words(field: &str) -> &str {
         fields::RELEASE_TRACK_ID => "release track id",
         fields::RELEASE_ID => "release id",
         fields::RELEASE_GROUP_ID => "release group id",
+        fields::ALBUM_ARTIST_NAMES => "album artist's other names",
         _ => field,
     }
 }

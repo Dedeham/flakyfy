@@ -2,6 +2,7 @@
 //! `rest/{name}` and `rest/{name}.view` for GET and POST; any other method, and every path no
 //! action claims, reaches the catch-all (`http::catch_all`).
 pub mod action_helpers;
+pub mod animated_art;
 pub mod info;
 pub mod internet_radio;
 pub mod native;
@@ -163,4 +164,5 @@ pub fn routes() -> RouteSet {
         .merge(transitions::routes())
         .merge(stations::routes())
         .merge(places::routes())
+        .merge(animated_art::routes())
 }

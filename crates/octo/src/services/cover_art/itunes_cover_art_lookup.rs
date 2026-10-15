@@ -324,6 +324,80 @@ impl ITunesCoverArtLookup {
         matched
     }
 
+    /// Apple's id for an album, which names its Apple Music page. The barcode's release when
+    /// one is given and Apple carries it, else what a search finds; either way the artist and
+    /// the title must be the same release, the explicit one ahead of a clean one. Asks go
+    /// through the shared Apple pacing; callers keep the answer. An error when Apple answered
+    /// none of the asks, so a caller does not keep that as "not on Apple".
+    pub async fn album_collection_id(
+        &self,
+        artist: &str,
+        album: &str,
+        barcode: Option<&str>,
+    ) -> anyhow::Result<Option<u64>> {
+        let (artist, album) = (artist.trim(), album.trim());
+        if artist.is_empty() || album.is_empty() {
+            return Ok(None);
+        }
+        let codes = barcode_forms(barcode);
+        let by_code = (!codes.is_empty()).then(|| {
+            format!(
+                "{}/lookup?entity=album&upc={}",
+                self.base,
+                codes
+                    .iter()
+                    .map(|c| dotnet::escape_data_string(c))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        });
+        let by_name = format!(
+            "{}/search?term={}&entity=album&limit=15",
+            self.base,
+            dotnet::escape_data_string(&format!("{artist} {album}"))
+        );
+        let mut answered = false;
+        for url in by_code.into_iter().chain([by_name]) {
+            let answer = match self.apple_get(&url).await {
+                Ok(Some(answer)) if answer.is_success() => answer,
+                Ok(_) => continue,
+                Err(e) => {
+                    debug!("iTunes album id lookup failed for {artist} - {album}: {e}");
+                    continue;
+                }
+            };
+            let Ok(doc) = serde_json::from_str::<Value>(&answer.text()) else {
+                continue;
+            };
+            let Ok(collections) = collections_of(&doc) else {
+                continue;
+            };
+            answered = true;
+            let best = collections
+                .iter()
+                .filter(|c| c.id.is_some())
+                .filter(|c| {
+                    SongIdentity::same_text(
+                        album,
+                        artist,
+                        &c.name,
+                        c.by.as_deref().unwrap_or(""),
+                        Some(&album_titles()),
+                    )
+                    .is_same()
+                })
+                .min_by_key(|c| c.clean);
+            if let Some(found) = best {
+                return Ok(found.id);
+            }
+        }
+        if answered {
+            Ok(None)
+        } else {
+            anyhow::bail!("Apple answered none of the album id asks")
+        }
+    }
+
     /// The album's own cover at the largest size Apple has, or None. Strict where
     /// [`ICoverArtSource::try_fetch`] is loose: the artist AND the album title must be the same
     /// release (a single is matched by its song), because this cover is written into files,
@@ -705,6 +779,7 @@ impl ICoverArtSource for ITunesCoverArtLookup {
 
 /// One album of a barcode lookup's answer.
 struct Collection {
+    id: Option<u64>,
     name: String,
     by: Option<String>,
     art: String,
@@ -730,6 +805,7 @@ fn collections_of(doc: &Value) -> anyhow::Result<Vec<Collection>> {
             continue;
         };
         collections.push(Collection {
+            id: r.get("collectionId").and_then(Value::as_u64),
             name,
             by,
             art: art.to_string(),

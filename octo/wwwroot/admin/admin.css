@@ -2656,3 +2656,18 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .chart-choice { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
 .chart-status { padding: 8px 16px 12px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
 .chart-status-note { margin-top: 4px; color: var(--text-faint); }
+
+/* ── Animated art card ── */
+.art-card { margin-top: var(--s-l); }
+/* The button sits on the count's midline, not the middle of both lines (34 px button, 20 px line). */
+.art-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-l); flex-wrap: wrap; }
+.art-head > .btn { margin-top: -7px; }
+.art-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.art-hint { margin: 0; }
+/* Shown is the resting state: no outline. A hidden cover is dimmed and says so. */
+.art-tile[aria-checked="true"] .cover-art { outline-color: transparent; }
+.art-tile:hover .cover-art { outline-color: rgba(255, 255, 255, 0.18); }
+.art-tile[aria-checked="false"] .cover-art img { opacity: 0.35; filter: grayscale(1); }
+.art-tile .cover-art img { transition: opacity 160ms, filter 160ms; }
+.art-more { align-self: center; }
+@media (prefers-reduced-motion: reduce) { .art-tile .cover-art img { transition: none; } }

@@ -124,6 +124,35 @@ pub struct MetadataSettings {
     /// real downloads before trusting it.
     /// Environment variable: TAG_REHEARSAL
     pub tag_rehearsal: bool,
+
+    /// Apple Music's animated album art for the Octo apps, read from the album's Apple Music
+    /// page. `direct`: the apps play them from Apple's video network. `relay`: through Octo,
+    /// so the apps reach nothing but this server. `off`: none.
+    /// Environment variable: ANIMATED_ART
+    pub animated_art: String,
+}
+
+/// How the Octo apps get an album's animated art ([`MetadataSettings::animated_art`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnimatedArtMode {
+    Direct,
+    Relay,
+    Off,
+}
+
+impl AnimatedArtMode {
+    pub const DIRECT: &'static str = "direct";
+    pub const RELAY: &'static str = "relay";
+    pub const OFF: &'static str = "off";
+
+    /// The setting as saved; anything not known reads as `direct`.
+    pub fn parse(text: &str) -> Self {
+        match text.trim().to_ascii_lowercase().as_str() {
+            Self::RELAY => Self::Relay,
+            Self::OFF | "false" | "none" => Self::Off,
+            _ => Self::Direct,
+        }
+    }
 }
 
 impl Default for MetadataSettings {
@@ -147,11 +176,16 @@ impl Default for MetadataSettings {
             replay_gain: true,
             replay_gain_timeout_seconds: 45,
             tag_rehearsal: false,
+            animated_art: AnimatedArtMode::DIRECT.to_string(),
         }
     }
 }
 
 impl MetadataSettings {
+    pub fn animated_art(&self) -> AnimatedArtMode {
+        AnimatedArtMode::parse(&self.animated_art)
+    }
+
     /// The longest side of an embedded cover when `embed_full_size_covers` is off: sharp
     /// across a phone's whole screen, a few hundred kilobytes.
     pub const EMBEDDED_COVER_SIDE: i32 = 1500;

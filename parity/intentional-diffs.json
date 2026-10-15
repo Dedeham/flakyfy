@@ -5143,6 +5143,77 @@
       ],
       "reason": "A Raw config save writes back what Raw config read, which now lists the ninth library action, Check version, beside every key the earlier entries pin, so the saved file is 8395 bytes. One answer is explained by one entry, so this entry supersedes the size line of the settings entries for this answer.",
       "knownDiff": "Raw config round trip, Check version"
+    },
+    {
+      "id": "dashboard-files-issue-94",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"MKXxpPEThObO0hkctGmmo0EIQ5N4beBmdf9X54y0fEg=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ 30a5f1a4f11384e6ced2191cb469a6a341084393786de06675ff57e78cb47c48\\ \\(219232\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ 0\\-9/192988'\\]$",
+        "^B:\\ \\['bytes\\ 0\\-9/219232'\\]$",
+        "^A:\\ \\['bytes\\ \\*/192988'\\]$",
+        "^B:\\ \\['bytes\\ \\*/219232'\\]$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"NSZOsRLh6Du8goyALoEtvFBGVFfPYCEB353kAZi3lSA=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ 35264eb112e1e83bbc828c802e812dbc50465457cf602101df9de40198b79520\\ \\(130381\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"cOivrFSwTfmjqxf0/rUmG\\+u1jQ6c9\\+N2O4DAyWXUyDE=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 70e8afac54b04df9a3ab17f4feb5261bebb58d0e9cf7e3763b80c0c965d4c831\\ \\(450265\\ bytes,\\ text\\)$"
+      ],
+      "reason": "A re-pin of the dashboard files (index.html, admin.js and admin.css) for issue #94, on top of the files dashboard-files-next-update pins (release 2026.10.14): the Better quality page's filters (AcoustID match, date added, genre, bitrate), Select the first N songs the filters show (at most 2,000 a press, the page's rows by the header box), the bar saying how many run at a time and when the queue has no room, and the songs' date added, genres and unsure AcoustID matches in the list; and the Favorite downloads when they land row's words. One answer is explained by one entry, so this entry pins the combined files and supersedes dashboard-files-next-update.",
+      "knownDiff": "Dashboard files, issue #94"
+    },
+    {
+      "id": "lossy-filter-fields",
+      "backlog": "base",
+      "requests": [
+        "09-admin/lossy",
+        "11-signin/in-get-lossy"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.limits:\\ only\\ in\\ B\\ \\(\\{\"perPress\":\\ 2000,\\ \"openJobs\":\\ 5000\\}\\)$",
+        "^\\$\\.songs\\[\\d+\\]\\.match:\\ only\\ in\\ B\\ \\(\\{\"state\":\\ \"(sure|unsure|unchecked)\",\\ \"score\":\\ (\\d+|null),\\ \"by\":\\ (\"download\"|\"tagCheck\"|null)\\}\\)$",
+        "^\\$\\.songs\\[\\d+\\]\\.year:\\ only\\ in\\ B\\ \\((\\d+|null)\\)$",
+        "^\\$\\.songs\\[\\d+\\]\\.added:\\ only\\ in\\ B\\ \\((TS\\(T\\.fZ\\)|null)\\)$",
+        "^\\$\\.songs\\[\\d+\\]\\.genres:\\ only\\ in\\ B\\ \\(\\[.*\\]\\)$"
+      ],
+      "reason": "The Better quality page's list carries what its new filters read (issue #94): each song's date added, genres, year and AcoustID match (from its download's check line with the score, else the library tag check, else unchecked), and the list carries how many songs one press sends and how many may wait in the queue. Fields are only added; every field C# sent is unchanged.",
+      "knownDiff": "Better quality list fields"
     }
   ]
 }

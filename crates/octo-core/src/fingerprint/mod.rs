@@ -2,6 +2,7 @@
 //! MusicBrainz client, and the verification types (`Services/Fingerprint`, its pure parts).
 
 pub mod acoust_id_client;
+pub mod check_line;
 pub mod music_brainz_client;
 pub mod recording_identity;
 pub mod speed_variant;

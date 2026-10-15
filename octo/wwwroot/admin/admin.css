@@ -1222,6 +1222,11 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .lossy-filters .set-input { width: auto; min-width: 180px; }
 .lossy-check { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: var(--t-meta); cursor: pointer; user-select: none; }
 .lossy-check:hover { color: var(--ink-1); }
+.lossy-shown { margin: calc(-1 * var(--s-m)) 0 0; }
+.lossy-unsure { color: var(--warn); }
+.lossy-amount { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--ink-2); }
+.lossy-amount[hidden] { display: none; }
+.lossy-amount .set-input { width: 92px; min-width: 0; }
 .lossy-row.picked { background: var(--accent-selected); }
 .lossy-row { cursor: pointer; }
 .lossy-row.config-row-head { cursor: default; }
@@ -1245,6 +1250,7 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 @container (max-width: 640px) {
   .lossy-row { grid-template-columns: 28px 1fr 72px; }
   .lossy-row > span:nth-child(3), .lossy-row > span:nth-child(5) { grid-column: 2 / -1; }
+  .lossy-row.config-row-head > span:nth-child(n+3) { display: none; }
 }
 
 /* ── Import: the services, one list's songs, the trickle ── */

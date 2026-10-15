@@ -132,8 +132,9 @@ playlists find their tracks, and hearting one downloads it exactly as it does fr
 other app. What you can't do is search for any song at all: search on the phone only finds
 what the stations have suggested.
 
-- Run a full sync in Symfonium to pick up new suggestions. Stations refresh as you listen,
-  and Octo rebuilds the list when they change, or an hour after its last build.
+- Run a full sync in Symfonium to pick up new suggestions. Stations are drawn again every
+  `LASTFM_REFRESH_INTERVAL_HOURS` (12 by default), and Octo rebuilds the list when they change,
+  or an hour after its last build.
 - A song you heart shows up twice for a while: the preview, and the downloaded copy once
   Navidrome has scanned it. The next sync after the list is rebuilt drops the preview.
 - Controlled under **Behavior → Discovery for offline-search apps** in the admin dashboard
@@ -367,9 +368,14 @@ than hiding it afterwards, so nothing downstream holds it; names already written
 
 A heart on a song you already have is a favorite in Navidrome, straight away, and downloads
 nothing. A heart on a song you do not have only downloads it; heart it again once it is in your
-library to make it a favorite. `STAR_DOWNLOADS_FOR_REQUESTER` (off by default) makes Octo also
-favorite a download when it lands, for the person who hearted it; an album heart then
-favorites the album. Octo's own apps are left out,
+library to make it a favorite. That second heart may be on the same song the app still shows:
+once the download has landed, Octo favorites the library's copy at once and fetches nothing.
+`STAR_DOWNLOADS_FOR_REQUESTER` (off by default; **Favorite downloads when they land** on the
+dashboard) makes Octo also favorite a download when it lands, for the person who hearted it; an
+album heart then favorites the album. With it on, the heart stays on the song in that person's
+apps the whole way: in their starred lists and on the song wherever it is listed while it
+downloads, and on the song they hearted once its library copy is the favorite, where taking the
+heart back takes the copy's favorite back too. Octo's own apps are left out,
 because their star button means Add. The person's sign-in is held in memory
 with the download until the song arrives (a password is first turned into a token, so the
 password itself is never held), and a restart drops it.
@@ -699,7 +705,11 @@ Other Radio defaults use
 encoding structured rows in `.env` is brittle.
 
 The in-process worker refreshes stale snapshots in the background while retaining the
-last good version. State is bounded and versioned in
+last good version. Stations are drawn again every `LASTFM_REFRESH_INTERVAL_HOURS` (12 by
+default), whether or not anyone is listening; plays never draw a station again early, so an app
+that holds a station as a playlist keeps the same songs between refreshes. A listener's first
+stations, and Your Radio once `LASTFM_MINIMUM_PLAYS` plays have taught it, come as soon as
+there is something to build them from. State is bounded and versioned in
 `/app/config/lastfm-radio-state.json`; do not share that file across Octo instances
 because cross-process locking is not supported.
 
@@ -941,7 +951,7 @@ The dashboard's **Better quality** page lists every song in your library that is
 
 Copies come from Soulseek, from Lidarr, or from both: **Library actions → Where to look for a higher quality copy** (`LIBRARY_ACTIONS_UPGRADE_SOURCE`). Automatic, the default, asks Soulseek first and Lidarr for what Soulseek cannot find, using whichever is set up, and asks Lidarr alone while Soulseek is offline. Lidarr only fetches whole albums, so Octo borrows the album: it copies out the one song, which then goes through the same checks and the same in-place swap as a Soulseek copy, deletes the other files that search brought in, and puts the album's monitoring back as it was. A song whose file Lidarr itself manages is left to Lidarr, which upgrades it in place when its quality profile asks for lossless.
 
-> **A heart is "fetch" for a song you do not have, and "favorite" for one you do.** Octo checks your library first. A song you already have, even the copy Octo found outside your library, becomes your favorite in Navidrome straight away and downloads nothing (an MP3 is queued for Better quality). A song you do not have is downloaded and nothing more: once it is in your library, heart it there to make it a favorite. `STAR_DOWNLOADS_FOR_REQUESTER` makes Octo favorite downloads when they land instead. Octo's own apps are left out of both, since their heart means Add.
+> **A heart is "fetch" for a song you do not have, and "favorite" for one you do.** Octo checks your library first. A song you already have, even the copy Octo found outside your library, becomes your favorite in Navidrome straight away and downloads nothing (an MP3 is queued for Better quality). A song you do not have is downloaded and nothing more: once it is in your library, heart it again (the song the app still shows will do) to make it a favorite. `STAR_DOWNLOADS_FOR_REQUESTER` makes Octo favorite downloads when they land instead. Octo's own apps are left out of both, since their heart means Add.
 
 ### Sharing back on Soulseek
 

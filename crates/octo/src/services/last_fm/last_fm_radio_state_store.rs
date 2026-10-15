@@ -439,6 +439,9 @@ impl LastFmRadioStateStore {
                 );
                 return Document::empty();
             }
+            // No refresh outlives the process that ran it.
+            let mut user = user;
+            user.refreshing = false;
             state.users.set(folded, (key, user));
         }
         self.prune_locked(&mut state, self.clock.now());

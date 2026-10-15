@@ -4975,6 +4975,57 @@
       "reason": "The Library health answers as the next update leaves them. The report carries tagCheck, the library tag check's state (whether it runs, how far it got, how many songs disagree with their audio and how many stray spaces it took off); the duplicates check carries keepRated, keepRatedLabel, keepRatedMeaning and keepRatedMore (the Keep every rated copy switch, off by default); a duplicates preview carries keepRated, skipped, skippedLine and per set skipped, kept, removed and each copy's marks, and every remove step carries into (the copy its stars, ratings and playlist places move to). The lines the reviewed health-lookups-uncapped and duplicates-keep-marks entries pin on these answers are kept: one answer is explained by one entry, so this entry pins the combined diff and supersedes them on these requests. Where the 26-song lookup is still going (lookup-slow) and the tag check's progress, the count is whatever it was when the answer was read.",
       "knownDiff": "Library health answers, next update",
       "reviewed": "Brandon 2026-10-14 (release go)"
+    },
+    {
+      "id": "dashboard-files-issue-94",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"EwBgJt3dLkW5w5D8QlhfKL\\+/XjDtGaOXyezNHAZPMcE=\"'\\]$",
+        "^B:\\ \\['\"MKXxpPEThObO0hkctGmmo0EIQ5N4beBmdf9X54y0fEg=\"'\\]$",
+        "^A:\\ 13006026dddd2e45b9c390fc42585f28bfbf5e30ed19a397c9eccd1c064f31c1\\ \\(216740\\ bytes,\\ text\\)$",
+        "^B:\\ 30a5f1a4f11384e6ced2191cb469a6a341084393786de06675ff57e78cb47c48\\ \\(219232\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ 0\\-9/216740'\\]$",
+        "^B:\\ \\['bytes\\ 0\\-9/219232'\\]$",
+        "^A:\\ \\['bytes\\ \\*/216740'\\]$",
+        "^B:\\ \\['bytes\\ \\*/219232'\\]$",
+        "^A:\\ \\['\"yk1kcMzxILChyWr9mDPn5PPSr9loK/EdUrFcSIJGYrU=\"'\\]$",
+        "^B:\\ \\['\"NSZOsRLh6Du8goyALoEtvFBGVFfPYCEB353kAZi3lSA=\"'\\]$",
+        "^A:\\ ca4d6470ccf120b0a1c96afd9833e7e4f3d2afd9682bf11d52b15c48824662b5\\ \\(130015\\ bytes,\\ text\\)$",
+        "^B:\\ 35264eb112e1e83bbc828c802e812dbc50465457cf602101df9de40198b79520\\ \\(130381\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"7wf/Q6ynyEaafHOqhR7YaFtZClH5bqVt1ODQG85EaXk=\"'\\]$",
+        "^B:\\ \\['\"cOivrFSwTfmjqxf0/rUmG\\+u1jQ6c9\\+N2O4DAyWXUyDE=\"'\\]$",
+        "^A:\\ ef07ff43aca7c8469a7c73aa851ed8685b590a51f96ea56dd4e0d01bce446979\\ \\(443677\\ bytes,\\ text\\)$",
+        "^B:\\ 70e8afac54b04df9a3ab17f4feb5261bebb58d0e9cf7e3763b80c0c965d4c831\\ \\(450265\\ bytes,\\ text\\)$"
+      ],
+      "reason": "A re-pin of the dashboard files (index.html, admin.js and admin.css) for issue #94, on top of the files dashboard-files-next-update pins (release 2026.10.14): the Better quality page's filters (AcoustID match, date added, genre, bitrate), Select the first N songs the filters show (at most 2,000 a press, the page's rows by the header box), the bar saying how many run at a time and when the queue has no room, and the songs' date added, genres and unsure AcoustID matches in the list; and the Favorite downloads when they land row's words. One answer is explained by one entry, so this entry pins the combined files and supersedes dashboard-files-next-update.",
+      "knownDiff": "Dashboard files, issue #94"
     }
   ]
 }

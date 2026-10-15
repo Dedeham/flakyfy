@@ -448,7 +448,7 @@ async fn check_now(State(state): State<AppState>, request: Request) -> Response 
     }
 }
 
-/// The library songs whose title or artist holds every word of uid=197608(Brandon) gid=197121 groups=197121, for Check one song now.
+/// The library songs whose title or artist holds every word of the search, for Check one song now.
 async fn find(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = match bound(request).await {
         Ok(bound) => bound,

@@ -55,6 +55,10 @@ pub struct LastFmRadioUserState {
     pub last_refresh_success_utc: Option<DateTime<Utc>>,
     pub last_refresh_error: Option<String>,
     pub refreshing: bool,
+    /// When the dashboard last cleared this listener's history. From then on radio learns only
+    /// from new plays, never from a starting profile. Absent from the file until set.
+    #[serde(with = "datetime::utc_option", skip_serializing_if = "Option::is_none")]
+    pub history_cleared_utc: Option<DateTime<Utc>>,
 }
 
 impl Default for LastFmRadioUserState {
@@ -71,6 +75,7 @@ impl Default for LastFmRadioUserState {
             last_refresh_success_utc: None,
             last_refresh_error: None,
             refreshing: false,
+            history_cleared_utc: None,
         }
     }
 }

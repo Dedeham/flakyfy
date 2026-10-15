@@ -26,6 +26,7 @@ use octo_core::common::song_identity::SongIdentity;
 
 use octo_core::common::dotnet::is_null_or_white_space;
 
+use super::credit_names;
 use super::release_fact_tags;
 use super::tag_file::{TagError, TagFile, TagPicture};
 use super::tag_writer_extras::{self as extras, TagFields};
@@ -48,6 +49,8 @@ pub enum GenreWrite {
 /// under another album (`release_fact_tags::filed_elsewhere`), whose facts the caller took off
 /// first with `release_fact_tags::tidy`.
 pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite, filed_elsewhere: bool) {
+    let credits = credit_names::Credits::read(file);
+    let mut written = credit_names::Written::default();
     // Basic metadata. Title/artist we always have; only overwrite album + album-artist when we
     // actually resolved them, so a well-tagged Soulseek FLAC keeps its own album if Deezer had
     // no match.
@@ -56,23 +59,30 @@ pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite, filed_el
     }
     if !song.artist.is_empty() {
         file.set_performers(std::slice::from_ref(&song.artist));
+        written.artist = true;
     }
     // The full credit stays in the artist tag; each artist also gets a value of their own, so
     // Navidrome files a collaboration under every one of them (#49).
     if song.artists.len() > 1 {
         extras::set_multi_value(file, "ARTISTS", &song.artists);
+        written.artists = true;
     }
     if !song.album.is_empty() {
         file.set_album(Some(&song.album));
     }
     if let Some(album_artist) = song.album_artist.as_ref().filter(|name| !name.is_empty()) {
         file.set_album_artists(std::slice::from_ref(album_artist));
+        written.album_artist = true;
     } else if !song.artist.is_empty() {
         // A list of credits as album artist scatters the album view the way it scattered
         // folders, so the first credit stands in when a source named one.
         let first = song.primary_artist.clone().unwrap_or_else(|| song.artist.clone());
         file.set_album_artists(&[first]);
+        written.album_artist = true;
     }
+    // The file's own other names for what was just written would be second values the library
+    // server reads beside it, and split the album from tracks that lack them.
+    credit_names::tidy_written(file, &credits, written);
 
     // Only write the track number when we actually have one, and only pair the total with it
     //: avoids a bogus "0/11" when Deezer's search result carried the album total but not this

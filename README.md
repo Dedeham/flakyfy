@@ -132,8 +132,9 @@ playlists find their tracks, and hearting one downloads it exactly as it does fr
 other app. What you can't do is search for any song at all: search on the phone only finds
 what the stations have suggested.
 
-- Run a full sync in Symfonium to pick up new suggestions. Stations refresh as you listen,
-  and Octo rebuilds the list when they change, or an hour after its last build.
+- Run a full sync in Symfonium to pick up new suggestions. Stations are drawn again every
+  `LASTFM_REFRESH_INTERVAL_HOURS` (12 by default), and Octo rebuilds the list when they change,
+  or an hour after its last build.
 - A song you heart shows up twice for a while: the preview, and the downloaded copy once
   Navidrome has scanned it. The next sync after the list is rebuilt drops the preview.
 - Controlled under **Behavior → Discovery for offline-search apps** in the admin dashboard
@@ -704,7 +705,11 @@ Other Radio defaults use
 encoding structured rows in `.env` is brittle.
 
 The in-process worker refreshes stale snapshots in the background while retaining the
-last good version. State is bounded and versioned in
+last good version. Stations are drawn again every `LASTFM_REFRESH_INTERVAL_HOURS` (12 by
+default), whether or not anyone is listening; plays never draw a station again early, so an app
+that holds a station as a playlist keeps the same songs between refreshes. A listener's first
+stations, and Your Radio once `LASTFM_MINIMUM_PLAYS` plays have taught it, come as soon as
+there is something to build them from. State is bounded and versioned in
 `/app/config/lastfm-radio-state.json`; do not share that file across Octo instances
 because cross-process locking is not supported.
 

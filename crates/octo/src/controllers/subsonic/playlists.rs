@@ -656,6 +656,9 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
                 .create_error(format, 40, "Wrong username or password")
                 .into_response();
         }
+        // An app that keeps its list of playlists and reads each by id still has the lists made
+        // again when they are due; the refresh runs behind this answer.
+        let _ = state.generated_playlists.list(&username, &call.parameters).await;
         // A failure here answers 500.
         let mut entries = match state
             .generated_playlists

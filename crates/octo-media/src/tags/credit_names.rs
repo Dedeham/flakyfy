@@ -32,13 +32,45 @@ pub const ALBUM_ARTIST: &[&str] = &[
 /// write.
 pub const ALBUM_ARTISTS: &[&str] = &["albumartists", "album artists", "album_artists"];
 pub const ALBUM_ARTIST_SORT: &[&str] = &["albumartistsort", "wm/albumartistsortorder", "tso2", "soaa"];
-pub const ALBUM_ARTISTS_SORT: &[&str] = &["albumartistssort"];
+/// The album artists' sort names, with the spelling ALBUMARTISTS_SORT taggers also write.
+pub const ALBUM_ARTISTS_SORT: &[&str] = &["albumartistssort", "albumartists_sort"];
+/// The album artist as the release credits it, which taggers keep beside the album artist.
+pub const ALBUM_ARTIST_CREDIT: &[&str] = &[
+    "albumartist_credit",
+    "albumartistcredit",
+    "albumartists_credit",
+    "albumartistscredit",
+];
+/// The album artist's MusicBrainz ids (`musicbrainz_albumartistid`).
+pub const ALBUM_ARTIST_ID: &[&str] = &[
+    "musicbrainz album artist id",
+    "musicbrainz_albumartistid",
+    "musicbrainz/album artist id",
+];
 /// The artist's names (`artist`).
 pub const ARTIST: &[&str] = &["artist", "author", "iart", "tpe1", "\u{a9}art"];
 /// The artists as a list (`artists`).
 pub const ARTISTS: &[&str] = &["artists", "wm/artists"];
 pub const ARTIST_SORT: &[&str] = &["artistsort", "wm/artistsortorder", "tsop", "soar"];
-pub const ARTISTS_SORT: &[&str] = &["artistssort"];
+pub const ARTISTS_SORT: &[&str] = &["artistssort", "artists_sort"];
+pub const ARTIST_CREDIT: &[&str] = &["artist_credit", "artistcredit", "artists_credit", "artistscredit"];
+/// The artist's MusicBrainz ids (`musicbrainz_artistid`).
+pub const ARTIST_ID: &[&str] = &[
+    "musicbrainz artist id",
+    "musicbrainz_artistid",
+    "musicbrainz/artist id",
+];
+
+/// MusicBrainz's id for Various Artists.
+pub const VARIOUS_ARTISTS_ID: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
+
+/// Whether a name is the one a compilation goes under.
+pub fn is_various_artists(name: &str) -> bool {
+    let name = name.trim();
+    ["Various Artists", "Various", "VA"]
+        .iter()
+        .any(|various| eq_ignore_case(name, various))
+}
 
 /// One credit and its names: the one value, the list, and the sort names of each, with the frame,
 /// field and atom each container holds the value and its sort name in.
@@ -47,6 +79,10 @@ struct Role {
     lists: &'static [&'static str],
     sorts: &'static [&'static str],
     list_sorts: &'static [&'static str],
+    /// The credit as credited, and its MusicBrainz ids: they describe the credit, so they go
+    /// with the sort names when it changes.
+    credits: &'static [&'static str],
+    ids: &'static [&'static str],
     frame: &'static str,
     vorbis: &'static str,
     atom: [u8; 4],
@@ -64,6 +100,8 @@ const ALBUM_ARTIST_ROLE: Role = Role {
     lists: ALBUM_ARTISTS,
     sorts: ALBUM_ARTIST_SORT,
     list_sorts: ALBUM_ARTISTS_SORT,
+    credits: ALBUM_ARTIST_CREDIT,
+    ids: ALBUM_ARTIST_ID,
     frame: "TPE2",
     vorbis: "ALBUMARTIST",
     atom: *b"aART",
@@ -79,6 +117,8 @@ const ARTIST_ROLE: Role = Role {
     lists: ARTISTS,
     sorts: ARTIST_SORT,
     list_sorts: ARTISTS_SORT,
+    credits: ARTIST_CREDIT,
+    ids: ARTIST_ID,
     frame: "TPE1",
     vorbis: "ARTIST",
     atom: *b"\xa9ART",
@@ -138,8 +178,9 @@ pub struct Written {
 /// the library server reads Octo's value alone. The album artists a file arrived with go too,
 /// since the library server reads them in place of the album artist; the artists a file arrived
 /// with stay only as the artist split into its names. A sort name stays only while the credit it
-/// sorts is unchanged, and then under its one name. `before` is [`Credits::read`] of the file
-/// before Octo wrote anything.
+/// sorts is unchanged, and then under its one name; the credit as credited and its MusicBrainz
+/// ids stay only while it is unchanged too. `before` is [`Credits::read`] of the file before Octo
+/// wrote anything.
 pub fn tidy_written(file: &mut TagFile, before: &Credits, written: Written) {
     if written.artist {
         tidy_role(file, &ARTIST_ROLE, &before.artist, written.artists);
@@ -181,6 +222,8 @@ fn tidy_role(file: &mut TagFile, role: &Role, before: &[String], list_written: b
     if heard(file, role) != before {
         remove_names(file, role.sorts, |_, _| false);
         remove_names(file, role.list_sorts, |_, _| false);
+        remove_names(file, role.credits, |_, _| false);
+        remove_names(file, role.ids, |_, _| false);
         if let Some(id3) = file.id3v2.as_mut() {
             id3.remove_frames(role.sort_frame);
         }
@@ -200,7 +243,8 @@ fn tidy_role(file: &mut TagFile, role: &Role, before: &[String], list_written: b
 
 /// The fields beside a file's own album artist that the library server reads as more album
 /// artists, in the container it reads: the album artist under another name, and a list of album
-/// artists that is not the album artist itself or split into its names.
+/// artists that is not the album artist itself or split into its names. With them, the sort
+/// names, credits and MusicBrainz ids of another album artist.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StrayAlbumArtists {
     /// The album artist the file names in its own field.
@@ -263,6 +307,44 @@ impl StrayAlbumArtists {
                 }
             }
         }
+        // A sort name, credit or MusicBrainz id of a compilation, or of a name already found
+        // beside the album artist, describes another album artist: a peer's copy from a
+        // compilation keeps "Various Artists" in all of them.
+        if !kept.iter().any(|own| is_various_artists(own)) {
+            let others: Vec<String> = fields
+                .iter()
+                .flat_map(|field| &field.values)
+                .filter(|value| !kept.iter().any(|own| same_name(own, value)))
+                .cloned()
+                .collect();
+            let describes_another = |value: &String| {
+                is_various_artists(value) || others.iter().any(|other| same_name(other, value))
+            };
+            for (name, values) in fields_in(file, container) {
+                let values = clean(&values);
+                let seen = fields.iter().any(|field| eq_ignore_case(&field.name, &name));
+                let another = if wanted(role.ids, &name) {
+                    values
+                        .iter()
+                        .all(|id| eq_ignore_case(id.trim(), VARIOUS_ARTISTS_ID))
+                } else if wanted(role.sorts, &name)
+                    || wanted(role.list_sorts, &name)
+                    || wanted(role.credits, &name)
+                {
+                    values.iter().all(describes_another)
+                } else {
+                    false
+                };
+                if another && !seen && !values.is_empty() {
+                    copies = false;
+                    fields.push(NamedField {
+                        container,
+                        name,
+                        values,
+                    });
+                }
+            }
+        }
         (!fields.is_empty()).then_some(StrayAlbumArtists {
             album_artist: kept,
             fields,
@@ -300,15 +382,30 @@ pub fn remove_fields(file: &mut TagFile, fields: &[NamedField]) {
     }
 }
 
-/// Puts back fields [`remove_fields`] took off. Only the album artist's other names come back:
-/// a field under any other name, or the album artist's own field, is left out.
+/// Puts back fields [`remove_fields`] took off. Only the album artist's other names come back,
+/// with the sort names, credits and ids that went with them: a field under any other name, or
+/// the album artist's own field, is left out.
 pub fn restore_fields(file: &mut TagFile, fields: &[NamedField]) {
     let role = &ALBUM_ARTIST_ROLE;
+    restore_where(file, fields, |container, name| {
+        let other_name = wanted(role.names, name)
+            && !(container == Container::Vorbis && eq_ignore_case(name, role.vorbis));
+        other_name
+            || [role.lists, role.list_sorts, role.sorts, role.credits, role.ids]
+                .iter()
+                .any(|names| wanted(names, name))
+    });
+}
+
+/// Puts back the fields `allowed` names, each in its container.
+pub(crate) fn restore_where(
+    file: &mut TagFile,
+    fields: &[NamedField],
+    allowed: impl Fn(Container, &str) -> bool,
+) {
     for field in fields {
         let name = field.name.as_str();
-        let other_name = wanted(role.names, name)
-            && !(field.container == Container::Vorbis && eq_ignore_case(name, role.vorbis));
-        if !(other_name || wanted(role.lists, name) || wanted(role.list_sorts, name)) {
+        if !allowed(field.container, name) {
             continue;
         }
         let values: Vec<String> = clean(&field.values);
@@ -350,7 +447,7 @@ pub fn from_text(text: &str) -> Option<Vec<NamedField>> {
 
 /// The container the library server reads: the Vorbis comment on FLAC and Ogg, the iTunes atoms
 /// on MP4, ID3 on the rest.
-fn read_container(file: &TagFile) -> Option<Container> {
+pub(super) fn read_container(file: &TagFile) -> Option<Container> {
     match file.format() {
         Format::Flac | Format::Ogg => file.xiph.is_some().then_some(Container::Vorbis),
         Format::Mp4 => file.apple.is_some().then_some(Container::Mp4),
@@ -420,7 +517,7 @@ fn has_own_sort(file: &TagFile, container: Container, role: &Role) -> bool {
 }
 
 /// The container's named fields: TXXX frames, Vorbis fields or freeform atoms, in file order.
-fn fields_in(file: &TagFile, container: Container) -> Vec<(String, Vec<String>)> {
+pub(super) fn fields_in(file: &TagFile, container: Container) -> Vec<(String, Vec<String>)> {
     match container {
         Container::Id3 => file
             .id3v2
@@ -461,7 +558,7 @@ fn collect(fields: &[(String, Vec<String>)], names: &[&str]) -> Vec<String> {
     values
 }
 
-fn clean(values: &[String]) -> Vec<String> {
+pub(super) fn clean(values: &[String]) -> Vec<String> {
     values
         .iter()
         .filter(|value| !is_null_or_white_space(Some(value)))
@@ -469,7 +566,7 @@ fn clean(values: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn wanted(names: &[&str], name: &str) -> bool {
+pub(super) fn wanted(names: &[&str], name: &str) -> bool {
     names.iter().any(|wanted| eq_ignore_case(wanted, name))
 }
 
@@ -495,7 +592,7 @@ fn remove_in(
     }
 }
 
-fn remove_field(file: &mut TagFile, container: Container, name: &str) {
+pub(super) fn remove_field(file: &mut TagFile, container: Container, name: &str) {
     match container {
         Container::Id3 => {
             if let Some(id3) = file.id3v2.as_mut() {
@@ -572,7 +669,7 @@ fn is_list_of(values: &[String], credit: &[String], exact: bool) -> bool {
 }
 
 /// One name in other capitals or spacing.
-fn same_name(a: &str, b: &str) -> bool {
+pub(super) fn same_name(a: &str, b: &str) -> bool {
     let fold = |text: &str| {
         text.split_whitespace()
             .collect::<Vec<_>>()

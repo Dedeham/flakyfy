@@ -14,6 +14,7 @@ mod xiph;
 
 pub mod audio_container;
 pub mod credit_names;
+pub mod field_names;
 pub mod kept_identity;
 pub mod release_fact_tags;
 pub mod song_tags;

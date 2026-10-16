@@ -5588,6 +5588,57 @@
       "reviewed": "Brandon 2026-10-15 (release go)"
     },
     {
+      "id": "dashboard-files-spotiflac",
+      "backlog": "H",
+      "requests": [
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index",
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"GOfRtCUwIDdNydivCP4uOlA6\\+awevQfDCu0aNl2Ga9Y=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ 18e7d1b4253020374dc9d8af08fe2e3a503af9ac1ebd07c30aed1a365d866bd6\\ \\(230271\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ 0\\-9/192988'\\]$",
+        "^B:\\ \\['bytes\\ 0\\-9/230271'\\]$",
+        "^A:\\ \\['bytes\\ \\*/192988'\\]$",
+        "^B:\\ \\['bytes\\ \\*/230271'\\]$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"fz3nKUS23XNSrybYuQty\\+6sNJDTK9Ci1EiWYT985lpY=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ 7f3de72944b6dd7352af26d8b90b72fbab0d2434caf428b51225984fdf399696\\ \\(134400\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"eyzHh51zG9\\+IkrzsWtRNKsHHXBsVw6NyCA5o7IFhJ7Y=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 7b2cc7879d731bdf8892bcec5ad44d2ac1c75c1b15c3a372080e68ec816127b6\\ \\(473353\\ bytes,\\ text\\)$"
+      ],
+      "reason": "A re-pin of the dashboard files (index.html, admin.js and admin.css) with the SpotiFLAC page on top of release 2026.10.15: a SpotiFLAC entry under Hearts & downloads, and its page (what you bring, the Connection card with Download with SpotiFLAC, Address, Web token and Test connection, whose findings are listed in the card, and the Downloads card with When to ask, Quality, Extensions to try, Music folder in SpotiFLAC, Time per song and Songs at once); Heart download priority's Soulseek row says \"with SpotiFLAC\" while SpotiFLAC is on. One answer is explained by one entry, so this entry pins the combined files; it supersedes dashboard-files-2026-10-15.",
+      "knownDiff": "Dashboard files, SpotiFLAC"
+    },
+    {
       "id": "outside-stream-head",
       "backlog": "base",
       "requests": [

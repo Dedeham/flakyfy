@@ -896,7 +896,9 @@ impl HeartAcquisitionCoordinator {
     }
 
     fn enabled_steps(&self, album_heart: bool) -> Vec<HeartDownloadSource> {
-        let soulseek_off = self.extras.soulseek.as_ref().is_some_and(|link| link.is_off());
+        // SpotiFLAC rides on the Soulseek step, so with SpotiFLAC on the step stays.
+        let soulseek_off = self.extras.soulseek.as_ref().is_some_and(|link| link.is_off())
+            && !self.settings.current().spotiflac.is_on();
         self.settings
             .current()
             .subsonic
@@ -1053,7 +1055,7 @@ impl HeartAcquisitionCoordinator {
     /// When a Soulseek step stops waiting for slskd, or `None` when it never waits: another
     /// source, no link, the wait switched off, or Lidarr later in the chain. The wait exists so
     /// an outage does not turn a lossless heart into a YouTube MP3; Lidarr can bring a lossless
-    /// copy now.
+    /// copy now, and so can SpotiFLAC when it is on.
     fn soulseek_deadline(
         &self,
         steps: &[HeartDownloadSource],
@@ -1063,7 +1065,8 @@ impl HeartAcquisitionCoordinator {
         let link = self.extras.soulseek.as_ref()?;
         (steps[index] == HeartDownloadSource::Soulseek
             && link.hold_limit() > TimeDelta::zero()
-            && !steps[index + 1..].contains(&HeartDownloadSource::Lidarr))
+            && !steps[index + 1..].contains(&HeartDownloadSource::Lidarr)
+            && !self.settings.current().spotiflac.is_on())
         .then(|| held_since_utc.unwrap_or_else(|| link.utc_now()) + link.hold_limit())
     }
 

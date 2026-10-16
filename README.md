@@ -348,7 +348,7 @@ On a small disk, mind the cover copies: Octo keeps each library cover it has sho
 
 ### What if I don't want to use Soulseek?
 
-You can use YouTube or an existing Lidarr server, or disable automatic acquisition entirely.
+You can use YouTube, an existing Lidarr server or a SpotiFLAC server of your own (see [Your own SpotiFLAC](#your-own-spotiflac)), or disable automatic acquisition entirely.
 
 Use **Streams & hearts → Heart download priority** in the admin UI to order Soulseek, YouTube, and Lidarr and independently choose whether each handles song hearts, album hearts, or both. Octo tries eligible sources from top to bottom and stops at the first success. `DOWNLOAD_SOURCE`, `DOWNLOAD_ON_STAR`, and `DOWNLOAD_ALBUM_ON_STAR` remain migration defaults for existing and env-only installations.
 
@@ -842,6 +842,33 @@ The selected Lidarr root and Octo's effective Navidrome library root must expose
 A heart through Lidarr keeps the same promises as one through Soulseek. Lidarr brings the whole album, so a song already in your library is deleted from what it brought (an MP3 you own is queued for Better quality instead), a song removed with a library action stays removed, and an album Octo had Lidarr monitor goes back to unmonitored once it lands, so Lidarr does not fetch the songs Octo moved into its own layout again. Every song Lidarr imports then goes through the same pipeline as a Soulseek download: AcoustID (a wrong recording, or a live take you did not ask for, is deleted), the spectrum check, release matching, tags, ReplayGain, lyrics and your folder layout.
 
 A heart waits for Lidarr's import, up to `LIDARR_IMPORT_TIMEOUT_SECONDS` (default 1800), and any song that did not land (Lidarr found nothing in time, or the file failed a check) goes to the next source in **Heart download priority**, which skips the songs that did. The wait never blocks playback or later hearts. `LIDARR_COMPLETION_MODE=Accepted` (default) sends a notice when Lidarr accepts the search and one for the album when an album heart lands; `Imported` also sends one when a track heart's album lands, and one when an import fails or times out.
+
+### Your own SpotiFLAC
+
+For songs Soulseek does not have, Octo can ask a SpotiFLAC server you run yourself. It is off by default. Octo includes no SpotiFLAC, no extensions and no places to download from: SpotiFLAC (its Python module, `pip install SpotiFLAC`, or its Docker image) loads the extension registry you choose, and what it can find depends on the extensions you install in it. Octo finds the song in SpotiFLAC's catalog (by ISRC first, then by artist, title, version and length), asks SpotiFLAC to save it into a hidden folder of the music folder, and checks the file like a Soulseek download: its length, the version its own title names, AcoustID and the spectrum. A file that fails is thrown away and the next source is asked. A file that passes is tagged by Octo, never by SpotiFLAC's tags alone.
+
+1. In `.env`, add `spotiflac` to `COMPOSE_PROFILES` (comma-separated, for example `COMPOSE_PROFILES=navidrome,spotiflac`), set `SPOTIFLAC_REGISTRIES` to your registry's address and `SPOTIFLAC_WEB_TOKEN` to a long random string, then run `docker compose up -d`. This starts SpotiFLAC's own image beside Octo, with the music folder mounted at the same path.
+2. Open SpotiFLAC's page on port 8010 (`SPOTIFLAC_PORT`) with `?token=` and your token, and install at least one extension.
+3. In Octo's dashboard, open **SpotiFLAC**, set the address to `http://spotiflac:8000` and the same token, press **Test connection**, turn on **Download with SpotiFLAC** and save. (Or set `SPOTIFLAC_ENABLED=true` and `SPOTIFLAC_URL=http://spotiflac:8000` in `.env`.)
+
+SpotiFLAC takes Soulseek's place in **Heart download priority**: after Soulseek finds nothing (the default), before it, or before it only for songs written in Chinese, Japanese, Korean or Thai script. With Soulseek off, SpotiFLAC is asked alone. A SpotiFLAC running elsewhere works too (`spotiflac --web --host 0.0.0.0 --web-token <token>`): it must see Octo's music folder, and **Music folder in SpotiFLAC** says where when its path differs. Multi-user mode (`--web-multiuser`) is not supported, since it saves into each account's own folder.
+
+| `.env` | Default | What it does |
+| --- | --- | --- |
+| `SPOTIFLAC_ENABLED` | `false` | Downloads ask SpotiFLAC |
+| `SPOTIFLAC_URL` | blank | SpotiFLAC's address, as Octo's container reaches it |
+| `SPOTIFLAC_WEB_TOKEN` | blank | SpotiFLAC's web token; the `spotiflac` service starts with the same one |
+| `SPOTIFLAC_PLACEMENT` | `AfterSoulseek` | `AfterSoulseek`, `BeforeSoulseek` or `BeforeSoulseekForAsianScripts` |
+| `SPOTIFLAC_QUALITY` | `LOSSLESS` | `LOSSLESS`, or `HI_RES_LOSSLESS` for hi-res where there is one |
+| `SPOTIFLAC_SERVICES` | blank | Your extension ids to try, in order, separated by commas; blank leaves the order to SpotiFLAC |
+| `SPOTIFLAC_FOLDER` | blank | Octo's music folder as SpotiFLAC sees it, when that path differs |
+| `SPOTIFLAC_TIMEOUT_SECONDS` | `600` | How long one song may take (60 to 3600) |
+| `SPOTIFLAC_AT_ONCE` | `2` | Songs SpotiFLAC is asked for at once (1 to 4) |
+| `SPOTIFLAC_REGISTRIES` | blank | For the `spotiflac` service: your extension registry addresses, separated by commas |
+| `SPOTIFLAC_PORT` | `8010` | For the `spotiflac` service: the port of SpotiFLAC's page |
+| `SPOTIFLAC_IMAGE_TAG` | `latest` | For the `spotiflac` service: the SpotiFLAC image tag |
+| `SPOTIFLAC_DATA_DIR` | `./spotiflac-data` | For the `spotiflac` service: SpotiFLAC's own settings and extensions |
+| `SPOTIFLAC_PUID`, `SPOTIFLAC_PGID` | `1000` | For the `spotiflac` service: the user SpotiFLAC runs as |
 
 ### Playback and acquisition
 

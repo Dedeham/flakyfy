@@ -20,6 +20,7 @@ pub mod radio_source;
 pub mod restart_tracker;
 pub mod server;
 pub mod soulseek;
+pub mod spotiflac;
 pub mod store;
 pub mod subsonic;
 mod text;
@@ -51,6 +52,7 @@ pub use radio_source::RadioSourceSettings;
 pub use restart_tracker::RestartTracker;
 pub use server::ServerSettings;
 pub use soulseek::SoulseekSettings;
+pub use spotiflac::{SpotiflacPlacement, SpotiflacSettings};
 pub use store::{RawConfig, SettingsStore};
 pub use subsonic::{
     DownloadMode, DownloadSource, ExplicitFilter, FolderStructure, HeartDownloadSource, HeartDownloadStep,
@@ -81,11 +83,12 @@ pub struct AppSettings {
     pub admin: AdminSettings,
     pub imports: ImportSettings,
     pub family: FamilySettings,
+    pub spotiflac: SpotiflacSettings,
 }
 
 impl AppSettings {
     /// The configuration section names, in registration order.
-    pub const SECTIONS: [&'static str; 16] = [
+    pub const SECTIONS: [&'static str; 17] = [
         "Genre",
         "LibraryActions",
         "GeneratedPlaylists",
@@ -102,6 +105,7 @@ impl AppSettings {
         "Admin",
         "Imports",
         "Family",
+        "Spotiflac",
     ];
 
     /// Binds every section from the merged configuration. A value that does not convert
@@ -126,6 +130,7 @@ impl AppSettings {
             admin: bind_section(tree, "Admin", &mut warnings),
             imports: bind_section(tree, "Imports", &mut warnings),
             family: bind_section(tree, "Family", &mut warnings),
+            spotiflac: bind_section(tree, "Spotiflac", &mut warnings),
         };
         // Navidrome's address is read without the spaces and trailing slashes it may have been
         // typed with, so every upstream URL Octo builds from it has one slash (a trailing slash

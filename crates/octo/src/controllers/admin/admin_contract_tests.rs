@@ -81,6 +81,10 @@ fn missing_from(document: &Value) -> Vec<String> {
         if section == "Family" && document.get("Family").is_none() {
             continue;
         }
+        // So is SpotiFLAC (effective_document_keeps_spotiflac).
+        if section == "Spotiflac" && document.get("Spotiflac").is_none() {
+            continue;
+        }
         for name in names {
             // The family notices are listed with the Family section.
             if name.starts_with("NotifyFamily") && document.get("Family").is_none() {
@@ -139,6 +143,45 @@ async fn effective_document_keeps_family() {
     state.settings_writer.replace(&file).expect("writes");
     let document = get(&saved, "/api/admin/raw-config").await.json();
     assert_eq!(document["Family"]["Enabled"], Value::Bool(false));
+    assert_eq!(missing_from(&document), Vec::<String>::new());
+}
+
+/// With SpotiFLAC at its defaults neither document lists it; once it is on (or saved in
+/// settings.json) both list every SpotiFLAC property, the token as the placeholder.
+#[tokio::test]
+async fn effective_document_keeps_spotiflac() {
+    let (_, off) = factory();
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&off, path).await.json();
+        assert!(document.get("Spotiflac").is_none(), "{path}");
+    }
+
+    let mut settings = factory_settings();
+    settings.spotiflac.enabled = true;
+    settings.spotiflac.url = "http://spotiflac:8000".into();
+    settings.spotiflac.token = "s3cret".into();
+    let on = app(AppState::for_tests(settings));
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&on, path).await.json();
+        assert_eq!(document["Spotiflac"]["Enabled"], Value::Bool(true), "{path}");
+        assert_eq!(document["Spotiflac"]["Placement"], "AfterSoulseek", "{path}");
+        assert_eq!(
+            document["Spotiflac"]["Token"],
+            super::plumbing::SECRET_PLACEHOLDER,
+            "{path}"
+        );
+        assert_eq!(missing_from(&document), Vec::<String>::new(), "{path}");
+    }
+
+    let (state, saved) = factory();
+    let mut file = octo_core::settings::JsonObject::new();
+    file.insert(
+        "Spotiflac".into(),
+        super::plumbing::n_obj([("Enabled", octo_core::json::dom::Node::Bool(false))]),
+    );
+    state.settings_writer.replace(&file).expect("writes");
+    let document = get(&saved, "/api/admin/raw-config").await.json();
+    assert_eq!(document["Spotiflac"]["Enabled"], Value::Bool(false));
     assert_eq!(missing_from(&document), Vec::<String>::new());
 }
 

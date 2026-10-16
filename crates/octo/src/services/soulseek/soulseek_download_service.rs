@@ -61,6 +61,7 @@ use crate::services::i_download_service::DirectStreamInfo;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::library::upgrade_queue::AudioSummary;
 use crate::services::lidarr::{ILidarrTrackFetcher, LidarrImport, LidarrImportHandoff, LidarrTrackRequest};
+use crate::services::spotiflac::SpotiflacClient;
 use crate::services::you_tube::YouTubeResolver;
 use octo_core::common::acquisition_tracker::user_safe;
 use octo_core::lidarr::lidarr_track_fetcher::LidarrStep;
@@ -174,6 +175,8 @@ pub struct SoulseekDownloadParts {
     pub lidarr_imports: Option<Arc<LidarrImportHandoff>>,
     /// Lidarr's track fetcher, when there is one.
     pub lidarr_fetcher: Option<Arc<dyn ILidarrTrackFetcher>>,
+    /// The person's SpotiFLAC server, when one is set up. Asked only while it is on.
+    pub spotiflac: Option<Arc<SpotiflacClient>>,
 }
 
 /// Hybrid download service:
@@ -194,6 +197,7 @@ pub struct SoulseekDownloadService {
     soulseek_link: Option<Arc<dyn ISoulseekLink>>,
     lidarr_imports: Option<Arc<LidarrImportHandoff>>,
     lidarr_fetcher: Option<Arc<dyn ILidarrTrackFetcher>>,
+    spotiflac: Option<Arc<SpotiflacClient>>,
 
     // Set once slskd has said where its incomplete folder is; until then each download asks again.
     excluded_folders: Mutex<Option<Vec<String>>>,
@@ -225,6 +229,7 @@ impl SoulseekDownloadService {
             soulseek_link: parts.soulseek_link,
             lidarr_imports: parts.lidarr_imports,
             lidarr_fetcher: parts.lidarr_fetcher,
+            spotiflac: parts.spotiflac,
             excluded_folders: Mutex::new(None),
             prepared: Mutex::new(HashMap::new()),
             slskd_downloads: Mutex::new(None),
@@ -2270,12 +2275,13 @@ impl DownloadBackend for SoulseekDownloadService {
         let source = download
             .source_override
             .unwrap_or(base.subsonic_settings().download_source);
-        // Soulseek switched off: the combined source is YouTube alone, and Soulseek alone has
-        // nothing to try.
+        // Soulseek switched off, and SpotiFLAC too: the combined source is YouTube alone, and
+        // Soulseek alone has nothing to try. With SpotiFLAC on, it stands in for Soulseek.
+        let lossless = self.slskd.is_on() || self.spotiflac_on().is_some();
         let source = match source {
-            DownloadSource::SoulseekThenYouTube if !self.slskd.is_on() => DownloadSource::YouTube,
+            DownloadSource::SoulseekThenYouTube if !lossless => DownloadSource::YouTube,
             DownloadSource::YouTube => DownloadSource::YouTube,
-            _ if !self.slskd.is_on() => {
+            _ if !lossless => {
                 return Err(
                     InvalidOperationException(super::soulseek_client::SOULSEEK_OFF.to_string()).into(),
                 );
@@ -2293,12 +2299,12 @@ impl DownloadBackend for SoulseekDownloadService {
                 // token.
                 let snapshot = routing.snapshot();
                 match self
-                    .download_via_soulseek(base, &snapshot, download, &profile, cancellation_token)
+                    .download_lossless(base, &snapshot, download, &profile, cancellation_token)
                     .await
                 {
                     Ok(path) => Ok(path),
                     Err(e) if !cancellation_token.is_cancelled() => {
-                        warn!("Soulseek download failed ({e}); falling back to YouTube MP3");
+                        warn!("Lossless download failed ({e}); falling back to YouTube MP3");
                         if !download.suppress_notify {
                             base.notifications().notify(NotificationEvent {
                                 artist: snapshot.artist.clone(),
@@ -2320,7 +2326,7 @@ impl DownloadBackend for SoulseekDownloadService {
             }
             _ => {
                 let snapshot = routing.snapshot();
-                self.download_via_soulseek(base, &snapshot, download, &profile, cancellation_token)
+                self.download_lossless(base, &snapshot, download, &profile, cancellation_token)
                     .await
             }
         }
@@ -3009,6 +3015,10 @@ fn find_directory(root: &str, name: &str, accept: impl Fn(&str) -> bool) -> std:
     }
     Ok(None)
 }
+
+#[path = "spotiflac_download.rs"]
+mod spotiflac_download;
+pub use spotiflac_download::SPOTIFLAC_SOURCE;
 
 #[cfg(test)]
 #[path = "soulseek_download_service_tests.rs"]

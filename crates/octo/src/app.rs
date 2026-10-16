@@ -146,6 +146,7 @@ use crate::services::soulseek::{
     SoulseekLink, SoulseekMetadataService, SoulseekPortCheck, SoulseekShareSwitch, SoulseekSharing,
     SoulseekStartupValidator,
 };
+use crate::services::spotiflac::SpotiflacClient;
 use crate::services::subsonic::{
     CredentialCheck, NavidromeIdentityService, RecentScrobbles, RequestIdentity, SearchSongOrderCache,
     SubsonicDiscoveryService, SubsonicProxyService, SyncCatalogService,
@@ -369,6 +370,8 @@ pub struct AppInner {
     pub download_service: Arc<dyn IDownloadService>,
     /// `LidarrClient`: the Lidarr v1 client, its address and key read live.
     pub lidarr_client: Arc<LidarrClient>,
+    /// The person's own SpotiFLAC server, its address and token read live.
+    pub spotiflac: Arc<SpotiflacClient>,
     /// `LidarrAlbumClaims`: which Lidarr albums a heart or an upgrade is working on.
     pub lidarr_album_claims: Arc<LidarrAlbumClaims>,
     /// `LidarrImportHandoff`: the files a Lidarr heart brought in, waiting for the pipeline.
@@ -754,6 +757,7 @@ struct DownloadDeps<'a> {
 struct Acquisition {
     download_service: Arc<dyn IDownloadService>,
     lidarr_client: Arc<LidarrClient>,
+    spotiflac: Arc<SpotiflacClient>,
     lidarr_album_claims: Arc<LidarrAlbumClaims>,
     lidarr_import_handoff: Arc<LidarrImportHandoff>,
     lidarr_track_fetcher: Arc<dyn ILidarrTrackFetcher>,
@@ -840,6 +844,7 @@ impl Acquisition {
             Some(clients.music_brainz.clone()),
         ));
         let lidarr_track_fetcher: Arc<dyn ILidarrTrackFetcher> = lidarr_fetcher.clone();
+        let spotiflac = Arc::new(SpotiflacClient::new(settings.clone()));
 
         // The download service: the base is built over the services above, and the Soulseek
         // backend's optional ones are the link and Lidarr's two. A handler test may swap in its
@@ -887,6 +892,7 @@ impl Acquisition {
                         soulseek_link: Some(soulseek_link.clone()),
                         lidarr_imports: Some(lidarr_import_handoff.clone()),
                         lidarr_fetcher: Some(lidarr_track_fetcher.clone()),
+                        spotiflac: Some(spotiflac.clone()),
                     },
                 );
                 (download_base as Arc<dyn IDownloadService>, Some(backend))
@@ -967,6 +973,7 @@ impl Acquisition {
         Acquisition {
             download_service,
             lidarr_client,
+            spotiflac,
             lidarr_album_claims,
             lidarr_import_handoff,
             lidarr_track_fetcher,
@@ -3062,6 +3069,7 @@ impl AppState {
             metadata_service,
             download_service: acquisition.download_service,
             lidarr_client: acquisition.lidarr_client,
+            spotiflac: acquisition.spotiflac,
             lidarr_album_claims: acquisition.lidarr_album_claims,
             lidarr_import_handoff: acquisition.lidarr_import_handoff,
             lidarr_track_fetcher: acquisition.lidarr_track_fetcher,
@@ -3473,6 +3481,7 @@ impl AppState {
             metadata_service,
             download_service: acquisition.download_service,
             lidarr_client: acquisition.lidarr_client,
+            spotiflac: acquisition.spotiflac,
             lidarr_album_claims: acquisition.lidarr_album_claims,
             lidarr_import_handoff: acquisition.lidarr_import_handoff,
             lidarr_track_fetcher: acquisition.lidarr_track_fetcher,

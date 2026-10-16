@@ -107,7 +107,11 @@ MEMBERS_DIR=$work/family-members
 FAMILY_ENABLED=true
 UPDATES_CHECK=false
 UPDATES_REPO=
-COMPOSE_PROFILES=sonic
+COMPOSE_PROFILES=sonic,spotiflac
+SPOTIFLAC_ENABLED=true
+SPOTIFLAC_URL=http://spotiflac:8000
+SPOTIFLAC_WEB_TOKEN="a long token"
+SPOTIFLAC_DATA_DIR=$work/spotiflac-data
 EOF
 printf 'Custom_Key2=kept\r\nLAST_LINE=no-newline' >> "$work/octo/.env"
 cp "$work/octo/.env" "$work/before.env"
@@ -145,6 +149,8 @@ fi
 # an old MEMBERS_DIR line is kept like any other (checked above).
 [ ! -e "$work/family-members" ] && [ ! -e "$work/octo/members" ] \
   && pass "no Family members folder is made" || fail "a Family members folder was made"
+[ -d "$work/spotiflac-data" ] \
+  && pass "SpotiFLAC's data folder is made while its profile is on" || fail "SpotiFLAC's data folder was not made"
 
 cp "$work/octo/.env" "$work/first.env"
 run
@@ -154,6 +160,8 @@ cmp -s "$work/first.env" "$work/octo/.env" \
 # A first install takes the defaults the questions show: no Navidrome yet, so the starter stack.
 fresh
 run
+[ ! -e "$work/octo/spotiflac-data" ] \
+  && pass "a first install makes no SpotiFLAC folder" || fail "a first install made a SpotiFLAC folder"
 for want in SUBSONIC_URL=http://navidrome:4533 COMPOSE_PROFILES=navidrome SUBSONIC_ADMIN_USERNAME=admin "DOWNLOAD_PATH=$work/octo/downloads" \
     DOWNLOAD_SOURCE=Soulseek STORAGE_MODE=Stream FOLDER_STRUCTURE=Flat SLSKD_USERNAME=admin \
     LIDARR_QUALITY_PROFILE_ID=0 LIDARR_COMPLETION_MODE=Accepted EXPLICIT_FILTER=All; do

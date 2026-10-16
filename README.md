@@ -339,6 +339,10 @@ Yes. Every download is identified before it is filed: the fingerprint service's 
 
 Yes. Every image is published for amd64 and arm64, so a Pi pulls Octo, the yt-dlp shim and octo-sonic instead of compiling them (see [Published images](#published-images)). The yt-dlp sidecar does most of the CPU work; a Pi 4 or Pi 5 handles a single household's listening fine.
 
+### What is the octopus on some covers?
+
+It marks songs, albums and artists that are not in your library yet, so you can tell them apart in any app: a heart on one downloads it. Your own covers never carry it, it is never written into your files, and Octo's own apps mark these songs their own way. To show those covers plain, turn off **Mark outside covers** under Settings, Search and discovery, or set `COVER_BADGE=false` in `.env`. Apps that saved a cover earlier keep their copy until they refresh it.
+
 On a small disk, mind the cover copies: Octo keeps each library cover it has shown in its config folder (`cover-cache/`), up to 1024 MB by default. Set `COVER_CACHE_MB` in `.env` to a smaller number of megabytes, or to 0 to keep none.
 
 ---
@@ -909,7 +913,7 @@ Octo hijacks these endpoints; everything else proxies to Navidrome unchanged:
 | `createInternetRadioStation`, `updateInternetRadioStation`, `deleteInternetRadioStation` | protect Octo stations while relaying ordinary internet-radio mutations |
 | `/radio/stream/{token}` | consume the ready MP3 pool, optionally frame its existing artist/title as client-requested ICY metadata, and replenish it until disconnect |
 | `stream` | YouTube proxy with Range support, mp4/m4a passthrough |
-| `getCoverArt` | Deezer → iTunes → Last.fm aggregator with Octo watermark |
+| `getCoverArt` | Deezer → iTunes → Last.fm aggregator; outside covers carry the Octo octopus unless `COVER_BADGE=false` |
 | `getArtist` | an artist's albums, EPs and singles from Deezer beside the ones you own, each with its OpenSubsonic `releaseTypes` and, when counted, `ownedCount` |
 | `getAlbum` | external album tracklists, with the songs you already have given as your library's copies (and `ownedCount`), and fills in tracks you're missing from an album you own |
 | `star` | try enabled heart sources in priority order and stop after the first successful track/album acquisition |

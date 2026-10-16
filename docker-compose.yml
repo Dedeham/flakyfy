@@ -72,6 +72,9 @@ services:
       Subsonic__SearchLastFmWaitMs: ${SEARCH_LASTFM_WAIT_MS:-1000}
       Subsonic__StreamSizeWarmPerMinute: ${STREAM_SIZE_WARM_PER_MINUTE:-5}
       Subsonic__CoverCacheMb: ${COVER_CACHE_MB:-1024}
+      # The small octopus on outside covers in other apps: it marks songs not in your
+      # library yet, which a heart downloads. false shows those covers plain.
+      Subsonic__CoverBadge: ${COVER_BADGE:-true}
       # Apps that hide a song with no size (Amperfy) get 1 for an outside song until its
       # real size is known.
       Subsonic__SizeFlagClients: ${SIZE_FLAG_CLIENTS:-Amperfy}

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::Stream;
+use octo_core::models::domain::Album;
 use octo_core::models::download::DownloadInfo;
 use octo_core::settings::DownloadSource;
 use tokio_util::sync::CancellationToken;
@@ -115,6 +116,20 @@ pub trait IDownloadService: Send + Sync {
         cancellation_token: &CancellationToken,
         requested_by: Option<Vec<String>>,
     ) -> anyhow::Result<bool>;
+
+    /// Holds an album's own listing while its tracks are fetched one by one outside a walk (a
+    /// member's album, song by song into their library): each listed track is filed at its
+    /// place on that album, and its tracks settle one set of album-level tags. Ended with
+    /// [`IDownloadService::finish_album_listing`]. The default holds nothing.
+    fn hold_album_listing(&self, external_provider: &str, album: &Album) {
+        let _ = (external_provider, album);
+    }
+
+    /// Ends the hold of [`IDownloadService::hold_album_listing`]: every track fetched under it
+    /// gets the album-level tags its tracks settled on.
+    async fn finish_album_listing(&self, external_provider: &str, album: &Album) {
+        let _ = (external_provider, album);
+    }
 
     /// Checks if a song is currently being downloaded
     fn get_download_status(&self, song_id: &str) -> Option<DownloadInfo>;

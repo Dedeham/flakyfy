@@ -46,7 +46,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt, TryStreamExt};
-use octo_core::common::{PathHelper, dotnet};
+use octo_core::common::{PathHelper, SongIdentity, dotnet};
 use octo_core::fingerprint::VerificationResult;
 use octo_core::models::domain::{Album, Song};
 use octo_core::models::download::{AcquisitionHeard, DownloadHistoryEntry, DownloadInfo, DownloadStatus};
@@ -331,6 +331,9 @@ pub struct BaseDownloadService {
     /// Shared because the album walk reads this WITHOUT holding the download lock while a
     /// request can be writing to it under the lock.
     active_downloads: Mutex<HashMap<String, DownloadInfo>>,
+    /// The albums being fetched song by song outside a walk, newest last: their tracks are
+    /// filed and tagged as one walk's would be.
+    held_albums: Mutex<Vec<Arc<AlbumTagContext<Loudness>>>>,
     /// One permit: one download at a time inside the lock.
     download_lock: Semaphore,
 
@@ -381,6 +384,7 @@ impl BaseDownloadService {
             configured_download_path,
             cache_path,
             active_downloads: Mutex::new(HashMap::new()),
+            held_albums: Mutex::new(Vec::new()),
             download_lock: Semaphore::new(1),
             identifier: OnceLock::new(),
             #[cfg(test)]
@@ -533,7 +537,7 @@ impl BaseDownloadService {
         &self,
         external_provider: &str,
         external_id: &str,
-        options: DownloadOptions,
+        mut options: DownloadOptions,
         cancellation_token: &CancellationToken,
     ) -> anyhow::Result<String> {
         if external_provider != self.provider_name() {
@@ -543,6 +547,14 @@ impl BaseDownloadService {
         let song_id = format!("ext-{external_provider}-{external_id}");
         let is_cache =
             !options.force_permanent && self.settings.current().subsonic.storage_mode == StorageMode::Cache;
+        // A track of an album being fetched song by song is one of that album's, as in a walk.
+        if options.album_context.is_none()
+            && !is_cache
+            && options.replacement.is_none()
+            && !options.upgrade_search
+        {
+            options.album_context = self.held_album(external_id);
+        }
         // Cache-mode fills are background plumbing, not a user gesture: they skip the
         // fetched-songs log, so they skip notifications for the same reason.
         let silence = options.suppress_notify || is_cache;
@@ -726,6 +738,21 @@ impl BaseDownloadService {
         let Some(mut song) = song else {
             anyhow::bail!("Song not found");
         };
+        // A track of an album being fetched whole is filed by that album: the song an id resolves
+        // to names whichever album last listed its recording, and a larger edition holding the
+        // same recording lists it at another place.
+        if let Some(context) = &options.album_context {
+            let listed_as = song.album.clone();
+            if context.place(external_id, &mut song)
+                && !dotnet::is_blank(&listed_as)
+                && SongIdentity::key(&listed_as) != SongIdentity::key(&song.album)
+            {
+                info!(
+                    "'{} - {}' is filed under '{}', the album being fetched, not '{listed_as}'",
+                    song.artist, song.title, song.album
+                );
+            }
+        }
         self.track(|t| {
             t.describe(
                 external_provider,
@@ -921,6 +948,11 @@ impl BaseDownloadService {
             ..
         } = download;
         song = downloaded;
+        // The transfer's check may have named another album holding the same recording; the
+        // track stays at its place on the album being fetched.
+        if let Some(context) = &options.album_context {
+            context.place(external_id, &mut song);
+        }
         let mut landed_path = transferred?;
         Self::ensure_on_disk(Some(&landed_path))?;
         // Placing, tagging and registering touch the library and the mapping file, and those stay
@@ -1060,6 +1092,9 @@ impl BaseDownloadService {
                     Some("It keeps the old copy's place in Navidrome, so plays and favorites stay"),
                 )
             });
+        }
+        if let Some(context) = &options.album_context {
+            context.set_placed(&local_path, &song);
         }
         if !is_cache {
             self.write_sidecars(&song, &placement, cover.as_deref());
@@ -1222,6 +1257,45 @@ impl BaseDownloadService {
     }
 
     // ---- the album walk -------------------------------------------------------------------
+
+    /// The newest album being fetched song by song that lists this track.
+    fn held_album(&self, external_id: &str) -> Option<Arc<AlbumTagContext<Loudness>>> {
+        self.held_albums
+            .lock()
+            .iter()
+            .rev()
+            .find(|held| held.lists(external_id))
+            .cloned()
+    }
+
+    /// Holds an album's listing while its tracks are fetched song by song, each as one of a walk.
+    pub fn hold_album(&self, album: &Album) {
+        let context = AlbumTagContext::<Loudness>::new(
+            album.external_id.as_deref().or(Some(album.id.as_str())),
+            &album.title,
+            Some(&album.artist),
+        )
+        .with_listing(album);
+        self.held_albums.lock().push(Arc::new(context));
+    }
+
+    /// Ends the hold of [`Self::hold_album`]: every track fetched under it gets the album-level
+    /// tags its tracks settled on.
+    pub async fn finish_held_album(&self, album: &Album) {
+        let id = album.external_id.as_deref().unwrap_or(album.id.as_str());
+        let context = {
+            let mut held = self.held_albums.lock();
+            let at = held.iter().rposition(|context| {
+                context.catalog_album_id() == Some(id) && context.album_title() == album.title
+            });
+            at.map(|at| held.remove(at))
+        };
+        if let Some(context) = context
+            && self.settle_album_tags(&context, &album.title) > 0
+        {
+            self.local_library.trigger_library_scan(true).await;
+        }
+    }
 
     /// Every track of an album but `exclude_track_external_id`, one download each. True when
     /// none failed. Boxed: a download can start a walk, and a walk runs downloads.
@@ -1391,13 +1465,13 @@ impl BaseDownloadService {
             }
         }
 
-        // Every track of the walk shares the release the first one settled on, and the walk
-        // measures each track so the album gain can be written once it ends.
-        let album_context = Arc::new(AlbumTagContext::<Loudness>::new(
-            Some(album_external_id),
-            &album.title,
-            Some(&album.artist),
-        ));
+        // Every track of the walk is filed at its place on this album and shares the release the
+        // first one settled on, and the walk measures each track so the album gain can be
+        // written once it ends.
+        let album_context = Arc::new(
+            AlbumTagContext::<Loudness>::new(Some(album_external_id), &album.title, Some(&album.artist))
+                .with_listing(&album),
+        );
         let walk = Walk {
             album_title: &album.title,
             context: &album_context,
@@ -1448,6 +1522,9 @@ impl BaseDownloadService {
 
         info!("Completed background download for album '{}'", album.title);
 
+        if self.settle_album_tags(&album_context, &album.title) > 0 {
+            self.local_library.trigger_library_scan(true).await;
+        }
         if self.settings.current().metadata.replay_gain {
             self.write_album_gain(&album_context, &album.title);
         }
@@ -1986,6 +2063,18 @@ impl IDownloadService for BaseDownloadService {
             cancellation_token,
         )
         .await
+    }
+
+    fn hold_album_listing(&self, external_provider: &str, album: &Album) {
+        if external_provider == self.provider_name() {
+            self.hold_album(album);
+        }
+    }
+
+    async fn finish_album_listing(&self, external_provider: &str, album: &Album) {
+        if external_provider == self.provider_name() {
+            self.finish_held_album(album).await;
+        }
     }
 
     async fn download_album_with_source(

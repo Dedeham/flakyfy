@@ -329,7 +329,7 @@ pub fn is_audio_file(name: &str) -> bool {
 
 /// Of the files a job left (name and size), the song: the largest audio file, never a partial
 /// download.
-pub fn pick_audio_file<'a>(files: &'a [(String, u64)]) -> Option<&'a str> {
+pub fn pick_audio_file(files: &[(String, u64)]) -> Option<&str> {
     files
         .iter()
         .filter(|(name, size)| {

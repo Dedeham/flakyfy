@@ -35,6 +35,7 @@ pub mod request_binding;
 pub mod secrets;
 pub mod settings;
 pub mod soulseek_sharing;
+pub mod spotiflac;
 pub mod system;
 pub mod tidy;
 pub mod trash;
@@ -105,6 +106,7 @@ pub fn admin_controller_routes() -> RouteSet {
         .route("/api/admin/charts", get(charts::get_charts))
         .route("/api/admin/lidarr/options", get(system::get_lidarr_options))
         .route("/api/admin/lidarr/test", post(system::test_lidarr_connection))
+        .route("/api/admin/spotiflac/test", post(spotiflac::test_spotiflac))
         .route("/api/admin/restart", post(system::restart))
         .route(
             "/api/admin/soulseek/rejected-peers/clear",

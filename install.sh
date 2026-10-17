@@ -438,6 +438,10 @@ mkdir -p "$(existing OCTO_CONFIG_DIR octo-config)" "$(existing SLSKD_STATE_DIR s
 if [ "$STARTER" = true ]; then
   mkdir -p "$(existing NAVIDROME_DATA_DIR navidrome-data)"
 fi
+# Your own SpotiFLAC, when its profile is on (the SPOTIFLAC_* lines are kept as they are).
+case ",${COMPOSE_PROFILES// /}," in
+  *,spotiflac,*) mkdir -p "$(existing SPOTIFLAC_DATA_DIR spotiflac-data)" ;;
+esac
 
 # ─────────────────────────────────────────────────────────────────
 # Images + start

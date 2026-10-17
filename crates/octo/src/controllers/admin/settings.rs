@@ -14,7 +14,7 @@ use octo_core::common::dotnet::{is_blank, ordinal_ignore_case_key, utf16_len};
 use octo_core::json::dom::Node;
 use octo_core::settings::{
     AnimatedArtMode, FamilySettings, GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction,
-    LibraryActionSettings, LyricsSaveTo, SettingsWriteError,
+    LibraryActionSettings, LyricsSaveTo, SettingsWriteError, SpotiflacSettings,
 };
 use std::collections::HashSet;
 use tracing::{error, info, warn};
@@ -668,7 +668,29 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             );
         }
     }
+    // SpotiFLAC is off by default, and listed like Family: once it is in use or saved.
+    let spotiflac = &current.spotiflac;
+    if *spotiflac != SpotiflacSettings::default()
+        || file.keys().any(|key| key.eq_ignore_ascii_case("Spotiflac"))
+    {
+        doc.insert("Spotiflac".into(), spotiflac_section(spotiflac));
+    }
     doc
+}
+
+/// The Spotiflac section as the forms read it, the token as the placeholder.
+fn spotiflac_section(spotiflac: &SpotiflacSettings) -> Node {
+    n_obj([
+        ("Enabled", Node::Bool(spotiflac.enabled)),
+        ("Url", n_str(&spotiflac.url)),
+        ("Token", n_str(&mask_secret(Some(&spotiflac.token)))),
+        ("Quality", n_str(spotiflac.effective_quality())),
+        ("Services", n_str(&spotiflac.services)),
+        ("Folder", n_str(&spotiflac.folder)),
+        ("Placement", name(spotiflac.placement)),
+        ("TimeoutSeconds", n_num(spotiflac.timeout_seconds)),
+        ("AtOnce", n_num(spotiflac.at_once)),
+    ])
 }
 
 /// `GET /api/admin/settings`: the *effective* configuration the app sees right now, so the UI

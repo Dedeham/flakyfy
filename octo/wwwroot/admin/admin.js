@@ -814,6 +814,7 @@ function ensureSaveBar(form) {
     <button type="submit" class="btn btn-primary" ${currentSettings ? '' : 'disabled'} title="Save (Ctrl+S)">Save</button>
     <button type="button" class="btn btn-ghost form-undo">${icon('i-arrow-counter-clockwise')}<span>Undo changes</span></button>
     ${form.id === 'lidarr-connection-form' ? `<button type="button" class="btn btn-ghost" id="lidarr-test-connection">${icon('i-plugs-connected')}<span>Test connection</span></button>` : ''}
+    ${form.id === 'spotiflac-connection-form' ? `<button type="button" class="btn btn-ghost" id="spotiflac-test-connection">${icon('i-plugs-connected')}<span>Test connection</span></button>` : ''}
     <span class="unsaved-status" aria-live="polite"></span>
     <span class="saved-status" role="status"></span>
     <span class="restart-hint">
@@ -985,6 +986,8 @@ document.querySelectorAll('form[data-section]').forEach(form => {
       // The scrobbling card reads the running settings, which catch up with the file a moment later.
       if (form.dataset.section?.startsWith('lastfm')) setTimeout(loadLastFmScrobbling, 700);
       if (form.dataset.section === 'animated-art') setTimeout(loadAnimatedArt, 700);
+      // The heart priority's Soulseek row says whether SpotiFLAC rides with it.
+      if (form.dataset.section?.startsWith('spotiflac')) renderHeartSourceOrder();
       // The re-check offer on the Verify card follows the saved match score.
       if (form.dataset.section === 'soulseek-verify' || form.dataset.section?.startsWith('library-actions')) {
         setTimeout(loadReviewSweep, 700);
@@ -1063,7 +1066,8 @@ function renderHeartSourceOrder(steps = heartSourceSteps) {
         <span class="source-step" aria-hidden="true">${index + 1}</span>
         <span class="source-copy">
           <span class="source-title">${icon(meta.mark)}${meta.title}</span>
-          <span class="source-detail">${meta.detail}</span>
+          <span class="source-detail">${step.Source === 'Soulseek' && currentSettings?.Spotiflac?.Enabled
+            ? `${meta.detail}, with SpotiFLAC` : meta.detail}</span>
         </span>
         <span class="source-heart-controls" role="group" aria-label="${meta.title} heart types">
           <span class="source-heart-choice">
@@ -2994,6 +2998,51 @@ document.getElementById('lidarr-test-connection')?.addEventListener('click', asy
     button.disabled = false;
   }
 });
+
+// SpotiFLAC's Test checks what the page holds, saved or not, and lists each finding: what
+// answered, what is missing, and what to do about it. Nothing is downloaded.
+document.getElementById('spotiflac-test-connection')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const form = document.getElementById('spotiflac-connection-form');
+  const value = id => document.getElementById(id)?.value ?? '';
+  button.disabled = true;
+  saveStatus(form, 'Testing…', 'busy');
+  try {
+    const r = await api('/api/admin/spotiflac/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: value('f-spotiflac-url'),
+        token: value('f-spotiflac-token'),
+        folder: value('f-spotiflac-folder'),
+        enabled: !!document.getElementById('f-spotiflac-enabled')?.checked,
+      }),
+    });
+    const result = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(result.error || `HTTP ${r.status}`);
+    renderSpotiflacTest(result.checks || []);
+    // What is missing is in the list; the bar only confirms a pass.
+    saveStatus(form, result.ok ? (result.message || 'SpotiFLAC is ready.') : '', 'ok');
+  } catch (err) {
+    renderSpotiflacTest([]);
+    saveStatus(form, `Test failed: ${err.message}`, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+function renderSpotiflacTest(checks) {
+  const row = document.getElementById('spotiflac-test-row');
+  const list = document.getElementById('spotiflac-test');
+  if (!row || !list) return;
+  const glyph = { ok: 'i-check-circle-fill', warn: 'i-warning-circle-fill', fail: 'i-x-circle-fill' };
+  const words = { ok: 'Passed', warn: 'Warning', fail: 'Missing' };
+  list.innerHTML = checks.map(check => {
+    const state = glyph[check.state] ? check.state : 'warn';
+    return `<li class="test-check ${state}">${icon(glyph[state])}<span class="visually-hidden">${words[state]}: </span><span>${esc(check.text)}</span></li>`;
+  }).join('');
+  row.hidden = checks.length === 0;
+}
 
 function isFieldDirty(el) {
   if (!currentSettings || !el.name?.includes('.')) return false;

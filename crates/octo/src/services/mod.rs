@@ -25,6 +25,7 @@ pub mod notifications;
 pub mod radio;
 pub mod sonic;
 pub mod soulseek;
+pub mod spotiflac;
 pub mod state_file;
 pub mod subsonic;
 pub mod updates;

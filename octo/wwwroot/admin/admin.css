@@ -2692,3 +2692,44 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .art-tile .cover-art img { transition: opacity 160ms, filter 160ms; }
 .art-more { align-self: center; }
 @media (prefers-reduced-motion: reduce) { .art-tile .cover-art img { transition: none; } }
+
+/* ── SpotiFLAC page ── */
+/* What the person brings, numbered. The number sits on the title line: a 24 px disc on the cap
+ * height midline of a 20 px line. */
+.bring-list { list-style: none; margin: 0; padding: 0; counter-reset: bring; }
+.bring-list li {
+  counter-increment: bring;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  column-gap: var(--s-l);
+  padding: var(--s-xl) var(--s-2xl);
+}
+.bring-list li + li { border-top: 1px solid var(--hairline); }
+.bring-list li::before {
+  content: counter(bring);
+  grid-row: 1 / span 2;
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  border-radius: var(--r-pill);
+  background: var(--accent-tonal);
+  color: var(--text-secondary);
+  font-size: var(--t-label); font-weight: 600;
+}
+.bring-t { display: block; font-size: var(--t-body); font-weight: 500; color: var(--ink); line-height: 1.35; }
+.bring-d { display: block; margin-top: var(--s-2xs); font-size: var(--t-meta); color: var(--text-muted); line-height: 1.5; max-width: 62ch; }
+/* The Test's findings. Each icon sits on the cap height midline of its first line (16 px on a
+ * 19.5 px line). */
+.test-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-m); }
+.test-check {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: var(--s-m);
+  font-size: var(--t-meta); line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.test-check .icon { width: 16px; height: 16px; margin-top: 3px; }
+.test-check.ok .icon { color: var(--good); }
+.test-check.warn .icon { color: var(--warn); }
+.test-check.fail { color: var(--ink); }
+.test-check.fail .icon { color: var(--bad); }

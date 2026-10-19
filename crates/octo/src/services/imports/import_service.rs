@@ -135,6 +135,24 @@ impl ImportService {
                 service.on_fetched(job);
             }
         }));
+        // Hearts acquire outside the import trickle too. Discard a cached library match
+        // once a copy arrives so the next getPlaylist can serve its Navidrome id.
+        if let Some(tracker) = &service.tracker {
+            let weak = Arc::downgrade(&service);
+            tracker.subscribe_ended(Arc::new(move |end| {
+                if end.done
+                    && let Some(service) = weak.upgrade()
+                {
+                    service.matcher.forget();
+                    let mut rematch = service.rematch.lock();
+                    for owner in service.store.streaming_owners() {
+                        if !rematch.iter().any(|user| eq_ignore_case(user, &owner)) {
+                            rematch.push(owner);
+                        }
+                    }
+                }
+            }));
+        }
         service
     }
 
@@ -160,6 +178,64 @@ impl ImportService {
 
     pub fn matcher(&self) -> &Arc<ImportMatcher> {
         &self.matcher
+    }
+
+    pub fn preview_routing(&self, id: &str) -> Option<octo_core::soulseek::SoulseekRouting> {
+        self.store.preview_routing(id)
+    }
+
+    /// Toggle only the virtual playlist: never starts the trickle or writes to Navidrome.
+    pub fn set_streaming(&self, user: &str, id: &str, on: bool) -> ImportActionResult {
+        if !self
+            .store
+            .update(user, id, |list| list.stream_without_downloading = on)
+        {
+            return ImportActionResult::failed("There is no such list.");
+        }
+        ImportActionResult::ok(if on {
+            "This snapshot is now a playlist in Octo. Missing songs stream as previews; heart a song to keep it. Get missing songs remains a separate choice."
+        } else {
+            "The streaming playlist is no longer shown in Octo."
+        })
+    }
+
+    pub fn streaming_lists(&self, user: &str) -> Vec<ImportList> {
+        if user.trim().is_empty() {
+            return Vec::new();
+        }
+        self.store
+            .lists_of(user)
+            .into_iter()
+            .filter(|list| list.stream_without_downloading)
+            .collect()
+    }
+
+    /// Resolve only this authenticated listener's snapshot, including after a restart.
+    pub fn streaming_list(&self, user: &str, playlist_id: &str) -> Option<ImportList> {
+        self.streaming_lists(user)
+            .into_iter()
+            .find(|list| super::import_streaming::playlist_id(list) == playlist_id)
+    }
+
+    /// Re-match local copies on read without refreshing the source. Persist only an actual
+    /// change, so the playlist's changed time is stable and an app can notice a landed copy.
+    pub async fn matched_streaming_list(&self, user: &str, playlist_id: &str) -> Option<ImportList> {
+        let mut list = self.streaming_list(user, playlist_id)?;
+        let before = list.tracks.clone();
+        self.matcher
+            .match_streaming_tracks_for(user, &mut list.tracks)
+            .await;
+        if list.tracks != before {
+            list.matched_utc = Some(self.now());
+            self.store.update(user, &list.id, |saved| {
+                // A simultaneous explicit reimport must keep its new snapshot.
+                if saved.tracks == before {
+                    saved.tracks.clone_from(&list.tracks);
+                    saved.matched_utc = list.matched_utc;
+                }
+            });
+        }
+        Some(list)
     }
 
     // =========================================================================================
@@ -903,6 +979,7 @@ impl ImportService {
             .into_iter()
             .filter(|list| {
                 (list.keep_playlist || list.get_missing)
+                    && !list.stream_without_downloading
                     && !list.gone
                     && list.read_utc < stale
                     && list.source == import_sources::LINK
@@ -974,6 +1051,10 @@ fn summary(list: &ImportList, jobs: &IndexMap<String, TrickleJob>) -> ListSummar
         not_found: count(import_track_states::NOT_FOUND),
         skipped: count(import_track_states::SKIPPED),
         keep_playlist: list.keep_playlist,
+        stream_without_downloading: list.stream_without_downloading,
+        streaming_playlist_id: list
+            .stream_without_downloading
+            .then(|| super::import_streaming::playlist_id(list)),
         playlist_id: list.playlist_id.clone(),
         playlist_note: list.playlist_note.clone(),
         get_missing: list.get_missing,

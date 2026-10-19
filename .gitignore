@@ -107,5 +107,6 @@ parity/.run/
 *.md
 !README.md
 !docs/family.md
+!docs/import-streaming.md
 !docs/rust-migration/known-diffs.md
 !scripts/admin-icons/SOURCES.md

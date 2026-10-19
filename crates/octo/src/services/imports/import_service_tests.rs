@@ -18,6 +18,59 @@ use crate::services::library::quality_upgrade_worker::LibrarySongRow;
 
 const THEIRS: &str = "37i9dQZF1DXcBWIGoYBM5M";
 
+#[tokio::test]
+async fn streaming_is_private_and_never_queues_downloads_or_writes_a_navidrome_playlist() {
+    let rig = rig().await;
+    let overview = rig.saved_from_spotify().await;
+    let id = &Rig::list(&overview, "Road trip").id;
+    assert!(!rig.service.set_streaming("bob", id, true).ok);
+    assert!(rig.service.set_streaming("alice", id, true).ok);
+    let list = rig.service.streaming_lists("ALICE").remove(0);
+    let virtual_id = super::super::import_streaming::playlist_id(&list);
+    assert_eq!(list.tracks.len(), 2);
+    assert!(rig.service.streaming_list("bob", &virtual_id).is_none());
+    assert!(rig.service.streaming_lists("").is_empty());
+    rig.service.loop_once().await.unwrap();
+    assert!(rig.queue.snapshot(None).is_empty());
+    assert!(rig.navidrome.calls().is_empty());
+    assert!(rig.calls().await.is_empty());
+
+    // The old choices still do their own work, only when explicitly selected.
+    assert!(rig.service.set_playlist("alice", id, true).await.ok);
+    assert_eq!(rig.navidrome.playlist("pl1"), ["nd-halo"]);
+    assert!(rig.service.set_get_missing("alice", id, true).ok);
+    assert_eq!(rig.queue.snapshot(Some("alice")).len(), 1);
+    assert!(rig.service.set_streaming("alice", id, false).ok);
+    let saved = rig.store.get("alice", id).unwrap();
+    assert!(saved.keep_playlist && saved.get_missing);
+    assert!(rig.service.streaming_list("alice", &virtual_id).is_none());
+}
+
+#[tokio::test]
+async fn a_streaming_link_is_a_snapshot_even_when_the_old_follow_switches_are_on() {
+    let rig = rig().await;
+    let added = rig
+        .service
+        .add_link("alice", &format!("https://open.spotify.com/playlist/{THEIRS}"))
+        .await
+        .unwrap();
+    let id = added.list_id.unwrap();
+    assert!(rig.service.set_streaming("alice", &id, true).ok);
+    rig.store.update("alice", &id, |list| {
+        list.keep_playlist = true;
+        list.get_missing = true;
+    });
+    let calls = rig.calls().await;
+    *rig.now.lock() += TimeDelta::days(7);
+    rig.service.loop_once().await.unwrap();
+    assert_eq!(
+        rig.calls().await,
+        calls,
+        "a streaming snapshot must not reread its source"
+    );
+    assert!(rig.queue.snapshot(None).is_empty());
+}
+
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../docs/rust-migration/fixtures/state/imports.json"

@@ -7443,6 +7443,8 @@ function impShowResult({ error = null, list = null, message = '', from = '' }) {
     </div>
     <span class="lossy-meter imp-result-meter" aria-hidden="true"><span style="width:${pct}%"></span></span>
     <div class="imp-result-actions">
+      ${list.streamWithoutDownloading ? `<span class="imp-result-note">${icon('i-check')}Streaming snapshot in Octo</span>`
+        : `<button type="button" class="btn btn-primary" data-imp-result-stream="${esc(list.id)}">${icon('i-playlist')}<span>Stream without downloading</span></button>`}
       ${missing && !fetching ? `<button type="button" class="btn btn-primary" data-imp-result-fetch="${esc(list.id)}">${icon('i-tray-arrow-down')}<span>Get the ${missing.toLocaleString()} missing</span></button>` : ''}
       ${fetching ? `<span class="imp-result-note">${icon('i-check')}Getting the missing songs</span>` : ''}
       ${list.keepPlaylist ? `<span class="imp-result-note">${icon('i-check')}Kept as a playlist</span>`
@@ -7464,17 +7466,18 @@ async function impFinished(answer, from = '') {
 impEl('imp-result')?.addEventListener('click', async event => {
   const fetchBtn = event.target.closest('[data-imp-result-fetch]');
   const playlistBtn = event.target.closest('[data-imp-result-playlist]');
+  const streamBtn = event.target.closest('[data-imp-result-stream]');
   const openBtn = event.target.closest('[data-imp-result-open]');
   if (event.target.closest('[data-imp-jump]')) {
     impEl('imp-lists').closest('.set-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
     return;
   }
   if (openBtn) { await loadImportDetail(openBtn.dataset.impResultOpen); return; }
-  const button = fetchBtn ?? playlistBtn;
+  const button = fetchBtn ?? playlistBtn ?? streamBtn;
   if (!button) return;
-  const id = fetchBtn ? fetchBtn.dataset.impResultFetch : playlistBtn.dataset.impResultPlaylist;
+  const id = button.dataset.impResultFetch ?? button.dataset.impResultPlaylist ?? button.dataset.impResultStream;
   button.disabled = true;
-  const { ok, answer } = await impPost(`/api/admin/imports/lists/${encodeURIComponent(id)}/${fetchBtn ? 'fetch' : 'playlist'}`, { on: true }, null);
+  const { ok, answer } = await impPost(`/api/admin/imports/lists/${encodeURIComponent(id)}/${fetchBtn ? 'fetch' : streamBtn ? 'stream' : 'playlist'}`, { on: true }, null);
   toast(answer.message || 'Done.', ok ? 'ok' : 'error');
   await loadImports();
   const list = imp.view?.lists?.find(l => l.id === id);
@@ -7537,7 +7540,7 @@ function renderImportLists() {
   holder.innerHTML = `
     <div class="config-table">
       <div class="config-row config-row-head imp-row">
-        <span>List</span><span>In your library</span><span>Keep as playlist</span><span>Get missing songs</span><span></span>
+        <span>List</span><span>In your library</span><span>Stream without downloading</span><span>Keep as playlist</span><span>Get missing songs</span><span></span>
       </div>
       ${lists.map(list => {
         const total = list.total || list.have + list.missing + list.queued + list.downloading + list.done + list.notFound + list.skipped;
@@ -7559,6 +7562,8 @@ function renderImportLists() {
               ${list.partial ? `<span class="lossy-detail">${esc(list.partial)}</span>` : ''}
               ${list.playlistNote ? `<span class="lossy-detail">${esc(list.playlistNote)}</span>` : ''}</span></span>
             <span><span class="lossy-sub">${esc(counts)}</span><span class="lossy-meter"><span style="width:${pct}%"></span></span></span>
+            <span class="imp-switch-cell"><span class="imp-cell-label">Stream without downloading</span><label class="switch" title="Show the saved snapshot in Octo, including previews. Does not queue downloads. Get missing songs is independent."><input type="checkbox" data-imp-stream="${esc(list.id)}" ${list.streamWithoutDownloading ? 'checked' : ''}
+              aria-label="Stream ${esc(list.name)} in Octo without downloading" /><span class="sw-track"></span><span class="sw-thumb"></span></label></span>
             <span class="imp-switch-cell"><span class="imp-cell-label">Keep as playlist</span><label class="switch" title="Keep as playlist"><input type="checkbox" data-imp-playlist="${esc(list.id)}" ${list.keepPlaylist ? 'checked' : ''}
               aria-label="Keep ${esc(list.name)} as a Navidrome playlist" /><span class="sw-track"></span><span class="sw-thumb"></span></label></span>
             <span class="imp-switch-cell"><span class="imp-cell-label">Get missing songs</span><label class="switch" title="Get missing songs"><input type="checkbox" data-imp-fetch="${esc(list.id)}" ${list.getMissing ? 'checked' : ''}
@@ -7750,11 +7755,12 @@ impEl('imp-lists')?.addEventListener('click', async event => {
 impEl('imp-lists')?.addEventListener('change', async event => {
   const playlist = event.target.closest('[data-imp-playlist]');
   const fetchSwitch = event.target.closest('[data-imp-fetch]');
-  const input = playlist ?? fetchSwitch;
+  const streamSwitch = event.target.closest('[data-imp-stream]');
+  const input = playlist ?? fetchSwitch ?? streamSwitch;
   if (!input) return;
-  const id = input.dataset.impPlaylist ?? input.dataset.impFetch;
+  const id = input.dataset.impPlaylist ?? input.dataset.impFetch ?? input.dataset.impStream;
   input.disabled = true;
-  const { ok, answer } = await impPost(`/api/admin/imports/lists/${encodeURIComponent(id)}/${playlist ? 'playlist' : 'fetch'}`,
+  const { ok, answer } = await impPost(`/api/admin/imports/lists/${encodeURIComponent(id)}/${playlist ? 'playlist' : streamSwitch ? 'stream' : 'fetch'}`,
     { on: input.checked }, null);
   toast(answer.message || 'Done.', ok ? 'ok' : 'error');
   await loadImports();

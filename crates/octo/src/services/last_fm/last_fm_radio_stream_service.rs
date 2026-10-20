@@ -1252,21 +1252,18 @@ impl LastFmRadioStreamService {
                 .or_else(|| song.genre.clone())
                 .into_iter()
                 .collect();
-            match &self.shared.last_fm {
-                Some(last_fm) => crate::services::listening::record_in_background(
-                    Arc::clone(log),
-                    Arc::clone(last_fm),
-                    crate::services::listening::Completed {
-                        user: session.username.clone(),
-                        play,
-                        genres,
-                        album: None,
-                    },
-                ),
-                None => {
-                    let mut play = play;
-                    play.genre = genres.into_iter().next();
-                    log.record(&session.username, play);
+            if let Some(ended) = log.finished(&session.username, play, genres) {
+                match &self.shared.last_fm {
+                    Some(last_fm) => crate::services::listening::write_settled(
+                        Arc::clone(log),
+                        Arc::clone(last_fm),
+                        vec![ended],
+                    ),
+                    None => {
+                        let log = Arc::clone(log);
+                        let genre = ended.genres.first().cloned();
+                        tokio::task::spawn_blocking(move || log.write(ended, genre));
+                    }
                 }
             }
         }

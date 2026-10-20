@@ -1066,7 +1066,7 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
                 if external_stars == TOP_RATING {
                     state
                         .listening
-                        .heart(external_rater, std::slice::from_ref(&item_id));
+                        .heart(external_rater, std::slice::from_ref(&item_id), Utc::now());
                 }
             }
         }
@@ -1097,7 +1097,9 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
         state.generated_playlists.rated(rater, &item_id, i64::from(stars));
         record_radio_ban(&state, &call, rater, &item_id, stars).await;
         if stars == TOP_RATING {
-            state.listening.heart(rater, std::slice::from_ref(&item_id));
+            state
+                .listening
+                .heart(rater, std::slice::from_ref(&item_id), Utc::now());
         }
     }
 
@@ -1404,9 +1406,10 @@ async fn learn_from_scrobbles(
         // those to a Navidrome that scrobbles them itself (else they would count twice).
         let outside = state.local_library.parse_song_id(song_id).0;
         let last_fm_takes = scrobbling && (outside || state.last_fm_scrobbles.takes_library_plays());
-        // A start of play times the play the listening log writes down when it completes.
+        // A start of play ends the play before it, which the listening log then writes down.
         if !completed && listening {
-            state.listening.now_playing(&username, song_id);
+            let ended = state.listening.now_playing(&username, song_id, Utc::now());
+            listening::write_settled(state.listening.clone(), state.last_fm.clone(), ended);
         }
         if !completed && !last_fm_takes {
             continue;
@@ -1505,8 +1508,8 @@ async fn learn_from_scrobbles(
     Ok(())
 }
 
-/// Writes a completed play down in the listening log, its genre worked out after the reply.
-/// The play started when the app says (`time`), else as long ago as it played.
+/// Tells the listening log an app reported the play as played. It is written once it ends,
+/// its genre worked out then, after the reply.
 fn record_listening(
     state: &AppState,
     call: &SubsonicCall,
@@ -1516,12 +1519,9 @@ fn record_listening(
     sent_time: Option<DateTime<Utc>>,
     device_id: Option<&str>,
 ) {
-    let seconds = state
-        .listening
-        .listened_seconds(username, &song.id, song.duration);
+    let now = Utc::now();
     let user_agent = call.header("user-agent").unwrap_or_default();
     let client = call.param_opt("c").unwrap_or("");
-    let played_at = sent_time.unwrap_or_else(|| Utc::now() - chrono::TimeDelta::seconds(seconds));
     let album = details
         .album_id
         .clone()
@@ -1544,25 +1544,21 @@ fn record_listening(
         album_artist: details.album_artist,
         title: song.title.clone(),
         album: song.album.clone(),
-        seconds,
         is_local: song.is_local,
         app: octo_core::family::device::app_label(client, &user_agent),
         platform: listening::platform_of(&user_agent).to_string(),
         device_id: device_id.map(str::to_string),
-        played_at,
         source: "scrobble".to_string(),
         ..Default::default()
     };
-    listening::record_in_background(
-        state.listening.clone(),
-        state.last_fm.clone(),
-        listening::Completed {
-            user: username.to_string(),
-            play,
-            genres,
-            album,
-        },
+    let ended = state.listening.completed(
+        username,
+        listening::Draft { play, genres, album },
+        song.duration.map(i64::from),
+        sent_time,
+        now,
     );
+    listening::write_settled(state.listening.clone(), state.last_fm.clone(), ended);
 }
 
 /// The song ids a star or a top rating named, written down as hearts in the listening log so
@@ -1571,8 +1567,9 @@ async fn note_listening_hearts(state: &AppState, call: &SubsonicCall, ids: &[Str
     if ids.is_empty() || !state.listening.recording() {
         return;
     }
+    let at = Utc::now();
     if let Some(username) = listener(state, call).await {
-        state.listening.heart(&username, ids);
+        state.listening.heart(&username, ids, at);
     }
 }
 

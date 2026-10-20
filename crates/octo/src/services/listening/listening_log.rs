@@ -1,18 +1,25 @@
 //! The listening log: every completed play of each person, for their Listening page.
 //!
-//! One file of JSON lines per person under `<config>/listening/` (`<user>.jsonl`), a play
-//! appended as it is recorded; pruning, a heart that comes after the play was written and
-//! clearing write the whole file again through a temporary file. `listening.json` beside them
-//! keeps the names as first seen, whether the old radio history was copied in, and the genre
-//! answers already looked up for artists and albums.
+//! One file of JSON lines per person under `<config>/listening/` (`<user>.jsonl`): a play per
+//! line, and a heart that came after its play was written as a line of its own
+//! (`{"heart":...}`) that reading folds into the play. `listening.json` beside them keeps the
+//! names as first seen, whether the old radio history was copied in, and the genre answers
+//! already found for artists and albums.
 //!
-//! Plays are kept for `Listening:KeepDays`, pruned when the log is read and once a day.
+//! A play is timed by when the next one starts. Each person's current play waits in memory
+//! from its now-playing (or its scrobble) until that person's next play starts, or until its
+//! length and ten more minutes pass with nothing new; only then is it written, and only when
+//! an app reported it as played. A heart while it waits marks it.
+//!
+//! Nothing here touches the disk under the lock: the files are written in order by one
+//! writer thread, and a person's file is read only the first time their plays are needed.
+//! Plays are kept for `Listening:KeepDays`; the daily prune also folds the heart lines in.
 //! Nothing is written while `Listening:Enabled` is off.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -22,9 +29,11 @@ use octo_core::models::radio::LastFmRadioPlay;
 use octo_core::settings::SettingsStore;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use super::genres::AlbumLookup;
 use crate::services::state_file;
 
 /// The app a play is filed under when nothing says which app played it.
@@ -34,20 +43,18 @@ pub const UNKNOWN_PLATFORM: &str = "unknown";
 /// The meta file beside the people's logs.
 pub const META_FILE: &str = "listening.json";
 
-/// How long after a now-playing a completed play may still be timed from it, past the song's
-/// length.
-const NOW_PLAYING_SLACK: TimeDelta = TimeDelta::minutes(5);
-/// The longest a play with no known length is timed from its now-playing.
-const UNTIMED_LIMIT: TimeDelta = TimeDelta::minutes(30);
-/// A heart this long before a play started still counts for it (the app may have sent the
-/// heart a moment before the now-playing).
+/// The longest a play with no known length is counted for.
+pub const UNTIMED_CAP: TimeDelta = TimeDelta::minutes(15);
+/// How long past its length a play waits for the next one before it is written as played whole.
+pub const SETTLE_AFTER: TimeDelta = TimeDelta::minutes(10);
+/// A heart this long before a play started still counts for it.
 const HEART_LEAD: TimeDelta = TimeDelta::seconds(30);
 /// A heart this long after a play ended still counts for it.
 const HEART_TRAIL: TimeDelta = TimeDelta::minutes(2);
-/// How long a heart waits for its play to be recorded.
+/// How long a heart waits for its play to be written.
 const HEART_WAIT: TimeDelta = TimeDelta::hours(2);
-/// The most hearts kept waiting at once.
-const HEARTS_KEPT: usize = 500;
+/// The most hearts kept waiting for one person.
+const HEARTS_PER_PERSON: usize = 50;
 
 /// One completed play.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,6 +121,13 @@ impl Play {
     }
 }
 
+/// A heart that came after its play was written, as its own line of the person's log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HeartLine {
+    heart: String,
+    at: DateTime<Utc>,
+}
+
 /// The platform in a User-Agent's parentheses: `Octo/1.9.0 (Android)` is android. Android is
 /// checked before Linux, since Android's own agents name both.
 pub fn platform_of(user_agent: &str) -> &'static str {
@@ -137,6 +151,53 @@ pub fn platform_of(user_agent: &str) -> &'static str {
     }
 }
 
+/// What a play is written from: the song as its scrobble described it, and where its genre
+/// may be found.
+#[derive(Clone)]
+pub struct Draft {
+    pub play: Play,
+    /// The song's own genres, first one first.
+    pub genres: Vec<String>,
+    /// The library album to ask when the song has none.
+    pub album: Option<AlbumLookup>,
+}
+
+/// A play that has ended, to be written once its genre is known.
+pub struct Settled {
+    pub user: String,
+    pub play: Play,
+    pub genres: Vec<String>,
+    pub album: Option<AlbumLookup>,
+    /// The person's clear count when it ended: a play from before a clear is never written.
+    generation: u64,
+}
+
+/// A person's current play.
+struct Pending {
+    /// The person, as the request named them.
+    user: String,
+    song_id: String,
+    start: DateTime<Utc>,
+    /// The song's length in seconds, once a scrobble said it.
+    length: Option<i64>,
+    /// The song as the completed scrobble described it; None while no app has reported the
+    /// play as played, and then it is never written.
+    draft: Option<Draft>,
+    hearted: bool,
+}
+
+impl Pending {
+    /// How long the play can last: its length, else the cap for a play of no known length.
+    fn limit(&self) -> TimeDelta {
+        self.length.map_or(UNTIMED_CAP, TimeDelta::seconds)
+    }
+
+    /// Whether it would have ended by `at`.
+    fn over_by(&self, at: DateTime<Utc>) -> bool {
+        at - self.start >= self.limit()
+    }
+}
+
 /// What is kept beside the logs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
@@ -152,22 +213,35 @@ struct Meta {
     album_genres: HashMap<String, String>,
 }
 
+/// One write for the writer thread.
+enum Op {
+    Append(PathBuf, String),
+    Rewrite(PathBuf, String),
+    Remove(PathBuf),
+    Flush(mpsc::SyncSender<()>),
+}
+
 #[derive(Default)]
-struct Loaded {
+struct Inner {
     meta: Meta,
-    /// Each person's plays by key, oldest first.
+    /// The plays of each person read so far, by key, oldest first.
     users: HashMap<String, Vec<Play>>,
-    /// The song each person last said was playing, and when.
-    now_playing: HashMap<String, (String, DateTime<Utc>)>,
-    /// Hearts no recorded play has taken yet: person, song id, when.
-    hearts: Vec<(String, String, DateTime<Utc>)>,
+    /// Each person's current play.
+    pending: HashMap<String, Pending>,
+    /// Hearts no play has taken yet, by person: song id and when.
+    hearts: HashMap<String, Vec<(String, DateTime<Utc>)>>,
+    /// How often each person's plays were cleared.
+    generations: HashMap<String, u64>,
+    /// People whose file holds heart lines, for the prune to fold in.
+    untidy: HashSet<String>,
 }
 
 pub struct ListeningLog {
     dir: PathBuf,
     settings: Arc<SettingsStore>,
     clock: Clock,
-    state: Mutex<Option<Loaded>>,
+    inner: Mutex<Inner>,
+    writer: mpsc::Sender<Op>,
 }
 
 impl ListeningLog {
@@ -177,11 +251,27 @@ impl ListeningLog {
 
     /// The log on another clock, for tests.
     pub fn with_clock(dir: impl Into<PathBuf>, settings: Arc<SettingsStore>, clock: Clock) -> Self {
+        let dir = dir.into();
+        let mut inner = Inner::default();
+        if let Ok(Some(text)) = state_file::read_text(&dir.join(META_FILE)) {
+            match serde_json::from_str::<Meta>(&text) {
+                Ok(meta) => inner.meta = meta,
+                Err(e) => warn!("{META_FILE} could not be read, starting over: {e}"),
+            }
+        }
+        let (writer, writes) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("listening-writer".into())
+            .spawn(move || write_in_order(writes));
+        if let Err(e) = spawned {
+            warn!("The listening writer could not start: {e}");
+        }
         ListeningLog {
-            dir: dir.into(),
+            dir,
             settings,
             clock,
-            state: Mutex::new(None),
+            inner: Mutex::new(inner),
+            writer,
         }
     }
 
@@ -202,45 +292,224 @@ impl ListeningLog {
         TimeDelta::days(self.settings.current().listening.effective_keep_days())
     }
 
-    /// `user` started playing `song_id` now.
-    pub fn now_playing(&self, user: &str, song_id: &str) {
+    fn send(&self, op: Op) {
+        if self.writer.send(op).is_err() {
+            warn!("The listening writer has stopped; a write was lost");
+        }
+    }
+
+    /// Waits until every write asked for so far is on disk. Blocking.
+    pub fn flush(&self) {
+        let (done, wait) = mpsc::sync_channel(1);
+        self.send(Op::Flush(done));
+        let _ = wait.recv_timeout(Duration::from_secs(30));
+    }
+
+    // ---- plays as they happen -------------------------------------------------------------
+
+    /// `user` started playing `song_id` at `at`. The play before it ends here.
+    pub fn now_playing(&self, user: &str, song_id: &str, at: DateTime<Utc>) -> Vec<Settled> {
         let key = user_key(user);
         if key.is_empty() || song_id.is_empty() || !self.recording() {
+            return Vec::new();
+        }
+        let at = at.min(self.now());
+        let mut inner = self.inner.lock();
+        // The app saying again that the same song is playing is the same play.
+        if inner
+            .pending
+            .get(&key)
+            .is_some_and(|p| p.song_id == song_id && !p.over_by(at))
+        {
+            return Vec::new();
+        }
+        let generation = generation(&inner, &key);
+        let mut settled = Vec::new();
+        if let Some(previous) = inner.pending.remove(&key) {
+            settled.extend(settle(previous, at, generation));
+        }
+        inner.pending.insert(
+            key,
+            Pending {
+                user: user.trim().to_string(),
+                song_id: song_id.to_string(),
+                start: at,
+                length: None,
+                draft: None,
+                hearted: false,
+            },
+        );
+        settled
+    }
+
+    /// An app reported `user`'s play of the draft's song as played, at `at`. `length` is the
+    /// song's, in seconds; `sent_start` is the time the app sent with it, which is when the
+    /// play started. The play is written once it ends.
+    pub fn completed(
+        &self,
+        user: &str,
+        draft: Draft,
+        length: Option<i64>,
+        sent_start: Option<DateTime<Utc>>,
+        at: DateTime<Utc>,
+    ) -> Vec<Settled> {
+        let key = user_key(user);
+        let song_id = draft.play.song_id.clone();
+        if key.is_empty() || song_id.is_empty() || !self.recording() {
+            return Vec::new();
+        }
+        let at = at.min(self.now());
+        let length = length.filter(|l| *l > 0);
+        let mut inner = self.inner.lock();
+        if let Some(current) = inner.pending.get_mut(&key)
+            && current.song_id == song_id
+            && (current.draft.is_none() || !current.over_by(at))
+        {
+            current.length = length.or(current.length);
+            current.draft = Some(draft);
+            return Vec::new();
+        }
+        // A play with no now-playing before it: it started when the app says, else as long ago
+        // as the song lasts. A time in the future is taken as now.
+        let start = sent_start
+            .map(|sent| sent.min(at))
+            .unwrap_or_else(|| at - TimeDelta::seconds(length.unwrap_or(0)));
+        let generation = generation(&inner, &key);
+        let mut settled = Vec::new();
+        if let Some(previous) = inner.pending.remove(&key) {
+            let end = start.max(previous.start);
+            settled.extend(settle(previous, end, generation));
+        }
+        inner.pending.insert(
+            key,
+            Pending {
+                user: user.trim().to_string(),
+                song_id,
+                start,
+                length,
+                draft: Some(draft),
+                hearted: false,
+            },
+        );
+        settled
+    }
+
+    /// A play that is over as it is told (the radio stream's songs): to be written as it is.
+    pub fn finished(&self, user: &str, play: Play, genres: Vec<String>) -> Option<Settled> {
+        let key = user_key(user);
+        if key.is_empty() || !self.recording() {
+            return None;
+        }
+        let generation = generation(&self.inner.lock(), &key);
+        Some(Settled {
+            user: user.to_string(),
+            play,
+            genres,
+            album: None,
+            generation,
+        })
+    }
+
+    /// The plays that have waited their length and ten more minutes with nothing new after
+    /// them: each played whole.
+    pub fn settle_expired(&self) -> Vec<Settled> {
+        let now = self.now();
+        let mut inner = self.inner.lock();
+        let due: Vec<String> = inner
+            .pending
+            .iter()
+            .filter(|(_, p)| now - p.start >= p.limit() + SETTLE_AFTER)
+            .map(|(key, _)| key.clone())
+            .collect();
+        let mut settled = Vec::new();
+        for key in due {
+            let generation = generation(&inner, &key);
+            if let Some(play) = inner.pending.remove(&key) {
+                let end = play.start + play.limit();
+                settled.extend(settle(play, end, generation));
+            }
+        }
+        settled
+    }
+
+    /// Every current play, ended now (on shutdown): each as long as it has played so far.
+    pub fn settle_all(&self) -> Vec<Settled> {
+        let now = self.now();
+        let mut inner = self.inner.lock();
+        let keys: Vec<String> = inner.pending.keys().cloned().collect();
+        let mut settled = Vec::new();
+        for key in keys {
+            let generation = generation(&inner, &key);
+            if let Some(play) = inner.pending.remove(&key) {
+                settled.extend(settle(play, now, generation));
+            }
+        }
+        settled
+    }
+
+    /// `user` hearted these songs at `at`: the current play of one is marked, and so is a play
+    /// of one written a moment ago; otherwise the heart waits for its play to be written.
+    pub fn heart(&self, user: &str, song_ids: &[String], at: DateTime<Utc>) {
+        let key = user_key(user);
+        if key.is_empty() || song_ids.is_empty() || !self.recording() {
             return;
         }
-        let now = self.now();
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        state.now_playing.insert(key, (song_id.to_string(), now));
-    }
-
-    /// How long a play of `song_id` that just completed lasted: from that person's now-playing
-    /// for the same song, when there is one recent enough, capped at the song's length; else
-    /// the song's length (0 when that is not known either).
-    pub fn listened_seconds(&self, user: &str, song_id: &str, duration: Option<i32>) -> i64 {
-        let length = duration.filter(|d| *d > 0).map(i64::from);
-        let now = self.now();
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        let started = state
-            .now_playing
-            .get(&user_key(user))
-            .filter(|(id, _)| id == song_id)
-            .map(|(_, at)| *at);
-        let limit = length.map_or(UNTIMED_LIMIT, |l| TimeDelta::seconds(l) + NOW_PLAYING_SLACK);
-        match started.map(|at| now - at) {
-            Some(elapsed) if elapsed >= TimeDelta::zero() && elapsed <= limit => {
-                let seconds = elapsed.num_seconds();
-                length.map_or(seconds, |l| seconds.min(l))
+        let mut lines = Vec::new();
+        {
+            let mut inner = self.inner.lock();
+            for id in song_ids.iter().filter(|id| !id.is_empty()) {
+                if let Some(current) = inner.pending.get_mut(&key).filter(|p| &p.song_id == id) {
+                    current.hearted = true;
+                    continue;
+                }
+                let written = inner.users.get_mut(&key).and_then(|rows| {
+                    rows.iter_mut()
+                        .rev()
+                        .take_while(|row| row.ended_at() + HEART_TRAIL >= at)
+                        .find(|row| &row.song_id == id && row.heart_counts(at))
+                });
+                match written {
+                    Some(row) => {
+                        if !row.hearted {
+                            row.hearted = true;
+                            lines.push(HeartLine {
+                                heart: id.clone(),
+                                at,
+                            });
+                        }
+                    }
+                    None => {
+                        let waiting = inner.hearts.entry(key.clone()).or_default();
+                        waiting.retain(|(_, when)| at - *when <= HEART_WAIT);
+                        waiting.push((id.clone(), at));
+                        if waiting.len() > HEARTS_PER_PERSON {
+                            let extra = waiting.len() - HEARTS_PER_PERSON;
+                            waiting.drain(..extra);
+                        }
+                    }
+                }
             }
-            _ => length.unwrap_or(0),
+            if !lines.is_empty() {
+                inner.untidy.insert(key.clone());
+            }
+        }
+        for line in lines {
+            if let Ok(text) = serde_json::to_string(&line) {
+                self.send(Op::Append(self.user_path(&key), text));
+            }
         }
     }
 
-    /// Writes down a completed play of `user`'s. False when recording is off or the play names
-    /// no song.
-    pub fn record(&self, user: &str, mut play: Play) -> bool {
-        let key = user_key(user);
+    /// Writes a play that has ended. False when recording is off, the play names no song, or
+    /// the person's plays were cleared after it ended. May read the person's file: blocking.
+    pub fn write(&self, settled: Settled, genre: Option<String>) -> bool {
+        let Settled {
+            user,
+            mut play,
+            generation: then,
+            ..
+        } = settled;
+        let key = user_key(&user);
         if key.is_empty()
             || play.title.trim().is_empty()
             || play.artist.trim().is_empty()
@@ -248,84 +517,67 @@ impl ListeningLog {
         {
             return false;
         }
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        // A heart that came while it played.
-        let before = state.hearts.len();
-        state
-            .hearts
-            .retain(|(who, id, at)| !(who == &key && id == &play.song_id && play.heart_counts(*at)));
-        if state.hearts.len() != before {
-            play.hearted = true;
+        if genre.is_some() {
+            play.genre = genre;
         }
-        if !state.meta.names.contains_key(&key) {
-            state.meta.names.insert(key.clone(), user.trim().to_string());
-            self.save_meta(&state.meta);
-        }
-        let line = match serde_json::to_string(&play) {
-            Ok(line) => line,
-            Err(e) => {
-                warn!("A play of {} could not be written down: {e}", play.title);
+        self.ensure_loaded(&key);
+        let mut meta_text = None;
+        let line = {
+            let mut inner = self.inner.lock();
+            if generation(&inner, &key) != then {
                 return false;
             }
+            if let Some(waiting) = inner.hearts.get_mut(&key) {
+                let before = waiting.len();
+                waiting.retain(|(id, at)| !(id == &play.song_id && play.heart_counts(*at)));
+                if waiting.len() != before {
+                    play.hearted = true;
+                }
+            }
+            if !inner.meta.names.contains_key(&key) {
+                inner.meta.names.insert(key.clone(), user.trim().to_string());
+                meta_text = meta_json(&inner.meta);
+            }
+            let line = match serde_json::to_string(&play) {
+                Ok(line) => line,
+                Err(e) => {
+                    warn!("A play of {} could not be written down: {e}", play.title);
+                    return false;
+                }
+            };
+            let rows = inner.users.entry(key.clone()).or_default();
+            let at = rows.partition_point(|row| row.played_at <= play.played_at);
+            rows.insert(at, play);
+            line
         };
-        let rows = state.users.entry(key.clone()).or_default();
-        let at = rows.partition_point(|row| row.played_at <= play.played_at);
-        rows.insert(at, play);
-        if let Err(e) = self.append(&key, &line) {
-            warn!("The listening log for {key} could not be written: {e}");
+        if let Some(text) = meta_text {
+            self.send(Op::Rewrite(self.dir.join(META_FILE), text));
         }
+        self.send(Op::Append(self.user_path(&key), line));
         true
     }
 
-    /// `user` hearted these songs now: a play of one that is on, or just ended, is marked; one
-    /// recorded later takes the heart if it came while it played.
-    pub fn heart(&self, user: &str, song_ids: &[String]) {
-        let key = user_key(user);
-        if key.is_empty() || song_ids.is_empty() || !self.recording() {
-            return;
-        }
-        let now = self.now();
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        let mut changed = false;
-        for id in song_ids.iter().filter(|id| !id.is_empty()) {
-            let marked = state.users.get_mut(&key).and_then(|rows| {
-                rows.iter_mut()
-                    .rev()
-                    .take_while(|row| row.ended_at() + HEART_TRAIL >= now)
-                    .find(|row| &row.song_id == id && row.heart_counts(now))
-            });
-            match marked {
-                Some(row) => {
-                    if !row.hearted {
-                        row.hearted = true;
-                        changed = true;
-                    }
-                }
-                None => state.hearts.push((key.clone(), id.clone(), now)),
-            }
-        }
-        state.hearts.retain(|(_, _, at)| now - *at <= HEART_WAIT);
-        if state.hearts.len() > HEARTS_KEPT {
-            let extra = state.hearts.len() - HEARTS_KEPT;
-            state.hearts.drain(..extra);
-        }
-        if changed && let Some(rows) = state.users.get(&key) {
-            self.rewrite(&key, rows);
+    /// Writes a play at once, for a play already over: [`Self::finished`] then [`Self::write`].
+    pub fn record(&self, user: &str, play: Play) -> bool {
+        let genre = play.genre.clone();
+        match self.finished(user, play, Vec::new()) {
+            Some(settled) => self.write(settled, genre),
+            None => false,
         }
     }
 
-    /// Everyone with plays on record, as (key, name), by name.
+    // ---- reading --------------------------------------------------------------------------
+
+    /// Everyone with plays on record, as (key, name), by name. Reads every file: blocking.
     pub fn people(&self) -> Vec<(String, String)> {
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        let mut people: Vec<(String, String)> = state
+        self.load_everyone();
+        let inner = self.inner.lock();
+        let mut people: Vec<(String, String)> = inner
             .users
             .iter()
             .filter(|(_, rows)| !rows.is_empty())
             .map(|(key, _)| {
-                let name = state.meta.names.get(key).cloned().unwrap_or_else(|| key.clone());
+                let name = inner.meta.names.get(key).cloned().unwrap_or_else(|| key.clone());
                 (key.clone(), name)
             })
             .collect();
@@ -336,9 +588,8 @@ impl ListeningLog {
     /// The name a person is shown by.
     pub fn name_of(&self, user: &str) -> String {
         let key = user_key(user);
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        state
+        let inner = self.inner.lock();
+        inner
             .meta
             .names
             .get(&key)
@@ -346,155 +597,216 @@ impl ListeningLog {
             .unwrap_or_else(|| user.trim().to_string())
     }
 
-    /// A copy of one person's plays, oldest first.
+    /// A copy of one person's plays within the days kept, oldest first. Blocking.
     pub fn plays_of(&self, user: &str) -> Vec<Play> {
         let key = user_key(user);
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        state.users.get(&key).cloned().unwrap_or_default()
+        self.ensure_loaded(&key);
+        let since = self.now() - self.keep();
+        let inner = self.inner.lock();
+        inner
+            .users
+            .get(&key)
+            .map(|rows| {
+                rows.iter()
+                    .filter(|row| row.played_at >= since)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
-    /// A copy of everyone's plays, by key.
+    /// A copy of everyone's plays within the days kept, by key. Blocking.
     pub fn all_plays(&self) -> Vec<(String, Vec<Play>)> {
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        state
+        self.load_everyone();
+        let since = self.now() - self.keep();
+        let inner = self.inner.lock();
+        inner
             .users
             .iter()
-            .map(|(key, rows)| (key.clone(), rows.clone()))
+            .map(|(key, rows)| {
+                (
+                    key.clone(),
+                    rows.iter()
+                        .filter(|row| row.played_at >= since)
+                        .cloned()
+                        .collect(),
+                )
+            })
             .collect()
     }
 
-    /// Removes one person's plays, or everyone's. Returns how many plays went.
+    // ---- upkeep ---------------------------------------------------------------------------
+
+    /// Removes one person's plays, or everyone's, with their current play, waiting hearts and
+    /// name; a play of theirs still being worked out is never written. Returns how many plays
+    /// went. Blocking.
     pub fn clear(&self, user: Option<&str>) -> usize {
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
         let keys: Vec<String> = match user {
             Some(user) => vec![user_key(user)],
-            None => state.users.keys().cloned().collect(),
+            None => {
+                self.load_everyone();
+                let inner = self.inner.lock();
+                let mut keys: HashSet<String> = inner.users.keys().cloned().collect();
+                keys.extend(inner.pending.keys().cloned());
+                keys.extend(inner.meta.names.keys().cloned());
+                keys.into_iter().collect()
+            }
         };
+        for key in &keys {
+            self.ensure_loaded(key);
+        }
         let mut removed = 0;
-        for key in keys {
-            if let Some(rows) = state.users.remove(&key) {
-                removed += rows.len();
+        let meta_text = {
+            let mut inner = self.inner.lock();
+            for key in &keys {
+                // Kept as read and empty, so the file is never read back before it is gone.
+                removed += inner
+                    .users
+                    .insert(key.clone(), Vec::new())
+                    .map_or(0, |rows| rows.len());
+                inner.pending.remove(key);
+                inner.hearts.remove(key);
+                inner.untidy.remove(key);
+                inner.meta.names.remove(key);
+                *inner.generations.entry(key.clone()).or_default() += 1;
             }
-            state.now_playing.remove(&key);
-            state.hearts.retain(|(who, _, _)| who != &key);
-            match std::fs::remove_file(self.user_path(&key)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => warn!("The listening log for {key} could not be removed: {e}"),
-            }
+            meta_json(&inner.meta)
+        };
+        for key in &keys {
+            self.send(Op::Remove(self.user_path(key)));
+        }
+        if let Some(text) = meta_text {
+            self.send(Op::Rewrite(self.dir.join(META_FILE), text));
         }
         removed
     }
 
-    /// Copies the radio's play history in, once ever: completed scrobbles and radio stream
-    /// plays (never the radio's own starter seeds), each as played by an unknown app, as long
-    /// as it is within the days kept. Returns how many plays were copied; 0 once it has run.
+    /// Whether the radio history has been copied in.
+    pub fn backfilled(&self) -> bool {
+        self.inner.lock().meta.backfilled
+    }
+
+    /// Copies the radio's play history in, once ever, while recording is on: completed
+    /// scrobbles and radio stream plays (never the radio's own starter seeds), each as played
+    /// by an unknown app, as long as it is within the days kept. Returns how many plays were
+    /// copied; 0 once it has run, and 0 without running while recording is off. Blocking.
     pub fn backfill(&self, history: Vec<(String, Vec<LastFmRadioPlay>)>) -> usize {
-        let since = self.now() - self.keep();
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        if state.meta.backfilled {
+        if !self.recording() || self.backfilled() {
             return 0;
         }
-        let mut copied = 0;
-        for (user, plays) in history {
-            let key = user_key(&user);
-            if key.is_empty() {
-                continue;
-            }
-            let rows = state.users.entry(key.clone()).or_default();
-            let mut added = 0;
-            for play in plays {
-                if !matches!(play.source.as_str(), "scrobble" | "internet-radio")
-                    || play.played_at_utc < since
-                    || play.artist.trim().is_empty()
-                    || play.title.trim().is_empty()
-                {
-                    continue;
-                }
-                let seconds = i64::from(play.duration.unwrap_or(0).max(0));
-                // Radio history dates a play from when it was reported, at its end.
-                let played_at = play.played_at_utc - TimeDelta::seconds(seconds);
-                if rows.iter().any(|row| {
-                    row.song_id == play.song_id && (row.played_at - played_at).abs() <= TimeDelta::minutes(5)
-                }) {
-                    continue;
-                }
-                rows.push(Play {
-                    cover_id: play.song_id.clone(),
-                    song_id: play.song_id,
-                    artist: play.artist,
-                    title: play.title,
-                    album: play.album.unwrap_or_default(),
-                    genre: play.genre.filter(|g| !g.trim().is_empty()),
-                    seconds,
-                    is_local: play.is_local,
-                    hearted: false,
-                    played_at,
-                    source: "backfill".to_string(),
-                    ..Default::default()
-                });
-                added += 1;
-            }
-            if added == 0 {
-                if rows.is_empty() {
-                    state.users.remove(&key);
-                }
-                continue;
-            }
-            rows.sort_by_key(|row| row.played_at);
-            state
-                .meta
-                .names
-                .entry(key.clone())
-                .or_insert_with(|| user.trim().to_string());
-            self.rewrite(&key, rows);
-            copied += added;
+        let since = self.now() - self.keep();
+        for (user, _) in &history {
+            self.ensure_loaded(&user_key(user));
         }
-        state.meta.backfilled = true;
-        self.save_meta(&state.meta);
+        let mut rewrites = Vec::new();
+        let mut copied = 0;
+        let meta_text = {
+            let mut inner = self.inner.lock();
+            if inner.meta.backfilled {
+                return 0;
+            }
+            for (user, plays) in history {
+                let key = user_key(&user);
+                if key.is_empty() {
+                    continue;
+                }
+                let rows = inner.users.entry(key.clone()).or_default();
+                let mut added = 0;
+                for play in plays {
+                    if !matches!(play.source.as_str(), "scrobble" | "internet-radio")
+                        || play.played_at_utc < since
+                        || play.artist.trim().is_empty()
+                        || play.title.trim().is_empty()
+                    {
+                        continue;
+                    }
+                    let seconds = i64::from(play.duration.unwrap_or(0).max(0));
+                    // A scrobble is dated by the time the app sent, when the play started; the
+                    // radio stream dates its songs when they ended.
+                    let played_at = if play.source == "internet-radio" {
+                        play.played_at_utc - TimeDelta::seconds(seconds)
+                    } else {
+                        play.played_at_utc
+                    };
+                    if rows.iter().any(|row| {
+                        row.song_id == play.song_id
+                            && (row.played_at - played_at).abs() <= TimeDelta::minutes(5)
+                    }) {
+                        continue;
+                    }
+                    rows.push(Play {
+                        cover_id: play.song_id.clone(),
+                        song_id: play.song_id,
+                        artist: play.artist,
+                        title: play.title,
+                        album: play.album.unwrap_or_default(),
+                        genre: play.genre.filter(|g| !g.trim().is_empty()),
+                        seconds,
+                        is_local: play.is_local,
+                        played_at,
+                        source: "backfill".to_string(),
+                        ..Default::default()
+                    });
+                    added += 1;
+                }
+                if added == 0 {
+                    continue;
+                }
+                rows.sort_by_key(|row| row.played_at);
+                rewrites.push((key.clone(), lines_of(rows)));
+                inner.untidy.remove(&key);
+                inner
+                    .meta
+                    .names
+                    .entry(key)
+                    .or_insert_with(|| user.trim().to_string());
+                copied += added;
+            }
+            inner.meta.backfilled = true;
+            meta_json(&inner.meta)
+        };
+        for (key, text) in rewrites {
+            self.send(Op::Rewrite(self.user_path(&key), text));
+        }
+        if let Some(text) = meta_text {
+            self.send(Op::Rewrite(self.dir.join(META_FILE), text));
+        }
         copied
     }
 
-    /// Removes plays older than the days kept. Returns how many went.
+    /// Removes plays older than the days kept and folds the heart lines into their plays,
+    /// file by file. Returns how many plays went. Blocking.
     pub fn prune(&self) -> usize {
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        self.prune_locked(state)
-    }
-
-    fn prune_locked(&self, state: &mut Loaded) -> usize {
+        self.load_everyone();
         let since = self.now() - self.keep();
         let mut removed = 0;
-        let mut emptied = Vec::new();
-        for (key, rows) in &mut state.users {
-            let old = rows.partition_point(|row| row.played_at < since);
-            if old == 0 {
-                continue;
-            }
-            rows.drain(..old);
-            removed += old;
-            if rows.is_empty() {
-                emptied.push(key.clone());
-                let _ = std::fs::remove_file(self.user_path(key));
-            } else {
-                self.rewrite(key, rows);
+        let mut writes = Vec::new();
+        {
+            let mut inner = self.inner.lock();
+            let untidy = std::mem::take(&mut inner.untidy);
+            for (key, rows) in &mut inner.users {
+                let old = rows.partition_point(|row| row.played_at < since);
+                if old == 0 && !untidy.contains(key) {
+                    continue;
+                }
+                rows.drain(..old);
+                removed += old;
+                writes.push((key.clone(), (!rows.is_empty()).then(|| lines_of(rows))));
             }
         }
-        for key in emptied {
-            state.users.remove(&key);
+        for (key, text) in writes {
+            match text {
+                Some(text) => self.send(Op::Rewrite(self.user_path(&key), text)),
+                None => self.send(Op::Remove(self.user_path(&key))),
+            }
         }
         removed
     }
 
     /// The genre already found for an artist: Some(None) when it is known to have none.
     pub fn artist_genre(&self, artist: &str) -> Option<Option<String>> {
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        state
+        let inner = self.inner.lock();
+        inner
             .meta
             .artist_genres
             .get(&artist_key(artist))
@@ -506,20 +818,23 @@ impl ListeningLog {
         if key.is_empty() {
             return;
         }
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        state
-            .meta
-            .artist_genres
-            .insert(key, genre.unwrap_or("").to_string());
-        self.save_meta(&state.meta);
+        let text = {
+            let mut inner = self.inner.lock();
+            inner
+                .meta
+                .artist_genres
+                .insert(key, genre.unwrap_or("").to_string());
+            meta_json(&inner.meta)
+        };
+        if let Some(text) = text {
+            self.send(Op::Rewrite(self.dir.join(META_FILE), text));
+        }
     }
 
     /// The genre already read for a library album: Some(None) when it has none.
     pub fn album_genre(&self, album_id: &str) -> Option<Option<String>> {
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        state
+        let inner = self.inner.lock();
+        inner
             .meta
             .album_genres
             .get(album_id)
@@ -530,25 +845,29 @@ impl ListeningLog {
         if album_id.is_empty() {
             return;
         }
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        state
-            .meta
-            .album_genres
-            .insert(album_id.to_string(), genre.unwrap_or("").to_string());
-        self.save_meta(&state.meta);
+        let text = {
+            let mut inner = self.inner.lock();
+            inner
+                .meta
+                .album_genres
+                .insert(album_id.to_string(), genre.unwrap_or("").to_string());
+            meta_json(&inner.meta)
+        };
+        if let Some(text) = text {
+            self.send(Op::Rewrite(self.dir.join(META_FILE), text));
+        }
     }
 
-    /// The artists of copied-in plays that have no genre yet and no answer kept.
+    /// The artists of plays that have no genre yet and no answer kept. Blocking.
     pub fn artists_missing_genres(&self) -> Vec<String> {
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
-        let mut seen = std::collections::HashSet::new();
+        self.load_everyone();
+        let inner = self.inner.lock();
+        let mut seen = HashSet::new();
         let mut artists = Vec::new();
-        for rows in state.users.values() {
+        for rows in inner.users.values() {
             for row in rows.iter().filter(|row| row.genre.is_none()) {
                 let key = artist_key(&row.artist);
-                if !state.meta.artist_genres.contains_key(&key) && seen.insert(key) {
+                if !inner.meta.artist_genres.contains_key(&key) && seen.insert(key) {
                     artists.push(row.artist.clone());
                 }
             }
@@ -558,40 +877,108 @@ impl ListeningLog {
 
     /// Gives every play with no genre the genre kept for its artist. Returns how many changed.
     pub fn fill_genres_from_artists(&self) -> usize {
-        let mut guard = self.state.lock();
-        let state = self.load_locked(&mut guard);
         let mut changed = 0;
-        let genres = state.meta.artist_genres.clone();
-        let keys: Vec<String> = state.users.keys().cloned().collect();
-        for key in keys {
-            let Some(rows) = state.users.get_mut(&key) else {
-                continue;
-            };
-            let mut touched = false;
-            for row in rows.iter_mut().filter(|row| row.genre.is_none()) {
-                if let Some(genre) = genres.get(&artist_key(&row.artist)).filter(|g| !g.is_empty()) {
-                    row.genre = Some(genre.clone());
-                    touched = true;
-                    changed += 1;
+        let mut writes = Vec::new();
+        {
+            let mut inner = self.inner.lock();
+            let genres = inner.meta.artist_genres.clone();
+            for (key, rows) in &mut inner.users {
+                let mut touched = false;
+                for row in rows.iter_mut().filter(|row| row.genre.is_none()) {
+                    if let Some(genre) = genres.get(&artist_key(&row.artist)).filter(|g| !g.is_empty()) {
+                        row.genre = Some(genre.clone());
+                        touched = true;
+                        changed += 1;
+                    }
+                }
+                if touched {
+                    writes.push((key.clone(), lines_of(rows)));
                 }
             }
-            if touched && let Some(rows) = state.users.get(&key) {
-                self.rewrite(&key, rows);
+            for (key, _) in &writes {
+                inner.untidy.remove(key);
             }
+        }
+        for (key, text) in writes {
+            self.send(Op::Rewrite(self.user_path(&key), text));
         }
         changed
     }
 
-    /// The daily work: the radio history copied in once, the genres of those plays looked up
-    /// by artist on Last.fm, then old plays pruned once a day.
+    /// Looks up on Last.fm the artists of plays with no genre, keeping each answer. A lookup
+    /// that fails keeps nothing and stops the rest until the next run. Returns how many
+    /// artists were answered.
+    pub async fn look_up_missing_genres(
+        self: &Arc<Self>,
+        last_fm: &crate::services::last_fm::LastFmService,
+    ) -> usize {
+        let log = Arc::clone(self);
+        let artists = tokio::task::spawn_blocking(move || log.artists_missing_genres())
+            .await
+            .unwrap_or_default();
+        let mut answered = 0;
+        for artist in artists {
+            if !self.recording() {
+                break;
+            }
+            match super::genres::artist_genre_from_last_fm(last_fm, &artist).await {
+                Ok(genre) => {
+                    self.remember_artist_genre(&artist, genre.as_deref());
+                    answered += 1;
+                }
+                Err(_) => break,
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        answered
+    }
+
+    /// The work in the background, while recording is on: the radio history copied in once,
+    /// the genres of plays without one looked up by artist on Last.fm, old plays pruned once a
+    /// day, and plays left waiting with nothing after them written. On shutdown every current
+    /// play is written as long as it has played.
     pub async fn run(
         self: Arc<Self>,
         history: Arc<crate::services::last_fm::last_fm_radio_state_store::LastFmRadioStateStore>,
         last_fm: Arc<crate::services::last_fm::LastFmService>,
         stopping: CancellationToken,
     ) -> anyhow::Result<()> {
+        let mut daily: Option<DateTime<Utc>> = None;
+        loop {
+            if self.recording() && daily.is_none_or(|at| self.now() - at >= TimeDelta::hours(24)) {
+                daily = Some(self.now());
+                self.daily(&history, &last_fm).await;
+            }
+            let expired = self.settle_expired();
+            super::write_settled(Arc::clone(&self), Arc::clone(&last_fm), expired);
+            tokio::select! {
+                () = stopping.cancelled() => break,
+                () = tokio::time::sleep(Duration::from_secs(60)) => {}
+            }
+        }
         let log = Arc::clone(&self);
+        let _ = tokio::task::spawn_blocking(move || {
+            for settled in log.settle_all() {
+                let genre = super::genres::resolve_kept(&log, &settled);
+                log.write(settled, genre);
+            }
+            log.flush();
+        })
+        .await;
+        Ok(())
+    }
+
+    async fn daily(
+        self: &Arc<Self>,
+        history: &Arc<crate::services::last_fm::last_fm_radio_state_store::LastFmRadioStateStore>,
+        last_fm: &crate::services::last_fm::LastFmService,
+    ) {
+        let log = Arc::clone(self);
+        let history = Arc::clone(history);
         let copied = tokio::task::spawn_blocking(move || {
+            if log.backfilled() {
+                return 0;
+            }
             let people: Vec<(String, Vec<LastFmRadioPlay>)> = history
                 .known_users()
                 .into_iter()
@@ -607,30 +994,17 @@ impl ListeningLog {
         if copied > 0 {
             info!("Listening: copied {copied} plays from the radio history");
         }
-        for artist in self.artists_missing_genres() {
-            if stopping.is_cancelled() || !last_fm.has_api_key() {
-                break;
-            }
-            let genre = super::genres::artist_genre_from_last_fm(&last_fm, &artist).await;
-            self.remember_artist_genre(&artist, genre.as_deref());
-            tokio::select! {
-                () = stopping.cancelled() => return Ok(()),
-                () = tokio::time::sleep(Duration::from_millis(250)) => {}
-            }
-        }
-        let filled = self.fill_genres_from_artists();
+        self.look_up_missing_genres(last_fm).await;
+        let log = Arc::clone(self);
+        let (filled, removed) =
+            tokio::task::spawn_blocking(move || (log.fill_genres_from_artists(), log.prune()))
+                .await
+                .unwrap_or((0, 0));
         if filled > 0 {
-            debug!("Listening: {filled} copied plays took their artist's genre");
+            debug!("Listening: {filled} plays took their artist's genre");
         }
-        loop {
-            let removed = self.prune();
-            if removed > 0 {
-                info!("Listening: removed {removed} plays older than the days kept");
-            }
-            tokio::select! {
-                () = stopping.cancelled() => return Ok(()),
-                () = tokio::time::sleep(Duration::from_secs(24 * 3600)) => {}
-            }
+        if removed > 0 {
+            info!("Listening: removed {removed} plays older than the days kept");
         }
     }
 
@@ -640,80 +1014,151 @@ impl ListeningLog {
         self.dir.join(format!("{}.jsonl", file_stem(key)))
     }
 
-    fn append(&self, key: &str, line: &str) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.user_path(key))?;
-        file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
-        file.flush()
-    }
-
-    fn rewrite(&self, key: &str, rows: &[Play]) {
-        let mut text = String::new();
-        for row in rows {
-            if let Ok(line) = serde_json::to_string(row) {
-                text.push_str(&line);
-                text.push('\n');
-            }
+    /// Reads a person's file the first time their plays are needed. Blocking; the lock is
+    /// never held while the file is read.
+    fn ensure_loaded(&self, key: &str) {
+        if key.is_empty() || self.inner.lock().users.contains_key(key) {
+            return;
         }
-        if let Err(e) = state_file::save_atomic(&self.user_path(key), &text) {
-            warn!("The listening log for {key} could not be written: {e}");
+        let (rows, untidy) = read_log(&self.user_path(key));
+        let mut inner = self.inner.lock();
+        if !inner.users.contains_key(key) {
+            inner.users.insert(key.to_string(), rows);
+            if untidy {
+                inner.untidy.insert(key.to_string());
+            }
         }
     }
 
-    fn save_meta(&self, meta: &Meta) {
-        let mut meta = meta.clone();
-        meta.version = 1;
-        match serde_json::to_string_pretty(&meta) {
-            Ok(text) => {
-                if let Err(e) = state_file::save_atomic(&self.dir.join(META_FILE), &text) {
-                    warn!("{META_FILE} could not be written: {e}");
-                }
-            }
-            Err(e) => warn!("{META_FILE} could not be written: {e}"),
+    /// Reads the file of everyone on disk not read yet.
+    fn load_everyone(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        let keys: Vec<String> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.strip_suffix(".jsonl").and_then(key_of_stem)
+            })
+            .collect();
+        for key in keys {
+            self.ensure_loaded(&key);
         }
     }
+}
 
-    fn load_locked<'a>(&self, guard: &'a mut Option<Loaded>) -> &'a mut Loaded {
-        if guard.is_none() {
-            let mut loaded = Loaded::default();
-            if let Ok(Some(text)) = state_file::read_text(&self.dir.join(META_FILE)) {
-                match serde_json::from_str::<Meta>(&text) {
-                    Ok(meta) => loaded.meta = meta,
-                    Err(e) => warn!("{META_FILE} could not be read, starting over: {e}"),
-                }
-            }
-            if let Ok(entries) = std::fs::read_dir(&self.dir) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    let Some(stem) = name.strip_suffix(".jsonl") else {
-                        continue;
-                    };
-                    let Some(key) = key_of_stem(stem) else { continue };
-                    let Ok(Some(text)) = state_file::read_text(&entry.path()) else {
-                        continue;
-                    };
-                    // A line torn by a crash mid-append is left out.
-                    let mut rows: Vec<Play> = text
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .filter_map(|line| serde_json::from_str(line).ok())
-                        .collect();
-                    rows.sort_by_key(|row| row.played_at);
-                    if !rows.is_empty() {
-                        loaded.users.insert(key, rows);
-                    }
-                }
-            }
-            *guard = Some(loaded);
-            let state = guard.as_mut().expect("just loaded");
-            self.prune_locked(state);
+/// The person's clear count.
+fn generation(inner: &Inner, key: &str) -> u64 {
+    inner.generations.get(key).copied().unwrap_or(0)
+}
+
+/// A current play ended at `end`: written only when an app reported it as played, timed to
+/// its end and never past its length (or the cap for a play of no known length).
+fn settle(pending: Pending, end: DateTime<Utc>, generation: u64) -> Option<Settled> {
+    let limit = pending.limit();
+    let draft = pending.draft?;
+    let elapsed = TimeDelta::seconds((end - pending.start).num_seconds().max(0));
+    let mut play = draft.play;
+    play.seconds = elapsed.min(limit).num_seconds();
+    play.played_at = pending.start;
+    play.hearted |= pending.hearted;
+    Some(Settled {
+        user: pending.user,
+        play,
+        genres: draft.genres,
+        album: draft.album,
+        generation,
+    })
+}
+
+/// The plays as lines of a person's file.
+fn lines_of(rows: &[Play]) -> String {
+    let mut text = String::new();
+    for row in rows {
+        if let Ok(line) = serde_json::to_string(row) {
+            text.push_str(&line);
+            text.push('\n');
         }
-        guard.as_mut().expect("loaded")
     }
+    text
+}
+
+fn meta_json(meta: &Meta) -> Option<String> {
+    let mut meta = meta.clone();
+    meta.version = 1;
+    match serde_json::to_string_pretty(&meta) {
+        Ok(text) => Some(text),
+        Err(e) => {
+            warn!("{META_FILE} could not be written: {e}");
+            None
+        }
+    }
+}
+
+/// A person's plays from their file, oldest first, each heart line folded into the latest play
+/// of its song that it came during; and whether the file had heart lines to fold. A line torn
+/// by a crash mid-append is left out.
+fn read_log(path: &Path) -> (Vec<Play>, bool) {
+    let Ok(Some(text)) = state_file::read_text(path) else {
+        return (Vec::new(), false);
+    };
+    let mut rows: Vec<Play> = Vec::new();
+    let mut hearts: Vec<HeartLine> = Vec::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("heart").is_some() {
+            if let Ok(heart) = serde_json::from_value::<HeartLine>(value) {
+                hearts.push(heart);
+            }
+        } else if let Ok(play) = serde_json::from_value::<Play>(value) {
+            rows.push(play);
+        }
+    }
+    rows.sort_by_key(|row| row.played_at);
+    for heart in &hearts {
+        if let Some(row) = rows
+            .iter_mut()
+            .rev()
+            .find(|row| row.song_id == heart.heart && row.heart_counts(heart.at))
+        {
+            row.hearted = true;
+        }
+    }
+    (rows, !hearts.is_empty())
+}
+
+/// The writer thread: every write in the order it was asked for.
+fn write_in_order(writes: mpsc::Receiver<Op>) {
+    for op in writes {
+        let result = match &op {
+            Op::Append(path, line) => append(path, line),
+            Op::Rewrite(path, text) => state_file::save_atomic(path, text),
+            Op::Remove(path) => match std::fs::remove_file(path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+                _ => Ok(()),
+            },
+            Op::Flush(done) => {
+                let _ = done.send(());
+                Ok(())
+            }
+        };
+        if let Err(e) = result {
+            warn!("The listening log could not be written: {e}");
+        }
+    }
+}
+
+fn append(path: &Path, line: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    file.write_all(line.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.flush()
 }
 
 /// How an artist is looked up in the genre answers: trimmed and lower-cased.

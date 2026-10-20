@@ -891,9 +891,11 @@ async fn as_octo_app(fixture: &Fixture, query: &str) {
 #[tokio::test]
 async fn a_completed_play_is_written_down_with_its_app_whatever_the_radio_does() {
     let fixture = listening_only().await;
+    // Reported once, three minutes after it started; the next song ends it.
     let started = minutes_ago_ms(3);
-    as_octo_app(&fixture, "id=lib1&submission=false").await;
     as_octo_app(&fixture, &format!("id=lib1&submission=true&time={started}")).await;
+    assert!(fixture.state.listening.plays_of("bob").is_empty());
+    as_octo_app(&fixture, "id=lib9&submission=false").await;
     let log = Arc::clone(&fixture.state.listening);
     until(move || !log.plays_of("bob").is_empty()).await;
     let plays = fixture.state.listening.plays_of("bob");
@@ -907,8 +909,8 @@ async fn a_completed_play_is_written_down_with_its_app_whatever_the_radio_does()
     assert_eq!(play.source, "scrobble");
     assert!(play.is_local);
     assert_eq!(play.played_at.timestamp_millis(), started);
-    // Timed from the now-playing a moment ago, never past the song's 180 seconds.
-    assert!(play.seconds <= 180, "{}", play.seconds);
+    // Timed to when the next song started, never past the song's 180 seconds.
+    assert!((170..=180).contains(&play.seconds), "{}", play.seconds);
     // The radio learned nothing: it is off.
     assert_eq!(fixture.plays("bob"), 0);
 }
@@ -922,6 +924,7 @@ async fn a_heart_while_the_song_plays_marks_the_play() {
         .await;
     assert!(star.contains(r#""status":"ok""#), "{star}");
     as_octo_app(&fixture, "id=lib2&submission=true").await;
+    as_octo_app(&fixture, "id=lib10&submission=false").await;
     let log = Arc::clone(&fixture.state.listening);
     until(move || !log.plays_of("bob").is_empty()).await;
     assert!(fixture.state.listening.plays_of("bob")[0].hearted);
@@ -935,6 +938,7 @@ async fn with_recording_off_no_play_is_written() {
     fixture.state.settings.set(settings);
     as_octo_app(&fixture, "id=lib3&submission=false").await;
     as_octo_app(&fixture, "id=lib3&submission=true").await;
+    as_octo_app(&fixture, "id=lib11&submission=false").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(fixture.state.listening.plays_of("bob").is_empty());
     assert!(fixture.state.listening.people().is_empty());

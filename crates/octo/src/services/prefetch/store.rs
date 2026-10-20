@@ -288,9 +288,9 @@ impl PrefetchStore {
             state.read_from = Some(folder);
             if !state.entries.is_empty() {
                 info!(
-                    "{} songs downloaded ahead are ready in {}",
-                    state.entries.len(),
-                    state.read_from.as_deref().unwrap_or(Path::new("")).display()
+                    "Songs downloaded ahead ready in {}: {}",
+                    state.read_from.as_deref().unwrap_or(Path::new("")).display(),
+                    state.entries.len()
                 );
             }
         }

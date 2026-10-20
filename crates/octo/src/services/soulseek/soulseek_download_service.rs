@@ -57,6 +57,7 @@ use crate::services::common::{
     OperationCanceled, TrackDownload,
 };
 use crate::services::fingerprint::DownloadVerificationService;
+use crate::services::fingerprint::preview_check::{Heard, PreviewOutcome, PreviewRequest};
 use crate::services::i_download_service::DirectStreamInfo;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::library::upgrade_queue::AudioSummary;
@@ -337,6 +338,19 @@ impl SoulseekDownloadService {
                 verdict.describe()
             )));
         }
+        let length_known = routing.duration.is_some_and(|s| s > 0)
+            && TagFile::open(&local).is_ok_and(|file| file.duration_seconds() > 0);
+        let track_key = song.external_id.clone().unwrap_or_default();
+        if let Some(reason) = self
+            .refused_by_preview(base, routing, &track_key, &local, &verdict, length_known)
+            .await
+        {
+            // Swept with the job folders when it cannot be removed now.
+            let _ = std::fs::remove_file(&local);
+            return Err(file_not_found(format!(
+                "Lidarr's file for '{artist} - {title}' {reason}"
+            )));
+        }
         if let Some(said) = verdict.acoust_id_text() {
             base.log_song_step_heard(
                 song,
@@ -587,6 +601,99 @@ impl SoulseekDownloadService {
         }
         song.verification = Some(Box::new(verdict));
         Ok(path)
+    }
+
+    // =========================================================================
+    // The preview check
+    // =========================================================================
+
+    /// Holds a download AcoustID could not place against the song's YouTube preview. Some(the
+    /// reason, for the deny list) when the file is refused; None keeps it, judged as before.
+    /// `length_known`: the file's length and the song's were both read, so the length check
+    /// before this one had something to compare.
+    async fn refused_by_preview(
+        &self,
+        base: &BaseDownloadService,
+        routing: &SoulseekRouting,
+        track_key: &str,
+        path: &str,
+        verdict: &VerificationResult,
+        length_known: bool,
+    ) -> Option<String> {
+        let (artist, title) = names(routing);
+        let request = PreviewRequest {
+            artist: &artist,
+            title: &title,
+            // A shown length from the video itself, or from a file downloaded before, is no
+            // independent word on how long the song runs.
+            seconds: routing
+                .duration
+                .or(routing.shown_duration.filter(|_| {
+                    matches!(
+                        routing.shown_duration_source,
+                        LengthSource::Deezer | LengthSource::LastFm
+                    )
+                }))
+                .filter(|s| *s > 0),
+            video_id: routing.you_tube_id.as_deref(),
+        };
+        let outcome = self
+            .verification
+            .hear_against_preview(self.youtube.as_ref(), path, &request, verdict, length_known)
+            .await;
+        let PreviewOutcome::Compared {
+            heard,
+            comparison,
+            trusted,
+            preview,
+        } = outcome
+        else {
+            if let PreviewOutcome::Unavailable(why) = outcome {
+                info!("no preview check for '{artist} - {title}': {why}");
+            }
+            return None;
+        };
+        let video = &preview.video_id;
+        let measured = format!(
+            "bit error {:.2} at {:+.0}s",
+            comparison.bit_error, comparison.offset_seconds
+        );
+        match heard {
+            Heard::Match => {
+                info!("'{artist} - {title}' matched the preview {video} ({measured})");
+                base.log_step(
+                    track_key,
+                    acquisition_event_kinds::CHECK,
+                    "Sounds like its YouTube preview",
+                    None,
+                );
+                None
+            }
+            Heard::Mismatch => {
+                warn!(
+                    "the file did not sound like the song: '{artist} - {title}' against the preview {video} \
+                     ({measured}); discarding it"
+                );
+                base.log_step(
+                    track_key,
+                    acquisition_event_kinds::CHECK,
+                    "Did not sound like the song",
+                    Some("Nothing in it sounds like the song's YouTube preview; thrown away"),
+                );
+                Some("did not sound like the song".to_string())
+            }
+            Heard::Unclear => {
+                info!(
+                    "'{artist} - {title}' could not be told apart from the preview {video} ({measured}, {}); keeping it",
+                    if trusted {
+                        "a preview that names the song"
+                    } else {
+                        "a preview that may not be the song"
+                    }
+                );
+                None
+            }
+        }
     }
 
     // =========================================================================
@@ -1587,6 +1694,21 @@ impl SoulseekDownloadService {
                             last_refusal = Some((identified.clone(), verdict.deny_reason.clone()));
                         }
                         last_error = Some(identified);
+                        continue;
+                    }
+
+                    // AcoustID has never heard this sound, or no length stood behind the file:
+                    // the song's YouTube preview is asked instead, and a clear no is a failed check.
+                    let length_known = routing.duration.is_some_and(|s| s > 0) && actual_secs > 0;
+                    if let Some(reason) = self
+                        .refused_by_preview(base, routing, &track_key, &local_path, &verdict, length_known)
+                        .await
+                    {
+                        discard_rejected_download(&local_path, attempt_started_utc);
+                        self.deny_candidate(hit, routing, &reason);
+                        let refused = format!("the file {reason}");
+                        last_refusal = Some((refused.clone(), reason));
+                        last_error = Some(refused);
                         continue;
                     }
 

@@ -34,6 +34,10 @@ struct Rig {
 }
 
 async fn rig() -> Rig {
+    rig_with_duration(true).await
+}
+
+async fn rig_with_duration(known: bool) -> Rig {
     let server = MockServer::start().await;
     Mock::given(any()).respond_with(|request: &Request| {
         let query = query_of(request);
@@ -73,7 +77,7 @@ async fn rig() -> Rig {
         &ImportTrack {
             title: "Angel".into(),
             artist: "Massive Attack".into(),
-            seconds: Some(379),
+            seconds: known.then_some(379),
             ..Default::default()
         },
     )
@@ -133,8 +137,15 @@ async fn rig() -> Rig {
             let n = page.len();
             Box::pin(async move { Some((page, n)) })
         }));
-    let imported = state.imports.add_file("alice", "Road trip.csv",
-        b"Track Name,Artist Name(s),Track Duration (ms)\nTeardrop,Massive Attack,330000\nAngel,Massive Attack,379000\nTeardrop,Massive Attack,330000\n").await;
+    let csv = if known {
+        "Track Name,Artist Name(s),Track Duration (ms)\nTeardrop,Massive Attack,330000\nAngel,Massive Attack,379000\nTeardrop,Massive Attack,330000\n"
+    } else {
+        "Track Name,Artist Name(s)\nTeardrop,Massive Attack\nAngel,Massive Attack\nTeardrop,Massive Attack\n"
+    };
+    let imported = state
+        .imports
+        .add_file("alice", "Road trip.csv", csv.as_bytes())
+        .await;
     assert!(imported.ok, "{}", imported.message);
     let import_id = imported.list_id.unwrap();
     assert!(state.imports.set_streaming("alice", &import_id, true).ok);
@@ -186,6 +197,7 @@ async fn import_streaming_standard_clients_get_all_entries_in_order_as_json_and_
         );
         assert_eq!(entries[0]["suffix"], "flac");
         assert_eq!(entries[1]["isExternal"], true);
+        assert_eq!(entries[1]["duration"], 379);
         assert_ne!(entries[1]["suffix"], "flac");
         assert_eq!(playlist["readonly"], true);
 
@@ -218,6 +230,35 @@ async fn import_streaming_standard_clients_get_all_entries_in_order_as_json_and_
         r.streams.stream_calls().is_empty(),
         "listing never resolves a stream"
     );
+}
+
+#[tokio::test]
+async fn import_streaming_unknown_duration_is_numeric_for_psysonic_playback() {
+    let r = rig_with_duration(false).await;
+    let auth = auth("alice", "good", "Psysonic");
+    let endpoint = format!("/rest/getPlaylist.view?{auth}&id={}", r.playlist_id);
+    let playlist = get(&r.app, &format!("{endpoint}&f=json")).await.envelope()["playlist"].clone();
+    let entries = playlist["entry"].as_array().unwrap();
+    assert_eq!(entries[0]["duration"], 330, "keep native metadata");
+    assert_eq!(entries[1]["id"], r.preview, "keep the original routing ID");
+    assert_eq!(entries[1]["duration"].as_f64(), Some(0.0));
+    assert_eq!(entries[2]["duration"], 330);
+    assert_eq!(
+        r.state
+            .external_id_registry
+            .lookup(&r.preview)
+            .unwrap()
+            .snapshot()
+            .duration,
+        None
+    );
+    let xml = get(&r.app, &endpoint).await.text();
+    assert!(xml.contains(&format!(r#"id="{}""#, r.preview)));
+    assert!(xml.contains(r#"duration="0""#));
+    let stream = get(&r.app, &format!("/rest/stream.view?{auth}&id={}", r.preview)).await;
+    assert_eq!(stream.body.as_ref(), b"preview audio");
+    assert!(r.state.acquisition_tracker.all().is_empty());
+    assert_eq!(r.state.imports.overview("alice").trickle.queued, 0);
 }
 
 #[tokio::test]

@@ -19,6 +19,9 @@ source order. An unreadable source row cannot become a playable entry.
   scope), then `getSong` with the listener's credentials for Navidrome's own song metadata.
   Missing or no-longer-accessible local entries use the normal external Soulseek/YouTube
   routing. Opening or listing an import does not search YouTube or queue an acquisition.
+  If the export has no duration, preview entries carry `duration: 0` (unknown), so clients
+  such as Psysonic can start their decoder without a missing numeric playback argument.
+  A known duration is preserved; no guessed length or extra catalog lookup is introduced.
 - Preview playback and hearts use the existing media and acquisition endpoints. For the
   preview-then-heart workflow, keep **Get missing songs**, **Download on play**,
   **Wait for lossless on play** and **Lidarr album on play** off. Those existing explicit

@@ -643,7 +643,13 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
                     &state.external_id_registry,
                     &track,
                 );
-                Node::from_value(&Value::Object(builder.convert_song_to_json(&song)))
+                let mut fields = builder.convert_song_to_json(&song);
+                // File exports often omit lengths. Psysonic passes this field directly
+                // to audio_play's required numeric durationHint: 0 means unknown and
+                // lets the decoder determine the length, without inventing one or
+                // changing the preview's stable routing ID.
+                fields.entry("duration".to_string()).or_insert(0.into());
+                Node::from_value(&Value::Object(fields))
             })
             .buffered(FAMILY_SONGS_AT_ONCE)
             .collect()

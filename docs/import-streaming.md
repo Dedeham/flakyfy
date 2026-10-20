@@ -89,7 +89,7 @@ names; real-device playback still needs the manual smoke test below.
 Build this branch with its existing Dockerfile, under a distinct tag:
 
 ```sh
-docker build --build-arg OCTO_VERSION=2026.10.15-stream-import -t octo:2026.10.15-stream-import .
+docker build --build-arg OCTO_VERSION=2026.10.15 -t octo:2026.10.15-stream-import .
 ```
 
 The Dockerfile and supplied `docker-compose.yml` are unchanged. Do not run the repository's

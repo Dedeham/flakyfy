@@ -22,6 +22,7 @@ pub mod local;
 pub mod lyrics;
 pub mod metadata;
 pub mod notifications;
+pub mod prefetch;
 pub mod radio;
 pub mod sonic;
 pub mod soulseek;

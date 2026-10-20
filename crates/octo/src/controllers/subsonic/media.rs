@@ -1,12 +1,13 @@
 //! `stream`, `download`, `getCoverArt` and `getTranscodeDecision`.
 
 use std::io::SeekFrom;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -40,6 +41,7 @@ use crate::services::cover_art::local_cover_cache::{CoverPicture, Fetched, NotKe
 use crate::services::family::{FamilyCaller, LibraryScope, audio_gate, family_caller};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::library::{GeneratedPlaylist, navidrome_song_list};
+use crate::services::prefetch::{Source, from_start};
 use crate::services::subsonic::subsonic_proxy_service::content_type_of;
 use crate::services::subsonic::{CredentialVerdict, SubsonicProxyService};
 
@@ -69,6 +71,10 @@ pub fn routes() -> RouteSet {
 /// Downloads on-the-fly if needed, or streams directly in Stream mode.
 pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
     let caller = family_caller(req.extensions()).cloned();
+    let address = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(address)| address.ip());
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -100,7 +106,13 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
     );
 
     if !is_external {
-        return Ok(call.proxy.relay_stream(&call.parameters).await);
+        let response = call.proxy.relay_stream(&call.parameters).await;
+        // Navidrome took the sign-in, so a play of a library song moves the songs fetched ahead
+        // along its queue too.
+        if response.status().is_success() {
+            note_playing(&state, &call, caller.as_ref(), &id, None);
+        }
+        return Ok(response);
     }
 
     // Navidrome checks the sign-in on everything relayed to it, but it never sees an outside
@@ -112,21 +124,60 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
     let provider = provider.unwrap_or_default();
     let external_id = external_id.unwrap_or_default();
 
+    // Octo's apps read the bytes they get, whatever the listing declared, so a song fetched
+    // ahead plays as its FLAC there, for every play that starts on it.
+    if state.settings.current().prefetch.enabled {
+        // Who is asking only names the play; a lookup that fails leaves it to the address.
+        let who = signed_in_user(&state, &call).await.unwrap_or_default();
+        note_playing(&state, &call, caller.as_ref(), &id, Some(who.clone()));
+        if draws_its_own_marks(&call)
+            && let Some(response) = serve_ahead(
+                &state,
+                &call,
+                caller.as_ref(),
+                &who,
+                address,
+                &provider,
+                &external_id,
+                &id,
+            )
+            .await
+        {
+            return Ok(response);
+        }
+    }
+
     // A local file may only be served under an external id when this session DECLARES
     // that id as lossless. search3 already told the client a suffix, bitrate and size,
     // and a player picks its decoder from those, so handing back different bytes is
     // what makes tracks silently refuse to start. With the default settings the
     // lossless copy is reached as its own library track after the rescan instead.
     if state.settings.current().subsonic.wait_for_lossless_on_play {
-        let local_path = state
+        let mut local_path = state
             .local_library
             .get_local_path_for_external_song(&provider, &external_id)
-            .await;
-        if let Some(local_path) = local_path
-            && Path::new(&local_path).is_file()
+            .await
+            .filter(|path| Path::new(path).is_file());
+        // A song fetched ahead is that lossless copy too, for a caller whose plays keep copies.
+        let mut ahead = false;
+        if local_path.is_none()
+            && let Some(ready) = state.prefetch.store().ready(&provider, &external_id)
+            && state.prefetch.may_keep_copies(
+                &signed_in_user(&state, &call).await.unwrap_or_default(),
+                caller.as_ref(),
+            )
         {
+            local_path = Some(ready.to_string_lossy().into_owned());
+            ahead = true;
+        }
+        if let Some(local_path) = local_path {
             match outside_file(&state, &call, caller.as_ref(), &local_path).await {
-                OutsideFile::Serve => return serve_file(&call, &local_path).await,
+                OutsideFile::Serve => {
+                    if ahead {
+                        state.prefetch.store().touch(&provider, &external_id);
+                    }
+                    return serve_file(&call, &local_path).await;
+                }
                 OutsideFile::Relayed(response) => return Ok(response),
                 // Not this caller's to have as a file: it plays from its source below.
                 OutsideFile::Withheld => {}
@@ -153,6 +204,113 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
                 &json!({ "error": format!("Failed to stream: {error}") }),
             ))
         }
+    }
+}
+
+/// A play from the first byte tells the songs fetched ahead what is playing, in the background:
+/// the stream never waits for it. `who` is the signed-in listener when already known.
+fn note_playing(
+    state: &AppState,
+    call: &SubsonicCall,
+    caller: Option<&FamilyCaller>,
+    id: &str,
+    who: Option<String>,
+) {
+    if !state.settings.current().prefetch.enabled
+        || !is_first_byte_request(call.method().as_str(), call.header("Range").as_deref())
+    {
+        return;
+    }
+    let (state, caller, id) = (state.clone(), caller.cloned(), id.to_string());
+    let (parameters, proxy) = (call.parameters.clone(), call.proxy.clone());
+    tokio::spawn(async move {
+        let who = match who {
+            Some(who) => Some(who),
+            None => state
+                .request_identity
+                .username(&parameters, &proxy)
+                .await
+                .ok()
+                .flatten(),
+        };
+        if let Some(who) = who.filter(|w| !w.is_empty()) {
+            state.prefetch.on_playing(&who, &id, caller.as_ref()).await;
+        }
+    });
+}
+
+/// Who a play belongs to, for the source it keeps: the listener, or the address and app when
+/// nobody is named.
+fn play_key(who: &str, address: Option<IpAddr>, client: &str) -> String {
+    if who.trim().is_empty() {
+        format!(
+            "{}|{}",
+            address.map(|a| a.to_string()).unwrap_or_default(),
+            client.trim().to_lowercase()
+        )
+    } else {
+        who.trim().to_lowercase()
+    }
+}
+
+/// The song's FLAC, for an Octo app, when it is ready (downloaded ahead, or kept by a heart) and
+/// this play started on it. None leaves the play to the preview.
+#[allow(clippy::too_many_arguments)]
+async fn serve_ahead(
+    state: &AppState,
+    call: &SubsonicCall,
+    caller: Option<&FamilyCaller>,
+    who: &str,
+    address: Option<IpAddr>,
+    provider: &str,
+    external_id: &str,
+    id: &str,
+) -> Option<Response> {
+    let ahead = state
+        .prefetch
+        .store()
+        .ready(provider, external_id)
+        .filter(|_| state.prefetch.may_keep_copies(who, caller))
+        .map(|path| path.to_string_lossy().into_owned());
+    let file = match &ahead {
+        Some(path) => Some(path.clone()),
+        None => state
+            .local_library
+            .get_local_path_for_external_song(provider, external_id)
+            .await
+            .filter(|path| Path::new(path).is_file()),
+    };
+    let range = call.header("Range");
+    let length = state
+        .external_id_registry
+        .lookup(external_id)
+        .and_then(|routing| routing.snapshot().duration);
+    let source = state.prefetch.sources().choose(
+        &play_key(who, address, call.param("c")),
+        id,
+        from_start(range.as_deref()),
+        file.is_some(),
+        length,
+        !call.method().as_str().eq_ignore_ascii_case("HEAD"),
+    );
+    if source == Source::Preview {
+        return None;
+    }
+    let file = file?;
+    match outside_file(state, call, caller, &file).await {
+        OutsideFile::Serve => {
+            if ahead.is_some() {
+                state.prefetch.store().touch(provider, external_id);
+            }
+            info!("Playing {id} from its FLAC copy ({file})");
+            Some(
+                serve_file(call, &file)
+                    .await
+                    .unwrap_or_else(IntoResponse::into_response),
+            )
+        }
+        OutsideFile::Relayed(response) => Some(response),
+        OutsideFile::Withheld => None,
     }
 }
 

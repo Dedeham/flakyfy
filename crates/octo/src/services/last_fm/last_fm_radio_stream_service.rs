@@ -439,6 +439,7 @@ impl LastFmRadioStreamService {
             .filter_map(|track| track.resolved_id.clone())
             .collect();
         self.shared.queues.register(ids.clone());
+        self.shared.queues.note_radio(ids.clone());
         self.prewarm(ids);
         // A published session starts with three complete MP3 segments. Keep those exact tracks
         // even if the recommendation snapshot changes before tune-in; the next replenishment

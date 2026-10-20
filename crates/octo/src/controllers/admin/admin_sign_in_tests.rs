@@ -369,6 +369,25 @@ async fn only_the_marked_endpoints_answer_without_a_sign_in() {
 }
 
 #[tokio::test]
+async fn the_upcoming_songs_card_asks_for_a_sign_in() {
+    let factory = SignInFactory::new().await;
+    assert_eq!(
+        get(&factory.app, "/api/admin/prefetch").await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let clear = send(
+        &factory.app,
+        Method::POST,
+        "/api/admin/prefetch/clear",
+        &[("X-Octo-Admin", "1")],
+        Some("{}"),
+    )
+    .await;
+    assert_eq!(clear.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(clear.json()["signIn"], true);
+}
+
+#[tokio::test]
 async fn an_unknown_admin_path_and_odd_casing_stay_closed() {
     let factory = SignInFactory::new().await;
     assert_eq!(

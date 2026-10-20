@@ -37,7 +37,12 @@ mod parallel_lock_split_tests;
 #[path = "family_tests.rs"]
 mod family_tests;
 
+#[cfg(test)]
+#[path = "prefetch_tests.rs"]
+mod prefetch_tests;
+
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
@@ -72,7 +77,7 @@ use crate::services::common::{
 use crate::services::cover_art::DownloadCoverResolver;
 use crate::services::family::FamilyPlacement;
 use crate::services::fingerprint::MusicBrainzClient;
-use crate::services::i_download_service::{AudioStream, DirectStreamInfo, IDownloadService};
+use crate::services::i_download_service::{Ahead, AudioStream, DirectStreamInfo, IDownloadService};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::LastFmService;
 use crate::services::library::library_write_gate::LibraryWriteGate;
@@ -84,6 +89,7 @@ use crate::services::local::{DownloadHistoryService, ILocalLibraryService};
 use crate::services::lyrics::LyricsSidecarWriter;
 use crate::services::metadata::DeezerMetadataService;
 use crate::services::notifications::NotificationService;
+use crate::services::prefetch::{AheadSidecar, PrefetchedFiles, write_sidecar};
 use crate::services::subsonic::NavidromeIdentityService;
 
 pub use placement::{LayoutChoice, Placement};
@@ -273,6 +279,8 @@ pub struct DownloadServices {
     pub family: Option<Arc<dyn FamilyPlacement>>,
     /// Told of every song whose file lands in the music folder.
     pub arrivals: Option<Arc<DownloadArrivals>>,
+    /// The songs fetched ahead of their play, which a heart takes instead of downloading again.
+    pub prefetched: Option<Arc<dyn PrefetchedFiles>>,
 }
 
 /// Everything a single download is asked with beyond its provider and id: the optional
@@ -299,7 +307,16 @@ pub struct DownloadOptions {
     pub replacement: Option<Arc<ReplacementHandoff>>,
     /// Where the file goes (the family pool for members) and whether only a real FLAC will do.
     pub place: AcquisitionPlace,
+    /// Fetch the song ahead of its play into `ahead_folder`, outside the library: checked and
+    /// tagged, and nothing else (no registration, fetched-songs log, notice or scan).
+    pub prefetch: bool,
+    pub ahead_folder: Option<PathBuf>,
 }
+
+/// A song being fetched ahead is not waited for by another download ahead of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("This song is already being downloaded")]
+pub struct AheadBusy;
 
 /// Why a download that had to be a real FLAC copy failed: no FLAC came, or the one that came
 /// was made from lossy audio.
@@ -545,19 +562,22 @@ impl BaseDownloadService {
         }
 
         let song_id = format!("ext-{external_provider}-{external_id}");
-        let is_cache =
-            !options.force_permanent && self.settings.current().subsonic.storage_mode == StorageMode::Cache;
+        let is_cache = !options.force_permanent
+            && !options.prefetch
+            && self.settings.current().subsonic.storage_mode == StorageMode::Cache;
         // A track of an album being fetched song by song is one of that album's, as in a walk.
         if options.album_context.is_none()
             && !is_cache
+            && !options.prefetch
             && options.replacement.is_none()
             && !options.upgrade_search
         {
             options.album_context = self.held_album(external_id);
         }
         // Cache-mode fills are background plumbing, not a user gesture: they skip the
-        // fetched-songs log, so they skip notifications for the same reason.
-        let silence = options.suppress_notify || is_cache;
+        // fetched-songs log, so they skip notifications for the same reason. So do songs fetched
+        // ahead.
+        let silence = options.suppress_notify || is_cache || options.prefetch;
 
         // Acquire the lock BEFORE checking existence to prevent races with concurrent requests.
         // The in-progress branch lets go early so it can wait without holding it; dropping the
@@ -578,7 +598,16 @@ impl BaseDownloadService {
             .await;
         match outcome {
             Ok(path) => Ok(path),
+            // Another download of the song is running: it is left alone.
+            Err(e) if e.downcast_ref::<AheadBusy>().is_some() => Err(e),
             Err(e) => {
+                // A download ahead leaves no record behind, so a heart waiting on it goes on to
+                // get the song itself.
+                if options.prefetch {
+                    self.active_downloads.lock().remove(&song_id);
+                    info!("Downloading {song_id} ahead failed: {e:#}");
+                    return Err(e);
+                }
                 if let Some(info) = self.active_downloads.lock().get_mut(&song_id) {
                     info.status = DownloadStatus::Failed;
                     info.error_message = Some(e.to_string());
@@ -640,9 +669,10 @@ impl BaseDownloadService {
                 });
             // The owner's copy is never the pool's: a member's copy (with Family on or off) moves
             // into the shared library, still one file, or the owner's copy is fetched as usual.
+            // A song fetched ahead moves nothing: any copy on disk means it is there.
             if let Some(path) = existing.take() {
                 existing = match (&self.services.family, &pool_members) {
-                    (Some(placement), None) => placement.for_owner(&path).await,
+                    (Some(placement), None) if !options.prefetch => placement.for_owner(&path).await,
                     _ => Some(path),
                 };
             }
@@ -672,6 +702,9 @@ impl BaseDownloadService {
 
         // Check if download in progress.
         if self.is_in_progress(song_id) {
+            if options.prefetch {
+                return Err(AheadBusy.into());
+            }
             info!("Download already in progress for {song_id}, waiting...");
             // Let go of the lock while waiting.
             *permit = None;
@@ -690,6 +723,22 @@ impl BaseDownloadService {
             }) = &active
             {
                 return Ok(path.clone());
+            }
+            // A download ahead ended, leaving no record: its file (if it got one) is in the
+            // folder, so this download starts over, and takes it from there.
+            if active.is_none() {
+                *permit = Some(self.lock(cancellation_token).await?);
+                return Box::pin(self.download_locked(
+                    external_provider,
+                    external_id,
+                    song_id,
+                    options,
+                    is_cache,
+                    silence,
+                    permit,
+                    cancellation_token,
+                ))
+                .await;
             }
             anyhow::bail!(
                 "{}",
@@ -766,10 +815,11 @@ impl BaseDownloadService {
         // Never a second copy of a song already in the library; a lossy one is queued for a
         // higher quality copy instead. Not for a replacement or a Better quality search, which
         // exist to download a song that is already there.
+        // A song fetched ahead is never one the library has in any quality: it plays from there.
         if !is_cache
             && options.replacement.is_none()
             && !options.upgrade_search
-            && self.settings.current().subsonic.skip_owned_songs
+            && (self.settings.current().subsonic.skip_owned_songs || options.prefetch)
             && let Some(ownership) = &self.services.ownership
             && let Some(owned) = ownership
                 .find(
@@ -779,14 +829,14 @@ impl BaseDownloadService {
                     Some(&song.album),
                 )
                 .await
-                .filter(|owned| !flac_only || owned.lossless)
+                .filter(|owned| !flac_only || owned.lossless || options.prefetch)
         {
             let decision = LibraryOwnership::decide(
                 Some(&owned),
                 self.source_can_be_lossless(options.source_override),
                 self.upgrade_allowed(options.requested_by.as_deref()),
             );
-            if decision == OwnedDecision::KeepAndUpgrade {
+            if decision == OwnedDecision::KeepAndUpgrade && !options.prefetch {
                 self.queue_upgrade_for(&owned, &song, options.requested_by.as_deref().unwrap_or_default());
             }
             info!(
@@ -838,6 +888,7 @@ impl BaseDownloadService {
                 .filter(|found| !flac_only || found.is_real_flac())
             && let Some(path) = match &pool_members {
                 Some(_) => Some(found.path.clone()),
+                None if options.prefetch => Some(found.path.clone()),
                 None => family.for_owner(&found.path).await,
             }
         {
@@ -910,44 +961,59 @@ impl BaseDownloadService {
         // names the file, which is how every existing library was built.
         let requested = RequestedIdentity::new(&song.artist, &song.title, &song.album, song.track);
 
-        // Parallel only once slskd has proven it files each download in its own folder; until
-        // then the lock is held through the transfer exactly as before. The in-progress marker
-        // above keeps a second request for this song waiting either way, and the limiter counts
-        // every transfer, album walks and hearts outside the queue included.
-        let mut slot = None;
-        if let Some(concurrency) = &self.services.concurrency
-            && concurrency.current() > 1
-        {
-            *permit = None;
-            slot = concurrency
-                .transfers()
-                .enter(&CancellationToken::new())
-                .await
-                .ok();
-        }
-        let mut download = TrackDownload {
-            track_id: external_id.to_string(),
-            song,
-            suppress_notify: silence,
-            source_override: options.source_override,
-            upgrade_search: options.upgrade_search,
-            replacing_path: options.replacement.as_ref().map(|r| r.original_path.clone()),
-            fetched_from: None,
-            muted: false,
-            flac_only,
+        // A song fetched ahead earlier is taken from its folder instead of downloaded again, with
+        // what its download learned, and finalized exactly as a fresh download.
+        let promoted = if options.prefetch || options.replacement.is_some() || options.upgrade_search {
+            None
+        } else {
+            self.promote_ahead(external_provider, external_id, &mut song)
         };
-        let transferred = self
-            .backend
-            .download_track(self, &mut download, cancellation_token)
-            .await;
-        drop(slot);
-        let TrackDownload {
-            song: downloaded,
-            fetched_from,
-            muted,
-            ..
-        } = download;
-        song = downloaded;
+
+        let (transferred, fetched_from, muted) = match promoted {
+            Some((landed, fetched_from)) => (Ok(landed), fetched_from, false),
+            None => {
+                // Parallel only once slskd has proven it files each download in its own folder;
+                // until then the lock is held through the transfer exactly as before. The
+                // in-progress marker above keeps a second request for this song waiting either
+                // way, and the limiter counts every transfer, album walks and hearts outside the
+                // queue included.
+                let mut slot = None;
+                if let Some(concurrency) = &self.services.concurrency
+                    && concurrency.current() > 1
+                {
+                    *permit = None;
+                    slot = concurrency
+                        .transfers()
+                        .enter(&CancellationToken::new())
+                        .await
+                        .ok();
+                }
+                let mut download = TrackDownload {
+                    track_id: external_id.to_string(),
+                    song,
+                    suppress_notify: silence,
+                    source_override: options.source_override,
+                    upgrade_search: options.upgrade_search,
+                    replacing_path: options.replacement.as_ref().map(|r| r.original_path.clone()),
+                    fetched_from: None,
+                    muted: false,
+                    flac_only,
+                };
+                let transferred = self
+                    .backend
+                    .download_track(self, &mut download, cancellation_token)
+                    .await;
+                drop(slot);
+                let TrackDownload {
+                    song: downloaded,
+                    fetched_from,
+                    muted,
+                    ..
+                } = download;
+                song = downloaded;
+                (transferred, fetched_from, muted)
+            }
+        };
         // The transfer's check may have named another album holding the same recording; the
         // track stays at its place on the album being fetched.
         if let Some(context) = &options.album_context {
@@ -1051,10 +1117,15 @@ impl BaseDownloadService {
             .as_ref()
             .and(family)
             .and_then(|family| family.pool_root());
-        let mut placement = match (&options.replacement, &pool_root) {
-            (None, None) => self.place_in_library(&song, &requested, &landed_path).await,
-            (None, Some(root)) => self.place_in_root(&song, &requested, &landed_path, root).await,
-            (Some(_), _) => self.stage_replacement(&landed_path)?,
+        let ahead_folder = options.ahead_folder.as_deref().filter(|_| options.prefetch);
+        let mut placement = match (&options.replacement, &pool_root, ahead_folder) {
+            (_, _, Some(folder)) => Placement::new(
+                self.place_ahead(&landed_path, folder, external_provider, external_id)?,
+                false,
+            ),
+            (None, None, None) => self.place_in_library(&song, &requested, &landed_path).await,
+            (None, Some(root), None) => self.place_in_root(&song, &requested, &landed_path, root).await,
+            (Some(_), _, None) => self.stage_replacement(&landed_path)?,
         };
         let mut local_path = placement.path.clone();
         song.local_path = Some(local_path.clone());
@@ -1077,6 +1148,16 @@ impl BaseDownloadService {
         let cover = self
             .write_metadata_replacing(&local_path, &mut song, replacing.as_deref())
             .await;
+        if ahead_folder.is_some() {
+            return Ok(self.keep_ahead(
+                external_provider,
+                external_id,
+                song_id,
+                &local_path,
+                song,
+                fetched_from.as_deref(),
+            ));
+        }
         if let Some(replacement) = &options.replacement {
             placement = self
                 .reveal_replacement(&song, &requested, &local_path, replacement)
@@ -1247,6 +1328,102 @@ impl BaseDownloadService {
 
         info!("Download completed: {local_path}");
         Ok(local_path)
+    }
+
+    /// Takes a song fetched ahead out of its folder into a staging folder of its own under the
+    /// incoming folder, and gives the song back what its download learned. The staged path and
+    /// the source that brought it, or None when there is no such song (or it could not be moved,
+    /// and the song is downloaded as usual).
+    fn promote_ahead(
+        &self,
+        external_provider: &str,
+        external_id: &str,
+        song: &mut Song,
+    ) -> Option<(String, Option<String>)> {
+        let taken = self
+            .services
+            .prefetched
+            .as_ref()?
+            .take(external_provider, external_id)?;
+        let staging = Path::new(&self.download_path())
+            .join(crate::services::soulseek::soulseek_download_service::INCOMING_FOLDER_NAME)
+            .join("prefetch")
+            .join(uuid::Uuid::new_v4().simple().to_string());
+        let name = taken
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("{external_provider}_{external_id}"));
+        let staged = staging.join(name).to_string_lossy().into_owned();
+        let moved = std::fs::create_dir_all(&staging)
+            .and_then(|()| placement::move_file(&taken.path.to_string_lossy(), &staged));
+        if let Err(e) = moved {
+            warn!(
+                "Could not take the song downloaded ahead from {}: {e}; downloading it again",
+                taken.path.display()
+            );
+            let _ = std::fs::remove_dir(&staging);
+            return None;
+        }
+        song.transcoded_from = taken.sidecar.transcoded_from.clone();
+        song.source_peer = taken.sidecar.source_peer.clone().or(song.source_peer.take());
+        song.source_file = taken.sidecar.source_file.clone().or(song.source_file.take());
+        song.verification = taken.verification();
+        info!(
+            "'{} - {}' was downloaded ahead earlier; keeping that copy",
+            song.artist, song.title
+        );
+        self.track(|t| {
+            t.log(
+                external_provider,
+                external_id,
+                acquisition_event_kinds::LIBRARY,
+                "Downloaded ahead earlier, so no second download",
+                None,
+            )
+        });
+        Some((staged, taken.sidecar.fetched_from.clone()))
+    }
+
+    /// The end of a download ahead: its facts beside the file in the folder, the folder's index
+    /// told, and no record left behind, so a heart waiting on it takes the file from there.
+    fn keep_ahead(
+        &self,
+        external_provider: &str,
+        external_id: &str,
+        song_id: &str,
+        local_path: &str,
+        song: Song,
+        fetched_from: Option<&str>,
+    ) -> String {
+        let path = Path::new(local_path);
+        if let Some(seconds) = octo_media::tags::TagFile::open(local_path)
+            .ok()
+            .map(|file| file.duration_seconds())
+            .filter(|&seconds| seconds > 0)
+        {
+            self.metadata.remember_file_length(external_id, seconds);
+        }
+        let sidecar = AheadSidecar::of(
+            external_provider,
+            external_id,
+            path,
+            &song,
+            fetched_from,
+            Utc::now(),
+        );
+        if let Err(e) = write_sidecar(path, &sidecar) {
+            warn!("Could not write what was learned beside {local_path}: {e}");
+        }
+        if let Some(prefetched) = &self.services.prefetched {
+            prefetched.kept(external_provider, external_id, path, song.verification.clone());
+        }
+        self.active_downloads.lock().remove(song_id);
+        info!(
+            "Downloaded ahead: {} - {} ({})",
+            song.artist, song.title, sidecar.format
+        );
+        local_path.to_string()
     }
 
     fn is_in_progress(&self, song_id: &str) -> bool {
@@ -2098,6 +2275,41 @@ impl IDownloadService for BaseDownloadService {
             requested_by,
         )
         .await
+    }
+
+    async fn download_ahead(
+        &self,
+        external_provider: &str,
+        external_id: &str,
+        folder: &Path,
+        cancellation_token: &CancellationToken,
+    ) -> anyhow::Result<Ahead> {
+        let path = self
+            .download_song_internal(
+                external_provider,
+                external_id,
+                DownloadOptions {
+                    suppress_notify: true,
+                    // The lossless step alone: SpotiFLAC rides on it, and YouTube and Lidarr are
+                    // never asked.
+                    source_override: Some(DownloadSource::Soulseek),
+                    place: AcquisitionPlace {
+                        pool_members: None,
+                        flac_only: true,
+                    },
+                    prefetch: true,
+                    ahead_folder: Some(folder.to_path_buf()),
+                    ..Default::default()
+                },
+                cancellation_token,
+            )
+            .await?;
+        let path = PathBuf::from(path);
+        Ok(if path.starts_with(folder) {
+            Ahead::Kept { path }
+        } else {
+            Ahead::AlreadyYours { path }
+        })
     }
 
     fn get_download_status(&self, song_id: &str) -> Option<DownloadInfo> {

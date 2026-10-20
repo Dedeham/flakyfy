@@ -29,6 +29,7 @@ pub mod lastfm;
 pub mod library_actions;
 pub mod lyrics_admin;
 pub mod plumbing;
+pub mod prefetch;
 pub mod radio_admin;
 pub mod raw_config;
 pub mod request_binding;
@@ -146,6 +147,7 @@ pub fn library_and_job_routes() -> RouteSet {
         .merge(downloads::routes())
         .merge(soulseek_sharing::routes())
         .merge(radio_admin::routes())
+        .merge(prefetch::routes())
 }
 
 /// The activity view behind the progress toasts, and the Afterglow light.

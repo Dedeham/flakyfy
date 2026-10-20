@@ -59,6 +59,8 @@ mod merged_browsing_tests;
 #[cfg(test)]
 pub(crate) mod places_tests;
 #[cfg(test)]
+mod prefetch_stream_tests;
+#[cfg(test)]
 mod radio_ban_tests;
 #[cfg(test)]
 mod rating_tests;

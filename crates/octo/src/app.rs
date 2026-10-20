@@ -1820,6 +1820,10 @@ impl Imports {
             settings: settings.clone(),
             tracker: Some(acquisition.acquisition_tracker.clone()),
         });
+        let weak = Arc::downgrade(&service);
+        stores
+            .external_id_registry
+            .set_recovery(Arc::new(move |id| weak.upgrade()?.preview_routing(id)));
         Imports { service, trickle }
     }
 

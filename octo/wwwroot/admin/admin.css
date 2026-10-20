@@ -1470,7 +1470,7 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .imp-card { padding: var(--s-xl); display: flex; flex-direction: column; gap: var(--s-l); }
 .set-card.imp-card > :not([hidden]):not([type="hidden"]) ~ :not([type="hidden"]) { border-top: 0; }
 .imp-card > .set-row { padding: 0; }
-.imp-row { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.6fr) 92px 104px 136px; gap: var(--s-l); align-items: center; }
+.imp-row { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.6fr) 112px 92px 104px 136px; gap: var(--s-l); align-items: center; }
 .imp-row.picked, .imp-track.picked { background: var(--accent-selected); }
 .imp-row .key, .imp-track .key, .imp-trickle-row .key { font-family: inherit; color: var(--ink); overflow-wrap: anywhere; }
 .imp-name { color: var(--ink); font-weight: 500; text-align: left; }
@@ -1487,11 +1487,13 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .imp-num { width: 96px; flex: none; }
 .imp-switch-cell { display: flex; align-items: center; gap: var(--s-m); }
 .imp-cell-label { display: none; color: var(--ink-2); font-size: 12px; }
-@container (max-width: 640px) {
+@container (max-width: 900px) {
   .imp-row { grid-template-columns: 1fr 1fr; }
-  .imp-row > span:nth-child(1), .imp-row > span:nth-child(2), .imp-row > span:nth-child(5) { grid-column: 1 / -1; }
+  .imp-row > span:nth-child(1), .imp-row > span:nth-child(2), .imp-row > span:nth-child(6) { grid-column: 1 / -1; }
   .imp-row.config-row-head { display: none; }
   .imp-cell-label { display: inline; }
+}
+@container (max-width: 640px) {
   .imp-track { grid-template-columns: 28px 1fr; }
   .imp-track > span:nth-child(n+3) { grid-column: 2 / -1; }
   .imp-trickle-row { grid-template-columns: 1fr auto; }

@@ -120,6 +120,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     let builder = &state.subsonic_response_builder;
 
     let ids = sent_ids(&call, "id");
+    state.imports.forget_cached_songs(&ids);
     let album_ids = sent_ids(&call, "albumId");
     let artist_ids = sent_ids(&call, "artistId");
     // What a heart on an outside song or album does for this person: a download into the
@@ -695,6 +696,7 @@ pub async fn unstar(State(state): State<AppState>, req: Request) -> axum::respon
     };
     let call = SubsonicCall::from_parts(&state, &parts, body.clone());
     let format = call.format();
+    state.imports.forget_cached_songs(&sent_ids(&call, "id"));
     let ids: Vec<(&str, String)> = ["id", "albumId", "artistId"]
         .into_iter()
         .flat_map(|key| sent_ids(&call, key).into_iter().map(move |id| (key, id)))
@@ -1036,6 +1038,7 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
     };
     let format = call.format();
     let item_id = call.param("id").to_string();
+    state.imports.forget_cached_songs(std::slice::from_ref(&item_id));
     let rating_text = call.param("rating").to_string();
     let builder = &state.subsonic_response_builder;
 

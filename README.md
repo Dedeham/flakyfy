@@ -807,6 +807,16 @@ They are on by default, whether or not the mixes are. The dashboard's Mixes page
 
 ### Importing your music
 
+To listen before downloading, import a list and turn on **Stream without downloading** on the
+dashboard's **Import** page. The list then shows as a private, read-only playlist in apps
+connected to Octo: songs you have play from your library, and the rest play as previews.
+Heart a preview to keep it, the same way as any outside song. Once the copy is in your library,
+the playlist plays it in the same spot.
+
+The switch never downloads anything by itself. **Keep as playlist** and **Get missing songs** work
+as before, and a list with either of them on still follows its link for songs added later. To
+listen with previews and hearts only, leave **Get missing songs** and download on play off.
+
 The dashboard's **Import** page, and the same view in the Octo apps, shows what your library
 has of the playlists and liked songs you bring from another service. A list can be kept as a
 Navidrome playlist of the songs you have, in the list's order, and filled in as the rest

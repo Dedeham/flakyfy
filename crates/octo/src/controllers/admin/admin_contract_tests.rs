@@ -85,6 +85,10 @@ fn missing_from(document: &Value) -> Vec<String> {
         if section == "Spotiflac" && document.get("Spotiflac").is_none() {
             continue;
         }
+        // And Listening, once changed from its defaults or saved.
+        if section == "Listening" && document.get("Listening").is_none() {
+            continue;
+        }
         for name in names {
             // The family notices are listed with the Family section.
             if name.starts_with("NotifyFamily") && document.get("Family").is_none() {
@@ -1021,4 +1025,26 @@ async fn status_reports_each_service() {
     assert_eq!(body["services"]["lastfm"]["configured"], false);
     let time = body["time"].as_str().expect("a time");
     assert!(time.ends_with("+00:00") && time.len() == 33, "{time}");
+}
+
+/// With Listening at its defaults neither document lists it, so their answers stay as they
+/// were; once it is changed both list it.
+#[tokio::test]
+async fn effective_document_keeps_listening() {
+    let (_, defaults) = factory();
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&defaults, path).await.json();
+        assert!(document.get("Listening").is_none(), "{path}");
+    }
+
+    let mut settings = factory_settings();
+    settings.listening.enabled = false;
+    settings.listening.keep_days = 400;
+    let off = app(AppState::for_tests(settings));
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&off, path).await.json();
+        assert_eq!(document["Listening"]["Enabled"], Value::Bool(false), "{path}");
+        assert_eq!(document["Listening"]["KeepDays"], 365, "{path}");
+        assert_eq!(missing_from(&document), Vec::<String>::new(), "{path}");
+    }
 }

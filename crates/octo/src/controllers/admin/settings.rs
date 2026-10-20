@@ -14,7 +14,7 @@ use octo_core::common::dotnet::{is_blank, ordinal_ignore_case_key, utf16_len};
 use octo_core::json::dom::Node;
 use octo_core::settings::{
     AnimatedArtMode, FamilySettings, GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction,
-    LibraryActionSettings, LyricsSaveTo, SettingsWriteError, SpotiflacSettings,
+    LibraryActionSettings, ListeningSettings, LyricsSaveTo, SettingsWriteError, SpotiflacSettings,
 };
 use std::collections::HashSet;
 use tracing::{error, info, warn};
@@ -674,6 +674,19 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
         || file.keys().any(|key| key.eq_ignore_ascii_case("Spotiflac"))
     {
         doc.insert("Spotiflac".into(), spotiflac_section(spotiflac));
+    }
+    // Listening is on by default, and listed like SpotiFLAC: once changed or saved.
+    let listening = &current.listening;
+    if *listening != ListeningSettings::default()
+        || file.keys().any(|key| key.eq_ignore_ascii_case("Listening"))
+    {
+        doc.insert(
+            "Listening".into(),
+            n_obj([
+                ("Enabled", Node::Bool(listening.enabled)),
+                ("KeepDays", n_num(listening.effective_keep_days() as i32)),
+            ]),
+        );
     }
     doc
 }

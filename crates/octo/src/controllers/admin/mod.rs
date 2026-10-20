@@ -27,6 +27,7 @@ pub mod imports;
 pub mod json_body;
 pub mod lastfm;
 pub mod library_actions;
+pub mod listening;
 pub mod lyrics_admin;
 pub mod plumbing;
 pub mod radio_admin;
@@ -57,6 +58,9 @@ pub fn admin_controller_routes() -> RouteSet {
             get(lastfm::validate_listen_brainz_get).post(lastfm::validate_listen_brainz_post),
         )
         .route("/api/admin/lastfm/scrobble", get(lastfm::get_last_fm_scrobbling))
+        // Listening.
+        .route("/api/admin/listening", get(listening::get_listening))
+        .route("/api/admin/listening/clear", post(listening::clear_listening))
         .route("/api/admin/lastfm/check", post(lastfm::check_last_fm_credentials))
         .route(
             "/api/admin/lastfm/scrobble/cancel",

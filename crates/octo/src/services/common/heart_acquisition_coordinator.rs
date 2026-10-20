@@ -589,6 +589,8 @@ impl HeartAcquisitionCoordinator {
         );
         let target = AcquisitionTarget::Member(user.to_string());
         let mut landed = Vec::new();
+        // Each song is filed at its place on this album, with the album tags its songs settle.
+        self.direct_downloads.hold_album_listing(provider, &album);
         for song in tracks {
             let track_provider = song.external_provider.as_deref().unwrap_or(provider);
             let track_id = song.external_id.as_deref().unwrap_or_default();
@@ -607,6 +609,7 @@ impl HeartAcquisitionCoordinator {
                 Err(e) => warn!("Album song {track_provider}:{track_id} for {user} failed: {e}"),
             }
         }
+        self.direct_downloads.finish_album_listing(provider, &album).await;
         landed
     }
 

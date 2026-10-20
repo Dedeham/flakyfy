@@ -168,6 +168,7 @@ function activateTab(name, { focus = false } = {}) {
   if (name === 'about' && typeof loadUpdate === 'function') loadUpdate();
   if (name === 'soulseek' && typeof loadSharing === 'function') loadSharing();
   if (name === 'family' && typeof loadFamily === 'function') loadFamily();
+  if (name === 'downloads' && typeof loadPrefetch === 'function') loadPrefetch();
   if (focus) {
     window.scrollTo({ top: 0 });
     const heading = document.querySelector(`section[data-pane="${name}"] h1`);
@@ -986,6 +987,7 @@ document.querySelectorAll('form[data-section]').forEach(form => {
       // The scrobbling card reads the running settings, which catch up with the file a moment later.
       if (form.dataset.section?.startsWith('lastfm')) setTimeout(loadLastFmScrobbling, 700);
       if (form.dataset.section === 'animated-art') setTimeout(loadAnimatedArt, 700);
+      if (form.dataset.section === 'prefetch') setTimeout(loadPrefetch, 700);
       // The heart priority's Soulseek row says whether SpotiFLAC rides with it.
       if (form.dataset.section?.startsWith('spotiflac')) renderHeartSourceOrder();
       // The re-check offer on the Verify card follows the saved match score.
@@ -1289,6 +1291,75 @@ document.getElementById('rejected-peers-clear')?.addEventListener('click', async
     currentSettings = await (await api('/api/admin/settings', { cache: 'no-store' })).json();
     renderRejectedPeerCount();
     note(button, `Forgot ${body.cleared} rejected peer${body.cleared === 1 ? '' : 's'}.`);
+  } catch (error) {
+    note(button, `Could not clear: ${error.message}`, 'error');
+  }
+});
+
+// ---- Get upcoming songs ahead ----------------------------------------------
+//
+// The card's status line: the songs ready, the space they take against the cap and what is
+// left on the disk, and below it what is being downloaded now, what comes next and the last
+// songs that could not be. Read from /api/admin/prefetch whenever the pane opens or the card
+// is saved. Song names come from outside, so they go on the page as text.
+
+function gigabytes(bytes) {
+  const gb = (bytes || 0) / 1073741824;
+  if (gb === 0) return '0 GB';
+  if (gb < 1) return `${Math.max(1, Math.round(gb * 1024))} MB`;
+  return gb >= 10 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
+}
+
+function songWords(song) {
+  if (song?.artist && song?.title) return `${song.artist} - ${song.title}`;
+  return song?.title || 'A song';
+}
+
+async function loadPrefetch() {
+  const line = document.getElementById('prefetch-status');
+  const activity = document.getElementById('prefetch-activity');
+  const clear = document.getElementById('prefetch-clear');
+  if (!line) return;
+  let status;
+  try {
+    const r = await api('/api/admin/prefetch', { cache: 'no-store' });
+    if (!r.ok) return;
+    status = await r.json();
+  } catch {
+    return;
+  }
+  const parts = [
+    `${status.ready} song${status.ready === 1 ? '' : 's'} ready`,
+    `${gigabytes(status.usedBytes)} of ${gigabytes(status.capBytes)}`,
+  ];
+  if (status.freeBytes != null) parts.push(`${gigabytes(status.freeBytes)} free`);
+  line.textContent = parts.join(' · ');
+  if (clear) clear.disabled = !status.ready;
+
+  const lines = [];
+  if (status.enabled && status.paused) lines.push(`Paused: ${status.paused}.`);
+  if (status.running?.length) lines.push(`Downloading now: ${status.running.map(songWords).join(', ')}.`);
+  if (status.next?.length) lines.push(`Next: ${status.next.map(songWords).join(', ')}.`);
+  if (status.errors?.length) lines.push(`Could not download: ${status.errors.join('; ')}.`);
+  if (activity) {
+    activity.replaceChildren(...lines.map(text => {
+      const p = document.createElement('p');
+      p.textContent = text;
+      return p;
+    }));
+    activity.hidden = lines.length === 0;
+  }
+}
+
+document.getElementById('prefetch-clear')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  if (!(await askConfirm('Clear downloaded-ahead songs?', 'They are deleted from the folder, and download again the next time they come up. A song playing right now stays.', 'Clear', true))) return;
+  try {
+    const response = await api('/api/admin/prefetch/clear', { method: 'POST' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    await loadPrefetch();
+    note(button, `Deleted ${body.cleared} song${body.cleared === 1 ? '' : 's'}.`);
   } catch (error) {
     note(button, `Could not clear: ${error.message}`, 'error');
   }

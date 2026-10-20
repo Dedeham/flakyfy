@@ -4,10 +4,12 @@
 //
 //   const page = OctoListening.mount(container, { fetch, cover, canSeeEveryone, title });
 //
-// fetch(days, user) answers { ok, data, error }; cover({ songId, coverId }, size) is a cover's
-// address. days and user, when given, are the range and the person it opens on. The page returns { reload, pause, resume, destroy }: pause gives the page its own
-// lights back (the Listening page lights it from the top artist's cover), resume takes them
-// again and reloads.
+// fetch(days, user) answers { ok, status, data, error }; cover({ songId, coverId }, size) is a
+// cover's address. days and user, when given, are the range and the person it opens on.
+// restoreLights(), when given, puts the host page's own lights back; without it the lights go
+// back to their defaults. The page returns { reload, pause, resume, destroy }: pause gives the
+// page its own lights back (the Listening page lights it from the top artist's cover), resume
+// takes them again and reloads.
 (function () {
   'use strict';
 
@@ -122,7 +124,6 @@
     const state = { days: RANGES.includes(o.days) ? o.days : storedRange(), who: o.user || null, data: null, people: [], layout: null, seq: 0, chart: 0, top: null, palette: null, paused: false };
     const shown = new Map();
     const style = document.documentElement.style;
-    const saved = LIGHTS.map((p) => style.getPropertyValue(p));
     let alive = true;
 
     const root = document.createElement('div');
@@ -148,7 +149,8 @@
     // ── Lights ─────────────────────────────────────────────────────────────────────────
     function applyPalette(p) {
       if (!p || !p.length) {
-        LIGHTS.forEach((prop, i) => (saved[i] ? style.setProperty(prop, saved[i]) : style.removeProperty(prop)));
+        if (typeof o.restoreLights === 'function') o.restoreLights();
+        else LIGHTS.forEach((prop) => style.removeProperty(prop));
         return;
       }
       style.setProperty('--amb-1', soften(p[0], 0.36));
@@ -260,6 +262,45 @@
           <section class="ls-panel ls-span-6">${head('Top artists', 'By plays.')}${rowsSk}</section>
           <section class="ls-panel ls-span-6">${head('Top songs', 'By plays.')}${rowsSk}</section>
         </div>`;
+    }
+
+    // A time as the server's clock shows it, the one the week grid and the days use: by the
+    // zone's name when the browser knows it, else by its offset.
+    function inServerTime(iso, d) {
+      const t = new Date(iso);
+      const date = { weekday: 'short', month: 'short', day: 'numeric' };
+      const time = { hour: 'numeric', minute: '2-digit' };
+      const show = (at, timeZone) => `${at.toLocaleDateString('en-US', { ...date, timeZone })}, ${at.toLocaleTimeString('en-US', { ...time, timeZone })}`;
+      if (d.timeZoneName) {
+        try { return show(t, d.timeZoneName); } catch { /* a zone this browser does not know */ }
+      }
+      return show(new Date(t.getTime() + (d.utcOffsetMinutes || 0) * 60000), 'UTC');
+    }
+
+    // The ranges offered: none longer than the days kept.
+    function fitRanges(keepDays) {
+      const keep = Number(keepDays) || 90;
+      const fits = RANGES.filter((n) => n <= keep);
+      const allowed = fits.length ? fits : [RANGES[0]];
+      rangeSeg.querySelectorAll('button[data-days]').forEach((b) => { b.hidden = !allowed.includes(Number(b.dataset.days)); });
+      if (allowed.includes(state.days)) return false;
+      state.days = allowed[allowed.length - 1];
+      rangeSeg.querySelectorAll('button[data-days]').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.days) === state.days)));
+      return true;
+    }
+
+    // Refused outright (the dashboard sign-in is off, say): what to do instead, no retry.
+    function renderLocked(message) {
+      state.layout = 'locked';
+      rangeSeg.hidden = true;
+      body.innerHTML = `
+        <section class="ls-panel ls-state ls-rise">
+          <span class="ls-state-ic">${svg('headphones')}</span>
+          <h2>Listening is hidden</h2>
+          <p>${esc(message || 'Sign in to see listening.')}</p>
+        </section>`;
+      applyPalette(null);
+      state.top = null;
     }
 
     function renderError(message) {
@@ -501,10 +542,7 @@
       const r = d.rollup;
       const s = r.longestSession;
       const who = s && s.who ? ` · <span class="ls-keep">${esc(s.who)}</span>` : '';
-      const when = s ? (() => {
-        const t = new Date(s.start);
-        return `${t.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}, ${t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-      })() : '';
+      const when = s ? inServerTime(s.start, d) : '';
       const own = !o.canSeeEveryone;
       const heart = r.hearted[0];
       const top = r.topSongs[0];
@@ -610,6 +648,7 @@
       if (Array.isArray(d.people)) state.people = d.people;
       renderHeading();
       renderWho();
+      if (fitRanges(d.keepDays)) { load(); return; }
       if (!d.rollup || d.rollup.plays === 0) { renderEmpty(d); placeThumbs(); return; }
       rangeSeg.hidden = false;
       if (state.layout !== 'page') buildPage();
@@ -636,6 +675,10 @@
       }
       if (!alive || mine !== state.seq) return;
       root.removeAttribute('aria-busy');
+      if (reply && reply.status === 403) {
+        renderLocked(reply.error);
+        return;
+      }
       if (!reply || !reply.ok || !reply.data || !reply.data.rollup) {
         renderError(reply && reply.error);
         return;
@@ -664,7 +707,6 @@
       },
       resume() {
         state.paused = false;
-        LIGHTS.forEach((p, i) => { saved[i] = style.getPropertyValue(p); });
         if (state.layout === 'page' && state.palette) applyPalette(state.palette);
         placeThumbs();
         load();

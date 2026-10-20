@@ -1886,7 +1886,7 @@
         var path = (everyone ? '/listening' : '/me/listening') + '?range=' + days;
         if (everyone && user) path += '&user=' + encodeURIComponent(user);
         var reply = await api('GET', path);
-        return { ok: reply.ok, data: reply.data, error: F.errorOf(reply) };
+        return { ok: reply.ok, status: reply.status, data: reply.data, error: F.errorOf(reply) };
       }
     });
   }

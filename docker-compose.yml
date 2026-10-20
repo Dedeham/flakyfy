@@ -26,6 +26,9 @@ services:
       # - "127.0.0.1:5275:5275"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      # The server's time zone (for example America/Los_Angeles): listening stats and their
+      # week grid use it. Blank is UTC.
+      TZ: ${TZ:-}
 
       # ----- Subsonic / Navidrome upstream -----
       # Your Navidrome server, reachable from THIS container (a LAN IP or service

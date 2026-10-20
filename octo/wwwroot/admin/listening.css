@@ -197,7 +197,7 @@
 .ls-state.ls-error .ls-state-ic { background: var(--bad-wash); box-shadow: inset 0 0 0 .5px var(--bad-line); }
 .ls-state.ls-error .ls-state-ic svg { color: #ff8a80; }
 
-/* Loading: grey blocks in the final layout, a soft light passing over them. */
+/* Loading: gray blocks in the final layout, a soft light passing over them. */
 .ls-sk { display: block; border-radius: 8px; background: rgba(255, 255, 255, .07); position: relative; overflow: hidden; }
 .ls-sk::after {
   content: ''; position: absolute; inset: 0;

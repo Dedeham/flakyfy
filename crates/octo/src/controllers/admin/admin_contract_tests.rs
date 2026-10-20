@@ -780,7 +780,7 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // replacing two: LibraryActions:ReviewSweepAutoReplace and :ReviewSweepAutoReplacePerDay,
     // then LibraryActions:KeepRatedCopies, Subsonic:DownloadAlbumOnSongStar and
     // Metadata:AnimatedArt, listed last.
-    assert_eq!(rows.len(), 203);
+    assert_eq!(rows.len(), 205);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()
@@ -793,6 +793,8 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(rows[200]["Key"], "LibraryActions:KeepRatedCopies");
     assert_eq!(rows[201]["Key"], "Subsonic:DownloadAlbumOnSongStar");
     assert_eq!(rows[202]["Key"], "Metadata:AnimatedArt");
+    assert_eq!(rows[203]["Key"], "Monitoring:Enabled");
+    assert_eq!(rows[204]["Key"], "Monitoring:RetentionDays");
     assert_eq!(row("Subsonic:DownloadAlbumOnSongStar")["IsSecret"], false);
     assert_eq!(
         row("LibraryActions:ReviewSweepAutoReplacePerDay")["IsSecret"],

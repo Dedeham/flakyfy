@@ -31,7 +31,12 @@ const NOT_GENRES: [&str; 16] = [
     "legend",
 ];
 
+/// Last.fm could not be asked: no key, no answer, or an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LookupFailed;
+
 /// A library album to ask for its genre: its id, and the sign-in to ask with.
+#[derive(Clone)]
 pub struct AlbumLookup {
     pub proxy: SubsonicProxyService,
     pub parameters: IndexMap<String, String>,
@@ -75,38 +80,56 @@ pub fn display_genre(name: &str) -> String {
     out
 }
 
-/// The artist Last.fm is asked about: the first credited one ("Drake, 21 Savage" and
-/// "Drake feat. Rihanna" are Drake).
+/// The artist Last.fm is asked about: the credit before a "feat." ("Drake feat. Rihanna" is
+/// Drake). Commas stay, since they are part of names ("Tyler, The Creator").
 pub fn main_artist(artist: &str) -> String {
     let mut name = artist.trim();
-    let lower = name.to_lowercase();
+    // ASCII lower case keeps every byte where it was, so a cut found in it cuts the name.
+    let lower = name.to_ascii_lowercase();
     for cut in [" feat. ", " feat ", " ft. ", " featuring "] {
         if let Some(at) = lower.find(cut) {
             name = &name[..at];
             break;
         }
     }
-    let name = name.split([',', ';']).next().unwrap_or(name).trim();
-    name.to_string()
+    name.split(';').next().unwrap_or(name).trim().to_string()
 }
 
-/// The first Last.fm tag for the artist that names a genre. None with no Last.fm key, when
-/// Last.fm could not be asked, or when no tag is a genre.
-pub async fn artist_genre_from_last_fm(last_fm: &LastFmService, artist: &str) -> Option<String> {
-    if !last_fm.has_api_key() || artist.trim().is_empty() {
-        return None;
+/// Whether an artist credit stands for many artists, so no one artist's genre fits it.
+fn is_various(artist: &str) -> bool {
+    matches!(
+        artist.trim().to_ascii_lowercase().as_str(),
+        "various artists" | "various" | "va" | "[unknown]" | "unknown artist"
+    )
+}
+
+/// The first Last.fm tag for the artist that names a genre: Ok(None) when Last.fm answered and
+/// no tag is a genre, Err when it could not be asked (no key, no answer, an error).
+pub async fn artist_genre_from_last_fm(
+    last_fm: &LastFmService,
+    artist: &str,
+) -> Result<Option<String>, LookupFailed> {
+    if artist.trim().is_empty() || is_various(artist) {
+        return Ok(None);
     }
-    let tags = match last_fm.get_artist_top_tags(&main_artist(artist), 10).await {
-        Ok(tags) => tags,
+    if !last_fm.has_api_key() {
+        return Err(LookupFailed);
+    }
+    match last_fm
+        .get_artist_top_tags_checked(&main_artist(artist), 10)
+        .await
+    {
+        Ok(Some(tags)) => Ok(tags
+            .iter()
+            .map(|tag| canonical_tag(tag))
+            .find(|tag| is_genre(tag))
+            .map(|tag| display_genre(&tag))),
+        Ok(None) => Err(LookupFailed),
         Err(e) => {
             debug!("No Last.fm tags for {artist}: {e}");
-            return None;
+            Err(LookupFailed)
         }
-    };
-    tags.iter()
-        .map(|tag| canonical_tag(tag))
-        .find(|tag| is_genre(tag))
-        .map(|tag| display_genre(&tag))
+    }
 }
 
 fn is_genre(tag: &str) -> bool {
@@ -147,12 +170,26 @@ pub async fn resolve(
     if let Some(kept) = log.artist_genre(artist) {
         return kept;
     }
-    if !last_fm.has_api_key() {
-        return None;
-    }
-    let found = artist_genre_from_last_fm(last_fm, artist).await;
+    // Only a real answer is kept: a lookup that failed is asked again next time.
+    let found = artist_genre_from_last_fm(last_fm, artist).await.ok()?;
     log.remember_artist_genre(artist, found.as_deref());
     found
+}
+
+/// A play's genre from what is already known, asking nothing: the song's own, then the answers
+/// kept for its album and its artist. For plays written on shutdown.
+pub fn resolve_kept(log: &ListeningLog, settled: &super::listening_log::Settled) -> Option<String> {
+    if let Some(own) = settled.genres.iter().map(|g| g.trim()).find(|g| !g.is_empty()) {
+        return Some(display_genre(own));
+    }
+    if let Some(Some(genre)) = settled
+        .album
+        .as_ref()
+        .and_then(|album| log.album_genre(&album.album_id))
+    {
+        return Some(display_genre(&genre));
+    }
+    log.artist_genre(&settled.play.artist).flatten()
 }
 
 /// The album's genre as the library has it: Some(None) when it has none, None when the library
@@ -241,9 +278,16 @@ mod tests {
     #[test]
     fn the_first_credited_artist_is_asked_about() {
         assert_eq!(main_artist("Drake feat. Rihanna"), "Drake");
-        assert_eq!(main_artist("Drake, 21 Savage"), "Drake");
         assert_eq!(main_artist("Simon & Garfunkel"), "Simon & Garfunkel");
         assert_eq!(main_artist(" Kavinsky "), "Kavinsky");
+        // Commas are part of names.
+        assert_eq!(main_artist("Tyler, The Creator"), "Tyler, The Creator");
+        assert_eq!(main_artist("Earth, Wind & Fire"), "Earth, Wind & Fire");
+        // Letters that change length in lower case never move the cut.
+        assert_eq!(main_artist("Ω日 feat. X"), "Ω日");
+        assert_eq!(main_artist("İstanbul Feat. Y"), "İstanbul");
+        assert!(is_various("Various Artists"));
+        assert!(!is_various("Drake"));
     }
 
     #[test]

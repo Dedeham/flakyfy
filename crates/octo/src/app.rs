@@ -706,6 +706,7 @@ fn prefetch_service(
         radio_queues: stores.radio_queues.clone(),
         write_gate: navidrome.family_write_gate.clone(),
         library: navidrome.local_library.clone(),
+        concurrency: Some(stores.download_concurrency.clone()),
         names: Some(stores.external_id_registry.clone()),
         soulseek: Some(soulseek_link),
         clock: Clock::system(),
@@ -969,6 +970,7 @@ impl Acquisition {
                 holds: Some(stores.soulseek_holds.clone()),
                 owned: Some(heart_ownership.clone()),
                 stars: Some(star_on_arrival.clone()),
+                ahead: Some(stores.prefetch_store.clone() as Arc<dyn PrefetchedFiles>),
             },
         );
         heart_acquisition_coordinator.use_family(FamilyHooks {

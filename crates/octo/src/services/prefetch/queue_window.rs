@@ -4,6 +4,10 @@
 //! the order outright, shuffle and skips included. A radio list is the order only when the
 //! listener's last two songs are next to each other in it: an app that mixes a station's songs
 //! on the phone uses the list as a pool, and its next songs are not the list's.
+//!
+//! The window starts at the song after the next one. Octo's apps start buffering the next song
+//! about thirty seconds before it plays, which is too soon for a download to finish, so that song
+//! plays as it would have; it is fetched when it is the song after the next in a later window.
 
 use chrono::{DateTime, Utc};
 use octo_core::settings::PrefetchScope;
@@ -21,11 +25,11 @@ pub struct SavedQueue {
     pub at: DateTime<Utc>,
 }
 
-/// The next `count` songs after `last_two.1`, the one playing now. `last_two.0` is the song the
-/// same listener played before it. From the saved queue when it holds the playing song, else
-/// from the newest radio list where the two are next to each other, else nothing. With
-/// [`PrefetchScope::RadioOnly`] only the songs `is_radio` says a radio offered are kept. The
-/// playing song is never in the window, and no song is in it twice.
+/// `count` songs from the one after next after `last_two.1`, the one playing now. `last_two.0`
+/// is the song the same listener played before it. From the saved queue when it holds the
+/// playing song, else from the newest radio list where the two are next to each other, else
+/// nothing. With [`PrefetchScope::RadioOnly`] only the songs `is_radio` says a radio offered are
+/// kept. The playing song is never in the window, and no song is in it twice.
 pub fn window(
     saved: Option<&SavedQueue>,
     radio_lists: &[Vec<String>],
@@ -38,13 +42,15 @@ pub fn window(
     if playing.is_empty() || count == 0 {
         return Vec::new();
     }
-    let after: &[String] = match saved.and_then(|queue| place_in_saved(queue, playing)) {
-        Some((queue, at)) => &queue.ids[at + 1..],
+    let order: (&[String], usize) = match saved.and_then(|queue| place_in_saved(queue, playing)) {
+        Some((queue, at)) => (&queue.ids, at),
         None => match previous.and_then(|previous| in_order(radio_lists, previous, playing)) {
-            Some((list, at)) => &list[at + 1..],
-            None => &[],
+            Some((list, at)) => (list, at),
+            None => return Vec::new(),
         },
     };
+    let (list, at) = order;
+    let after = &list[(at + 2).min(list.len())..];
     let mut picked: Vec<String> = Vec::new();
     for id in after {
         if picked.len() >= count {
@@ -111,66 +117,75 @@ mod tests {
     }
 
     #[test]
-    fn the_saved_queue_gives_the_next_songs_after_the_playing_one() {
-        let queue = saved(&["a", "b", "c", "d", "e"], Some(0));
+    fn the_window_starts_at_the_song_after_the_next() {
+        let queue = saved(&["a", "b", "c", "d", "e", "f"], Some(0));
         let next = window(Some(&queue), &[], (None, "a"), 3, PrefetchScope::All, all);
-        assert_eq!(next, ids(&["b", "c", "d"]));
+        assert_eq!(next, ids(&["c", "d", "e"]));
+        // The next song is fetched once it is the song after the next.
+        let later = window(Some(&queue), &[], (Some("a"), "b"), 3, PrefetchScope::All, all);
+        assert_eq!(later, ids(&["d", "e", "f"]));
+        let before = saved(&["z", "a", "b", "c"], Some(0));
+        assert_eq!(
+            window(Some(&before), &[], (None, "z"), 1, PrefetchScope::All, all),
+            ids(&["b"])
+        );
     }
 
     #[test]
     fn a_skip_moves_the_window_with_the_song_now_playing() {
         // The player saved the queue while "a" was current, then the listener skipped to "c".
-        let queue = saved(&["a", "b", "c", "d", "e", "f"], Some(0));
+        let queue = saved(&["a", "b", "c", "d", "e", "f", "g"], Some(0));
         let next = window(Some(&queue), &[], (Some("a"), "c"), 2, PrefetchScope::All, all);
-        assert_eq!(next, ids(&["d", "e"]));
+        assert_eq!(next, ids(&["e", "f"]));
     }
 
     #[test]
     fn shuffle_follows_the_order_the_player_saved() {
-        let queue = saved(&["d", "a", "e", "b", "c"], Some(1));
+        let queue = saved(&["d", "a", "e", "b", "c", "f"], Some(1));
         let next = window(Some(&queue), &[], (Some("d"), "a"), 3, PrefetchScope::All, all);
-        assert_eq!(next, ids(&["e", "b", "c"]));
+        assert_eq!(next, ids(&["b", "c", "f"]));
     }
 
     #[test]
     fn a_song_removed_from_the_queue_is_not_fetched() {
-        let before = saved(&["a", "b", "c", "d"], Some(0));
+        let before = saved(&["a", "b", "c", "d", "e"], Some(0));
         assert_eq!(
             window(Some(&before), &[], (None, "a"), 2, PrefetchScope::All, all),
-            ids(&["b", "c"])
+            ids(&["c", "d"])
         );
-        let after = saved(&["a", "c", "d"], Some(0));
+        let after = saved(&["a", "b", "d", "e"], Some(0));
         assert_eq!(
             window(Some(&after), &[], (None, "a"), 2, PrefetchScope::All, all),
-            ids(&["c", "d"])
+            ids(&["d", "e"])
         );
     }
 
     #[test]
     fn the_end_of_the_queue_gives_what_is_left() {
-        let queue = saved(&["a", "b", "c"], Some(1));
+        let queue = saved(&["a", "b", "c", "d"], Some(1));
         assert_eq!(
             window(Some(&queue), &[], (Some("a"), "b"), 5, PrefetchScope::All, all),
-            ids(&["c"])
+            ids(&["d"])
         );
         assert!(window(Some(&queue), &[], (Some("b"), "c"), 5, PrefetchScope::All, all).is_empty());
+        assert!(window(Some(&queue), &[], (Some("c"), "d"), 5, PrefetchScope::All, all).is_empty());
     }
 
     #[test]
     fn the_current_place_decides_between_two_copies_of_a_song() {
-        let queue = saved(&["a", "b", "x", "a", "c"], Some(3));
+        let queue = saved(&["a", "b", "x", "a", "c", "d"], Some(3));
         assert_eq!(
             window(Some(&queue), &[], (None, "a"), 1, PrefetchScope::All, all),
-            ids(&["c"])
+            ids(&["d"])
         );
     }
 
     #[test]
     fn a_radio_list_counts_only_when_the_last_two_plays_are_next_to_each_other_in_it() {
-        let lists = vec![ids(&["r1", "r2", "r3", "r4", "r5"])];
+        let lists = vec![ids(&["r1", "r2", "r3", "r4", "r5", "r6"])];
         assert_eq!(
             window(None, &lists, (Some("r2"), "r3"), 2, PrefetchScope::All, all),
-            ids(&["r4", "r5"])
+            ids(&["r5", "r6"])
         );
         // An app that mixes the station on the phone plays it out of order: a pool, not the order.
         assert!(window(None, &lists, (Some("r1"), "r4"), 2, PrefetchScope::All, all).is_empty());
@@ -180,7 +195,7 @@ mod tests {
 
     #[test]
     fn the_newest_list_holding_the_pair_wins() {
-        let lists = vec![ids(&["x", "a", "b", "new"]), ids(&["a", "b", "old"])];
+        let lists = vec![ids(&["x", "a", "b", "n", "new"]), ids(&["a", "b", "o", "old"])];
         assert_eq!(
             window(None, &lists, (Some("a"), "b"), 1, PrefetchScope::All, all),
             ids(&["new"])
@@ -189,23 +204,23 @@ mod tests {
 
     #[test]
     fn the_saved_queue_goes_before_a_radio_list() {
-        let queue = saved(&["a", "b", "q"], Some(0));
-        let lists = vec![ids(&["a", "b", "r"])];
+        let queue = saved(&["a", "b", "q1", "q2"], Some(0));
+        let lists = vec![ids(&["a", "b", "r1", "r2"])];
         assert_eq!(
             window(Some(&queue), &lists, (Some("a"), "b"), 1, PrefetchScope::All, all),
-            ids(&["q"])
+            ids(&["q2"])
         );
         // A saved queue without the playing song leaves it to the radio list.
         let other = saved(&["x", "y"], Some(0));
         assert_eq!(
             window(Some(&other), &lists, (Some("a"), "b"), 1, PrefetchScope::All, all),
-            ids(&["r"])
+            ids(&["r2"])
         );
     }
 
     #[test]
     fn radio_only_keeps_the_songs_a_radio_offered() {
-        let queue = saved(&["a", "r1", "s1", "r2", "s2", "r3"], Some(0));
+        let queue = saved(&["a", "next", "r1", "s1", "r2", "s2", "r3"], Some(0));
         let is_radio = |id: &str| id.starts_with('r');
         assert_eq!(
             window(
@@ -226,10 +241,10 @@ mod tests {
 
     #[test]
     fn nothing_twice_and_never_the_playing_song() {
-        let queue = saved(&["a", "b", "a", "b", "c"], Some(0));
+        let queue = saved(&["a", "b", "a", "c", "c", "d"], Some(0));
         assert_eq!(
             window(Some(&queue), &[], (None, "a"), 3, PrefetchScope::All, all),
-            ids(&["b", "c"])
+            ids(&["c", "d"])
         );
     }
 }

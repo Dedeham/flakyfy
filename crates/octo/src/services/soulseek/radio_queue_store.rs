@@ -73,7 +73,7 @@ impl RadioQueueStore {
     }
 
     /// Remembers these ids as offered by a radio. The oldest are forgotten past
-    /// []; one offered again counts as new.
+    /// [`Self::MAX_RADIO_IDS`]; one offered again counts as new.
     pub fn note_radio<I, S>(&self, song_ids: I)
     where
         I: IntoIterator<Item = S>,

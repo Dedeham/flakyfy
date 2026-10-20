@@ -1,10 +1,13 @@
 //! The prefetch service over a handler-test state: what a now-playing queues, who it never
-//! queues for, what DownloadOnPlay does instead, and the worker's download into the folder.
+//! queues for, what DownloadOnPlay does instead, how many run beside a heart, and the worker's
+//! download into the folder.
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Duration, Utc};
 use octo_core::common::Clock;
 use octo_core::family::abilities::{Abilities, Preset};
 use octo_core::models::domain::Song;
@@ -12,19 +15,29 @@ use octo_core::models::download::DownloadInfo;
 use octo_core::settings::{AppSettings, DownloadSource, PrefetchScope, PrefetchSettings};
 use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
 use parking_lot::Mutex;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::app::{AppState, TestServices};
+use crate::services::common::DownloadConcurrency;
+use crate::services::common::test_fakes::{OffLink, OfflineLink, until};
 use crate::services::family::FamilyCaller;
 use crate::services::family::test_support::member;
 use crate::services::i_download_service::{Ahead, AudioStream, DirectStreamInfo, IDownloadService};
 use crate::services::library::ReplacementHandoff;
+use crate::services::soulseek::ISoulseekLink;
 
-/// A download service whose downloads ahead land a small file and its facts in the folder.
+/// A download service whose downloads ahead land a small file and its facts in the folder: at
+/// once, or once the test opens the gate; or that fail as told.
 #[derive(Default)]
 struct AheadDownloads {
     asked: Mutex<Vec<String>>,
+    gated: Mutex<bool>,
+    open: Notify,
+    now: AtomicUsize,
+    most: AtomicUsize,
+    refuse: Mutex<Option<std::io::ErrorKind>>,
 }
 
 #[async_trait]
@@ -79,7 +92,18 @@ impl IDownloadService for AheadDownloads {
         _: &CancellationToken,
     ) -> anyhow::Result<Ahead> {
         self.asked.lock().push(external_id.to_string());
-        std::fs::create_dir_all(folder)?;
+        let refused = *self.refuse.lock();
+        if let Some(kind) = refused {
+            return Err(std::io::Error::new(kind, "the source did not answer").into());
+        }
+        let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+        self.most.fetch_max(now, Ordering::SeqCst);
+        let gated = *self.gated.lock();
+        if gated {
+            self.open.notified().await;
+        }
+        self.now.fetch_sub(1, Ordering::SeqCst);
+        assert!(prepare_folder(folder)?);
         let path = folder.join(file_name(provider, external_id, "flac"));
         std::fs::write(&path, b"fLaC")?;
         let song = Song {
@@ -89,7 +113,7 @@ impl IDownloadService for AheadDownloads {
         };
         write_sidecar(
             &path,
-            &AheadSidecar::of(provider, external_id, &path, &song, None, chrono::Utc::now()),
+            &AheadSidecar::of(provider, external_id, &path, &song, None, Utc::now()),
         )?;
         Ok(Ahead::Kept { path })
     }
@@ -123,20 +147,28 @@ struct World {
     downloads: Arc<AheadDownloads>,
     folder: tempfile::TempDir,
     ids: Vec<String>,
+    now: Arc<Mutex<DateTime<Utc>>>,
 }
 
 fn world(change: impl FnOnce(&mut AppSettings)) -> World {
+    world_with(change, None)
+}
+
+/// The service over the state's own parts, with downloads three at a time and this Soulseek link.
+fn world_with(change: impl FnOnce(&mut AppSettings), soulseek: Option<Arc<dyn ISoulseekLink>>) -> World {
     let folder = tempfile::tempdir().expect("a temp dir");
     let mut settings = AppSettings {
         prefetch: PrefetchSettings {
             enabled: true,
             scope: PrefetchScope::All,
+            at_once: 3,
             min_free_gb: 1,
             folder: folder.path().to_string_lossy().into_owned(),
             ..Default::default()
         },
         ..Default::default()
     };
+    settings.soulseek.parallel_downloads = 3;
     change(&mut settings);
     let downloads = Arc::new(AheadDownloads::default());
     let state = AppState::for_tests_with(
@@ -146,7 +178,7 @@ fn world(change: impl FnOnce(&mut AppSettings)) -> World {
             ..Default::default()
         },
     );
-    let ids: Vec<String> = ["One", "Two", "Three", "Four", "Five"]
+    let ids: Vec<String> = ["One", "Two", "Three", "Four", "Five", "Six", "Seven"]
         .iter()
         .map(|title| {
             state.external_id_registry.register(SoulseekRouting {
@@ -158,19 +190,30 @@ fn world(change: impl FnOnce(&mut AppSettings)) -> World {
             })
         })
         .collect();
-    // The service over the state's own parts, without a Soulseek link to wait for.
+    let concurrency = Arc::new(DownloadConcurrency::new(state.settings.clone()));
+    concurrency.prove();
+    let now = Arc::new(Mutex::new(Utc::now()));
+    let clock_now = Arc::clone(&now);
+    let clock = Clock::new(move || *clock_now.lock());
+    // The same folder as the state reads, on the test clock.
+    let in_folder = folder.path().to_path_buf();
+    let store = Arc::new(PrefetchStore::new(
+        Arc::new(move || in_folder.clone()),
+        clock.clone(),
+    ));
     let service = PrefetchService::new(PrefetchParts {
         settings: state.settings.clone(),
-        store: state.prefetch.store().clone(),
+        store,
         downloads: downloads.clone(),
         queue: state.track_acquisition_queue.clone(),
         coordinator: state.heart_acquisition_coordinator.clone(),
         radio_queues: state.radio_queues.clone(),
         write_gate: state.family_write_gate.clone(),
         library: state.local_library.clone(),
+        concurrency: Some(concurrency),
         names: Some(state.external_id_registry.clone()),
-        soulseek: None,
-        clock: Clock::system(),
+        soulseek,
+        clock,
     });
     World {
         state,
@@ -178,6 +221,7 @@ fn world(change: impl FnOnce(&mut AppSettings)) -> World {
         downloads,
         folder,
         ids,
+        now,
     }
 }
 
@@ -192,47 +236,53 @@ impl World {
     }
 
     fn asked(&self) -> Vec<String> {
-        self.downloads.asked.lock().clone()
+        let mut asked = self.downloads.asked.lock().clone();
+        asked.sort();
+        asked
+    }
+
+    fn ids_of(&self, at: &[usize]) -> Vec<String> {
+        let mut ids: Vec<String> = at.iter().map(|i| self.ids[*i].clone()).collect();
+        ids.sort();
+        ids
+    }
+
+    fn later(&self, by: Duration) {
+        *self.now.lock() += by;
     }
 
     async fn run_jobs(&self) {
         self.service.step().await;
-        crate::services::common::test_fakes::until(|| self.service.state_running() == 0).await;
+        until(|| self.service.state_running() == 0).await;
     }
 }
 
 #[tokio::test]
-async fn a_now_playing_fetches_the_next_songs_of_the_saved_queue_into_the_folder() {
+async fn a_now_playing_fetches_the_songs_after_the_next_into_the_folder() {
     let w = world(|s| s.prefetch.count = 2);
     w.save_queue("alice", 0);
     w.service.on_playing("alice", &w.ids[0], None).await;
     w.run_jobs().await;
-    w.service.step().await;
-    w.run_jobs().await;
-    assert_eq!(w.asked(), vec![w.ids[1].clone(), w.ids[2].clone()]);
-    for id in &w.ids[1..3] {
+    // The next song plays as it would have: the app buffers it before a download could finish.
+    assert_eq!(w.asked(), w.ids_of(&[2, 3]));
+    for id in &w.ids[2..4] {
         let ready = w.service.store().ready("soulseek", id).expect("ready");
         assert!(ready.starts_with(w.folder.path()));
     }
-    assert!(w.service.store().ready("soulseek", &w.ids[3]).is_none());
+    assert!(w.service.store().ready("soulseek", &w.ids[1]).is_none());
     // Nothing went into the library or its logs.
     assert!(w.state.download_history.get_recent(10).is_empty());
 }
 
 #[tokio::test]
 async fn songs_that_left_the_window_are_dropped_before_they_start() {
-    let w = world(|s| {
-        s.prefetch.count = 2;
-        s.prefetch.at_once = 1;
-    });
+    let w = world(|s| s.prefetch.count = 2);
     w.save_queue("alice", 0);
     w.service.on_playing("alice", &w.ids[0], None).await;
-    // A skip to the fourth song before anything ran: the second and third are no longer next.
+    // A skip to the fourth song before anything ran: the third and fourth are no longer coming.
     w.service.on_playing("alice", &w.ids[3], None).await;
-    for _ in 0..3 {
-        w.run_jobs().await;
-    }
-    assert_eq!(w.asked(), vec![w.ids[4].clone()]);
+    w.run_jobs().await;
+    assert_eq!(w.asked(), w.ids_of(&[5, 6]));
 }
 
 #[tokio::test]
@@ -242,6 +292,43 @@ async fn nothing_is_fetched_while_prefetch_is_off() {
     w.service.on_playing("alice", &w.ids[0], None).await;
     w.run_jobs().await;
     assert!(w.asked().is_empty());
+}
+
+#[tokio::test]
+async fn with_downloads_one_at_a_time_nothing_is_fetched_ahead() {
+    let w = world(|s| s.soulseek.parallel_downloads = 1);
+    w.save_queue("alice", 0);
+    w.service.on_playing("alice", &w.ids[0], None).await;
+    w.run_jobs().await;
+    assert!(w.asked().is_empty());
+    assert_eq!(w.service.status().await.paused.as_deref(), Some(ONE_AT_A_TIME));
+}
+
+#[tokio::test]
+async fn one_transfer_is_always_left_for_a_heart() {
+    let w = world(|s| s.prefetch.count = 4);
+    *w.downloads.gated.lock() = true;
+    w.save_queue("alice", 0);
+    w.service.on_playing("alice", &w.ids[0], None).await;
+    w.service.step().await;
+    until(|| w.downloads.now.load(Ordering::SeqCst) == 2).await;
+    w.service.step().await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        w.service.state_running(),
+        2,
+        "three at once, so two ahead at most"
+    );
+    // Each one let through makes room for the next, never for a third beside them.
+    for _ in 0..8 {
+        w.downloads.open.notify_waiters();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        w.service.step().await;
+        assert!(w.service.state_running() <= 2);
+    }
+    until(|| w.service.state_running() == 0).await;
+    assert_eq!(w.downloads.asked.lock().len(), 4);
+    assert_eq!(w.downloads.most.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -266,7 +353,7 @@ async fn a_member_whose_plays_keep_no_copies_gets_nothing_fetched() {
     w.run_jobs().await;
     assert!(w.asked().is_empty(), "a listener's plays keep no copies");
 
-    // A member who adds songs at once does get the next songs ahead.
+    // A member who adds songs at once does get the songs coming up ahead.
     let alex = FamilyCaller::member("alex", Preset::Member, Abilities::preset(Preset::Member));
     assert!(w.service.may_keep_copies("alex", Some(&alex)));
     w.save_queue("alex", 0);
@@ -275,25 +362,47 @@ async fn a_member_whose_plays_keep_no_copies_gets_nothing_fetched() {
     assert!(!w.asked().is_empty());
 }
 
+/// YouTube first, so a play is queued at once rather than after a look at Soulseek.
+fn you_tube_first(s: &mut AppSettings) {
+    s.subsonic.heart_download_sources = vec![octo_core::settings::HeartDownloadStep {
+        source: octo_core::settings::HeartDownloadSource::YouTube,
+        song_enabled: Some(true),
+        album_enabled: Some(true),
+        ..Default::default()
+    }];
+}
+
 #[tokio::test]
-async fn with_download_on_play_the_next_songs_are_queued_as_plays_instead() {
+async fn with_download_on_play_the_songs_coming_up_are_queued_as_plays_one_at_a_time() {
     let w = world(|s| {
         s.subsonic.download_on_play = true;
-        // YouTube first, so the play is queued at once rather than after a look at Soulseek.
-        s.subsonic.heart_download_sources = vec![octo_core::settings::HeartDownloadStep {
-            source: octo_core::settings::HeartDownloadSource::YouTube,
-            song_enabled: Some(true),
-            album_enabled: Some(true),
-            ..Default::default()
-        }];
+        s.subsonic.wait_for_lossless_on_play = true;
+        you_tube_first(s);
         s.prefetch.count = 2;
     });
     w.save_queue("alice", 0);
     w.service.on_playing("alice", &w.ids[0], None).await;
+    w.service.step().await;
     let queue = &w.state.track_acquisition_queue;
-    // The play lane keeps one waiting play, as a play would.
-    assert!(queue.is_in_flight("soulseek", &w.ids[1]));
-    w.run_jobs().await;
+    assert!(queue.is_in_flight("soulseek", &w.ids[2]));
+    assert!(
+        !queue.is_in_flight("soulseek", &w.ids[3]),
+        "one play waits at most"
+    );
+    w.service.step().await;
+    assert!(
+        !queue.is_in_flight("soulseek", &w.ids[3]),
+        "never in a real play's place"
+    );
+
+    // The worker takes the waiting play: the next song coming up takes the free place.
+    let taken = queue
+        .dequeue(&CancellationToken::new())
+        .await
+        .expect("the waiting play");
+    assert_eq!(taken.external_id, w.ids[2]);
+    w.service.step().await;
+    assert!(queue.is_in_flight("soulseek", &w.ids[3]));
     assert!(w.asked().is_empty(), "nothing goes into the prefetch folder");
 }
 
@@ -301,14 +410,12 @@ async fn with_download_on_play_the_next_songs_are_queued_as_plays_instead() {
 async fn a_radio_list_counts_only_in_order_and_radio_only_keeps_radio_songs() {
     let w = world(|s| s.prefetch.scope = PrefetchScope::RadioOnly);
     w.state.radio_queues.register(w.ids.clone());
-    w.service.note_radio(&w.ids[..3]);
+    w.service.note_radio(&w.ids[..4]);
     w.service.on_playing("alice", &w.ids[0], None).await;
     w.service.on_playing("alice", &w.ids[1], None).await;
-    for _ in 0..3 {
-        w.run_jobs().await;
-    }
-    // The fourth song is next in the list too, but no radio offered it.
-    assert_eq!(w.asked(), vec![w.ids[2].clone()]);
+    w.run_jobs().await;
+    // The fifth and sixth songs are coming up in the list too, but no radio offered them.
+    assert_eq!(w.asked(), w.ids_of(&[3]));
 }
 
 #[tokio::test]
@@ -317,10 +424,94 @@ async fn a_song_already_ready_is_not_fetched_again() {
     w.save_queue("alice", 0);
     w.service.on_playing("alice", &w.ids[0], None).await;
     w.run_jobs().await;
-    w.service.on_playing("alice", &w.ids[4], None).await;
+    w.service.on_playing("alice", &w.ids[6], None).await;
     w.service.on_playing("alice", &w.ids[0], None).await;
     w.run_jobs().await;
-    assert_eq!(w.asked(), vec![w.ids[1].clone()]);
+    assert_eq!(w.asked(), w.ids_of(&[2]));
+}
+
+#[tokio::test]
+async fn a_listener_idle_for_half_an_hour_has_nothing_coming_up_but_what_others_share() {
+    let w = world(|s| {
+        s.prefetch.count = 1;
+        s.soulseek.parallel_downloads = 1;
+    });
+    w.save_queue("alice", 0);
+    w.service.on_playing("alice", &w.ids[0], None).await;
+    w.save_queue("bob", 3);
+    w.service.on_playing("bob", &w.ids[3], None).await;
+    w.later(Duration::minutes(20));
+    // Carol has the same song coming up as Alice.
+    w.save_queue("carol", 0);
+    w.service.on_playing("carol", &w.ids[0], None).await;
+    assert_eq!(w.service.queued_ids(), vec![w.ids[2].clone(), w.ids[5].clone()]);
+    w.later(Duration::minutes(15));
+    w.service.step().await;
+    // Bob played 35 minutes ago: his song goes. Alice's stays, since Carol has it coming up too.
+    assert_eq!(w.service.queued_ids(), vec![w.ids[2].clone()]);
+}
+
+#[tokio::test]
+async fn nothing_starts_while_soulseek_is_off_or_cannot_be_reached() {
+    for link in [Arc::new(OffLink) as Arc<dyn ISoulseekLink>, Arc::new(OfflineLink)] {
+        let w = world_with(|s| s.prefetch.count = 1, Some(link));
+        w.save_queue("alice", 0);
+        w.service.on_playing("alice", &w.ids[0], None).await;
+        w.run_jobs().await;
+        assert!(w.asked().is_empty());
+        assert_eq!(
+            w.service.status().await.paused.as_deref(),
+            Some("Waiting for Soulseek to connect")
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_source_that_could_not_be_reached_is_tried_again_soon() {
+    let w = world(|s| s.prefetch.count = 1);
+    *w.downloads.refuse.lock() = Some(std::io::ErrorKind::ConnectionRefused);
+    w.save_queue("alice", 0);
+    w.service.on_playing("alice", &w.ids[0], None).await;
+    w.run_jobs().await;
+    assert_eq!(w.asked(), w.ids_of(&[2]));
+    assert_eq!(w.service.status().await.errors.len(), 1);
+    *w.downloads.refuse.lock() = None;
+    w.later(Duration::minutes(11));
+    w.service.on_playing("alice", &w.ids[1], None).await;
+    w.service.on_playing("alice", &w.ids[0], None).await;
+    w.run_jobs().await;
+    assert!(w.service.store().is_ready("soulseek", &w.ids[2]), "tried again");
+}
+
+#[tokio::test]
+async fn a_song_that_failed_rests_for_hours() {
+    let w = world(|s| s.prefetch.count = 1);
+    *w.downloads.refuse.lock() = Some(std::io::ErrorKind::InvalidData);
+    w.save_queue("alice", 0);
+    w.service.on_playing("alice", &w.ids[0], None).await;
+    w.run_jobs().await;
+    *w.downloads.refuse.lock() = None;
+    w.later(Duration::minutes(11));
+    w.service.on_playing("alice", &w.ids[1], None).await;
+    w.service.on_playing("alice", &w.ids[0], None).await;
+    w.run_jobs().await;
+    assert!(!w.service.store().is_ready("soulseek", &w.ids[2]));
+    assert_eq!(w.downloads.asked.lock().len(), 1);
+}
+
+#[tokio::test]
+async fn the_folder_is_swept_with_prefetch_off_too() {
+    let w = world(|s| s.prefetch.count = 1);
+    w.save_queue("alice", 0);
+    w.service.on_playing("alice", &w.ids[0], None).await;
+    w.run_jobs().await;
+    assert!(w.service.store().is_ready("soulseek", &w.ids[2]));
+    let mut off = w.state.settings.current().as_ref().clone();
+    off.prefetch.enabled = false;
+    w.state.settings.set(off);
+    w.later(Duration::days(31));
+    w.service.step().await;
+    assert!(!w.service.store().is_ready("soulseek", &w.ids[2]));
 }
 
 #[tokio::test]
@@ -335,6 +526,6 @@ async fn the_status_reads_the_folder_and_clear_empties_it() {
     assert_eq!(status.used_bytes, 4);
     assert_eq!(status.cap_bytes, 20 * 1024 * 1024 * 1024);
     // Played just now, so it stays.
-    w.service.store().touch("soulseek", &w.ids[1]);
+    w.service.store().touch("soulseek", &w.ids[2]);
     assert_eq!(w.service.clear(), 0);
 }

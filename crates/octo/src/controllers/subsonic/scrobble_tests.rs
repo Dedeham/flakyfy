@@ -883,7 +883,7 @@ async fn a_now_playing_scrobble_queues_the_next_songs_ahead() {
         crate::services::test_support::refused_address()
     ));
     let state = AppState::for_tests(app_settings);
-    let ids: Vec<String> = ["One", "Two", "Three"]
+    let ids: Vec<String> = ["One", "Two", "Three", "Four", "Five"]
         .iter()
         .map(|title| {
             state.external_id_registry.register(SoulseekRouting {
@@ -934,5 +934,13 @@ async fn a_now_playing_scrobble_queues_the_next_songs_ahead() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let titles: Vec<Option<String>> = next.into_iter().map(|song| song.title).collect();
-    assert_eq!(titles, [Some("Two".to_string()), Some("Three".to_string())]);
+    // From the song after the next: the app buffers the next one itself.
+    assert_eq!(
+        titles,
+        [
+            Some("Three".to_string()),
+            Some("Four".to_string()),
+            Some("Five".to_string())
+        ]
+    );
 }

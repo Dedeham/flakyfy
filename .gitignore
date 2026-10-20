@@ -113,3 +113,9 @@ parity/.run/
 
 # Claude Code: the shared project settings are committed, personal ones are not.
 .claude/settings.local.json
+
+# Local agent state, other tools' leftovers.
+.agents/
+node_modules/
+.venv/
+.DS_Store

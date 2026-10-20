@@ -8,6 +8,7 @@
   <!-- Absolute paths so the page renders correctly whether the browser is at
        /admin, /admin/, or /admin/index.html. -->
   <link rel="stylesheet" href="/admin/admin.css" />
+  <link rel="stylesheet" href="/admin/listening.css" />
   <link rel="icon" type="image/png" href="/Assets/octo_logo.png" />
   <link rel="preconnect" href="https://rsms.me" />
   <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
@@ -39,6 +40,10 @@
           <button class="sidebar-nav-item" data-tab="fetched">
             <svg class="icon" aria-hidden="true"><use href="#i-tray-arrow-down"/></svg>
             <span>Fetched songs</span>
+          </button>
+          <button class="sidebar-nav-item" data-tab="listening">
+            <svg class="icon" aria-hidden="true"><use href="#i-headphones"/></svg>
+            <span>Listening</span>
           </button>
         </div>
 
@@ -184,6 +189,40 @@
           <button type="button" class="btn btn-ghost" id="update-banner-later">Later</button>
         </span>
       </div>
+
+      <!-- ─── LISTENING: drawn by /admin/listening.js ────────────── -->
+      <section data-pane="listening">
+        <div class="ls-mount" id="listening-root"></div>
+        <div class="set-section">
+          <div class="set-head">
+            <h3 class="set-title">Recording</h3>
+            <p class="set-desc">Listening stays on this server. Only the person who listened and this server's admin see it.</p>
+          </div>
+          <form data-section="listening" class="set-card">
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Record listening</div><div class="set-info-d">Keeps each song played to the end, with the app it played on, for the Listening pages here and on the Family page.</div></div>
+              <label class="switch"><input type="checkbox" id="f-listening-enabled" name="Listening.Enabled" checked /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Keep plays for</div><div class="set-info-d">Older plays are removed once a day.</div></div>
+              <select class="set-input" id="f-listening-keep" name="Listening.KeepDays" data-number="true">
+                <option value="30">30 days</option>
+                <option value="90" selected>90 days</option>
+                <option value="180">180 days</option>
+                <option value="365">A year</option>
+              </select>
+            </div>
+          </form>
+        </div>
+        <div class="set-section">
+          <div class="set-card">
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Clear listening history</div><div class="set-info-d">Removes every play on record, for everyone. This can't be undone.</div></div>
+              <button type="button" class="btn btn-danger" id="listening-clear">Clear history</button>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- ─── STATUS ──────────────────────────────────────────── -->
       <section data-pane="status" class="active">
@@ -875,7 +914,7 @@
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Dynamic stations</h3>
-            <p class="set-desc">Builds read-only stations from each listener's completed plays. Listening history stays private in Octo.</p>
+            <p class="set-desc">Builds read-only stations from each listener's completed plays. Listening stays on this server: only you and the server's admin see it.</p>
           </div>
           <form data-section="lastfm-personalized" class="set-card">
             <div class="set-row">
@@ -3167,6 +3206,7 @@
     </div>
   </div>
 
+  <script src="/admin/listening.js"></script>
   <script src="/admin/admin.js"></script>
 </body>
 </html>

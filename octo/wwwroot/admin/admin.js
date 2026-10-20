@@ -168,6 +168,7 @@ function activateTab(name, { focus = false } = {}) {
   if (name === 'about' && typeof loadUpdate === 'function') loadUpdate();
   if (name === 'soulseek' && typeof loadSharing === 'function') loadSharing();
   if (name === 'family' && typeof loadFamily === 'function') loadFamily();
+  if (typeof showListening === 'function') showListening(name === 'listening');
   if (focus) {
     window.scrollTo({ top: 0 });
     const heading = document.querySelector(`section[data-pane="${name}"] h1`);
@@ -4370,6 +4371,53 @@ function loadAmbient() {
   })();
   return ambientLoading;
 }
+
+// ── Listening: each person's plays, drawn by /admin/listening.js ───────────────────────────
+// Mounted the first time the page opens. Leaving it gives the dashboard its own lights back;
+// coming back reloads it.
+let listeningPage = null;
+let listeningShown = false;
+function showListening(on) {
+  if (on === listeningShown) {
+    if (on) listeningPage?.reload();
+    return;
+  }
+  listeningShown = on;
+  if (!on) {
+    listeningPage?.pause();
+    return;
+  }
+  const holder = document.getElementById('listening-root');
+  if (!holder || !window.OctoListening) return;
+  if (listeningPage) {
+    listeningPage.resume();
+    return;
+  }
+  listeningPage = window.OctoListening.mount(holder, {
+    title: 'Listening',
+    canSeeEveryone: true,
+    cover: item => (item.songId ? `/api/admin/find/cover?id=${encodeURIComponent(item.songId)}` : ''),
+    fetch: async (days, user) => {
+      const query = `range=${days}${user ? `&user=${encodeURIComponent(user)}` : ''}`;
+      const r = await api(`/api/admin/listening?${query}`, { cache: 'no-store' });
+      const data = await r.json().catch(() => null);
+      return { ok: r.ok, data, error: data?.error || `Octo answered ${r.status}.` };
+    },
+  });
+}
+
+document.getElementById('listening-clear')?.addEventListener('click', async () => {
+  if (!(await askConfirm('Clear listening history?', 'Every play on record is removed, for everyone, and the Listening pages start over.', 'Clear history', true))) return;
+  try {
+    const r = await api('/api/admin/listening/clear', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    toast(data.cleared === 1 ? 'Cleared 1 play' : `Cleared ${data.cleared ?? 0} plays`);
+    listeningPage?.reload();
+  } catch (e) {
+    toast(`Couldn't clear the history: ${e.message}`, 'err');
+  }
+});
 
 // ── How a download was tagged ───────────────────────────────────────────────
 // The same block under a Fetched songs row and under "Try it on a song": the release that won

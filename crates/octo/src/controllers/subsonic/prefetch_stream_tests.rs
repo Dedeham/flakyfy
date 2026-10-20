@@ -202,3 +202,192 @@ async fn a_caller_whose_audio_has_a_ceiling_gets_the_preview() {
     assert_eq!(body.as_ref(), PREVIEW);
     assert!(Path::new(&w.folder.path().join(file_name("soulseek", "song1", "flac"))).is_file());
 }
+
+#[tokio::test]
+async fn with_wait_for_lossless_a_seek_after_the_file_lands_stays_on_the_preview() {
+    let w = world(|s| s.subsonic.wait_for_lossless_on_play = true).await;
+    let started = w.play("Octo", None).await;
+    assert!(is_preview(&started), "{:?}", started.body);
+    w.land();
+    let seek = w.play("Octo", Some("bytes=2-")).await;
+    assert!(is_preview(&seek), "{:?}", seek.body);
+}
+
+#[tokio::test]
+async fn with_wait_for_lossless_a_later_range_with_no_play_started_on_the_flac_gets_the_preview() {
+    let w = world(|s| s.subsonic.wait_for_lossless_on_play = true).await;
+    w.land();
+    let reply = w.play("Octo", Some("bytes=500000-")).await;
+    assert!(is_preview(&reply), "{:?}", reply.body);
+}
+
+#[tokio::test]
+async fn a_play_whose_file_is_gone_is_asked_to_start_again() {
+    let w = world(|_| {}).await;
+    let path = w.land();
+    assert!(is_flac(&w.play("Octo", None).await));
+    std::fs::remove_file(&path).expect("swept");
+    let later = w.play("Octo", Some("bytes=5-")).await;
+    assert_eq!(later.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!is_preview(&later), "never the preview's bytes after FLAC ones");
+}
+
+#[tokio::test]
+async fn two_devices_of_one_listener_have_their_own_plays() {
+    let w = world(|_| {}).await;
+    w.land();
+    let app = app(&w.state);
+    let uri = format!("/rest/stream?id=outside-1&{}", auth("alice", "good", "Octo"));
+    let started = send(&app, Method::GET, &uri, &[], Body::empty()).await;
+    assert!(is_flac(&started));
+    // The same listener's other app has started nothing: its later range is the preview's.
+    let other = format!(
+        "/rest/stream?id=outside-1&{}",
+        auth("alice", "good", "OctoDesktop")
+    );
+    let reply = send(&app, Method::GET, &other, &[("Range", "bytes=5-")], Body::empty()).await;
+    assert!(is_preview(&reply), "{:?}", reply.body);
+}
+
+/// A transfer that never runs: a song kept from the folder needs none.
+#[derive(Default)]
+struct NoTransfer {
+    transfers: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::services::common::DownloadBackend for NoTransfer {
+    fn provider_name(&self) -> &str {
+        "soulseek"
+    }
+
+    async fn is_available(&self, _: &crate::services::common::BaseDownloadService) -> bool {
+        true
+    }
+
+    async fn download_track(
+        &self,
+        _: &crate::services::common::BaseDownloadService,
+        _: &mut crate::services::common::TrackDownload,
+        _: &tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<String> {
+        self.transfers.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        anyhow::bail!("no transfer in this test")
+    }
+
+    fn extract_external_id_from_album_id(&self, _: &str) -> Option<String> {
+        None
+    }
+}
+
+/// The download pipeline over the state's songs downloaded ahead, filing into its music folder.
+fn pipeline(
+    w: &World,
+) -> (
+    Arc<crate::services::common::BaseDownloadService>,
+    Arc<NoTransfer>,
+    PathBuf,
+) {
+    use crate::services::common::{BaseDownloadService, DownloadCore, DownloadServices};
+    let settings = w.state.settings.clone();
+    let music = PathBuf::from(settings.raw("Library:DownloadPath").expect("a music folder"));
+    let metadata = crate::services::common::test_fakes::FakeMetadata::default();
+    metadata.songs.lock().insert(
+        ("soulseek".into(), "song1".into()),
+        Song {
+            title: "Song".into(),
+            artist: "Artist".into(),
+            album: "Album".into(),
+            external_provider: Some("soulseek".into()),
+            external_id: Some("song1".into()),
+            ..Default::default()
+        },
+    );
+    let backend = Arc::new(NoTransfer::default());
+    let service = BaseDownloadService::new(
+        DownloadCore {
+            settings: settings.clone(),
+            local_library: Arc::new(crate::services::local::test_support::FakeLocalLibrary::default()),
+            metadata: Arc::new(metadata),
+            navidrome_identity: crate::services::subsonic::NavidromeIdentityService::new(
+                settings.clone(),
+                reqwest::Client::new(),
+            ),
+            history: w.state.download_history.clone(),
+            notifications: w.state.notifications.clone(),
+        },
+        DownloadServices {
+            prefetched: Some(
+                w.state.prefetch.store().clone() as Arc<dyn crate::services::prefetch::PrefetchedFiles>
+            ),
+            ..Default::default()
+        },
+        backend.clone(),
+    );
+    (service, backend, music)
+}
+
+#[tokio::test]
+async fn a_heart_during_a_play_on_the_flac_keeps_that_play_s_later_ranges_on_it() {
+    let w = world(|_| {}).await;
+    w.land();
+    assert!(is_flac(&w.play("Octo", None).await));
+    let (pipeline, backend, music) = pipeline(&w);
+    let kept = crate::services::i_download_service::IDownloadService::execute_acquisition(
+        pipeline.as_ref(),
+        "soulseek",
+        "song1",
+        false,
+        true,
+        None,
+        &tokio_util::sync::CancellationToken::new(),
+        Some(vec!["alice".into()]),
+        false,
+        None,
+    )
+    .await
+    .expect("kept");
+    assert!(Path::new(&kept).starts_with(&music), "{kept}");
+    assert_eq!(backend.transfers.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let later = w.play("Octo", Some("bytes=5-")).await;
+    assert_eq!(later.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(later.body.as_ref(), &FLAC[5..]);
+}
+
+#[tokio::test]
+async fn with_wait_for_lossless_a_ready_song_served_is_kept_in_the_library_by_its_play() {
+    let w = world(|s| s.subsonic.wait_for_lossless_on_play = true).await;
+    w.land();
+    assert!(is_flac(&w.play("Octo", None).await));
+    // The play queued its own lossless copy, as a play with Wait for lossless on does.
+    let queue = &w.state.track_acquisition_queue;
+    assert!(queue.is_in_flight("soulseek", "song1"));
+    let request = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        queue.dequeue(&tokio_util::sync::CancellationToken::new()),
+    )
+    .await
+    .expect("in time")
+    .expect("the play's acquisition");
+    let (pipeline, backend, music) = pipeline(&w);
+    let kept = crate::services::i_download_service::IDownloadService::execute_acquisition(
+        pipeline.as_ref(),
+        &request.provider,
+        &request.external_id,
+        false,
+        true,
+        None,
+        &tokio_util::sync::CancellationToken::new(),
+        None,
+        false,
+        None,
+    )
+    .await
+    .expect("kept");
+    assert!(Path::new(&kept).starts_with(&music), "{kept}");
+    assert!(Path::new(&kept).is_file());
+    assert_eq!(backend.transfers.load(std::sync::atomic::Ordering::SeqCst), 0);
+    // And the play goes on with the file it started on.
+    let later = w.play("Octo", Some("bytes=5-")).await;
+    assert_eq!(later.body.as_ref(), &FLAC[5..]);
+}

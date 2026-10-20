@@ -855,6 +855,11 @@ pub fn serve_station_songs(
     state
         .radio_queues
         .register(songs.iter().map(|song| song.id.clone()));
+    // A station's songs (the radio stations and the mixes on them) are radio songs for the ones
+    // fetched ahead.
+    state
+        .prefetch
+        .note_radio(&songs.iter().map(|song| song.id.clone()).collect::<Vec<_>>());
     state
         .last_fm_radio_recommendations
         .remember_served(username, &songs);

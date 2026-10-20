@@ -30,7 +30,7 @@ use crate::http::routes::RouteSet;
 use crate::services::common::star_on_arrival::WaitingStar;
 use crate::services::common::{AcquisitionTarget, StarOnArrival};
 use crate::services::family::list_rules::{Edit, edit};
-use crate::services::family::{HeartOutcome, SavedAlbum, SavedSong, family_caller};
+use crate::services::family::{FamilyCaller, HeartOutcome, SavedAlbum, SavedSong, family_caller};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::LastFmRadioTrackResolver;
 use crate::services::library::{IgnoredRating, RatingActionRequest, RatingIgnored};
@@ -1219,6 +1219,7 @@ fn try_parse_int(text: &str) -> Option<i32> {
 /// (last-played stats, the Now Playing panel) is the upstream's job. Outside
 /// songs are not: Navidrome has no such media to record.
 pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult {
+    let caller = family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -1298,6 +1299,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
                 .await?;
             if is_successful_subsonic_response(&check.body, &format) {
                 prewarm_queue();
+                note_now_playing(&state, &call, caller.as_ref(), &ids, &submissions);
                 learn_from_scrobbles(&state, &call, &ids, &submissions, &times).await?;
             }
             let content_type = check
@@ -1318,6 +1320,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
             .await?;
         if is_successful_subsonic_response(&result.body, &format) {
             prewarm_queue();
+            note_now_playing(&state, &call, caller.as_ref(), &ids, &submissions);
             learn_from_scrobbles(&state, &call, &ids, &submissions, &times).await?;
         }
         let content_type = result
@@ -1337,6 +1340,54 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
             .into_response()),
         Err(other) => Err(AppError::from(other)),
     }
+}
+
+/// A now-playing scrobble (`submission=false`) tells the songs fetched ahead what is playing,
+/// in the background, so the answer never waits for it.
+fn note_now_playing(
+    state: &AppState,
+    call: &SubsonicCall,
+    caller: Option<&FamilyCaller>,
+    ids: &[String],
+    submissions: &[String],
+) {
+    if !state.settings.current().prefetch.enabled {
+        return;
+    }
+    let playing: Vec<String> = ids
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            let submission = if submissions.len() == 1 {
+                submissions.first()
+            } else {
+                submissions.get(*index)
+            };
+            submission.is_some_and(|s| !is_true(s))
+        })
+        .map(|(_, id)| id.clone())
+        .filter(|id| !id.is_empty())
+        .collect();
+    if playing.is_empty() {
+        return;
+    }
+    let (state, caller) = (state.clone(), caller.cloned());
+    let (parameters, proxy) = (call.parameters.clone(), call.proxy.clone());
+    tokio::spawn(async move {
+        let Some(who) = state
+            .request_identity
+            .username(&parameters, &proxy)
+            .await
+            .ok()
+            .flatten()
+            .filter(|u| !u.is_empty())
+        else {
+            return;
+        };
+        for id in playing {
+            state.prefetch.on_playing(&who, &id, caller.as_ref()).await;
+        }
+    });
 }
 
 /// What a completed scrobble teaches: the radio profile (when personalised radio is

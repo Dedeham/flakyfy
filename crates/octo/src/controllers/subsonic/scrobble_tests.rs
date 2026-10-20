@@ -859,3 +859,88 @@ async fn api_key_requests_arriving_together_ask_once() {
     assert_eq!(fixture.token_info_calls(), 1);
     assert_eq!(fixture.last_fm.calls_to("track.updateNowPlaying").len(), 4);
 }
+
+// ---------------------------------------------------------------------------------------
+// Now playing moves the songs fetched ahead
+// ---------------------------------------------------------------------------------------
+
+/// A now-playing scrobble queues the next songs of the listener's saved queue to be fetched
+/// ahead, in the background; a completed play does not.
+#[tokio::test]
+async fn a_now_playing_scrobble_queues_the_next_songs_ahead() {
+    let navidrome = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(navidrome_json(NAVIDROME_OK))
+        .mount(&navidrome)
+        .await;
+    let folder = tempfile::tempdir().expect("a temp dir");
+    let mut app_settings = settings(&navidrome.uri());
+    app_settings.prefetch.enabled = true;
+    app_settings.prefetch.scope = octo_core::settings::PrefetchScope::All;
+    app_settings.prefetch.folder = folder.path().to_string_lossy().into_owned();
+    app_settings.soulseek.base_url = Some(format!(
+        "http://{}",
+        crate::services::test_support::refused_address()
+    ));
+    let state = AppState::for_tests(app_settings);
+    let ids: Vec<String> = ["One", "Two", "Three", "Four", "Five"]
+        .iter()
+        .map(|title| {
+            state.external_id_registry.register(SoulseekRouting {
+                kind: RoutingKind::Song,
+                artist: Some("Artist".into()),
+                title: Some(title.to_string()),
+                ..Default::default()
+            })
+        })
+        .collect();
+    state
+        .prefetch
+        .saved_queue("alice", ids.clone(), Some(ids[0].clone()), Some(0));
+    let app = app(&state);
+
+    let done = get(
+        &app,
+        &format!(
+            "/rest/scrobble?id={}&submission=true&f=json&{}",
+            ids[0],
+            auth("alice", "good", "Octo")
+        ),
+    )
+    .await;
+    assert_eq!(done.status, StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        state.prefetch.status().await.next.is_empty(),
+        "a completed play moves nothing"
+    );
+
+    let playing = get(
+        &app,
+        &format!(
+            "/rest/scrobble?id={}&submission=false&f=json&{}",
+            ids[0],
+            auth("alice", "good", "Octo")
+        ),
+    )
+    .await;
+    assert_eq!(playing.status, StatusCode::OK);
+    let mut next = Vec::new();
+    for _ in 0..200 {
+        next = state.prefetch.status().await.next;
+        if !next.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let titles: Vec<Option<String>> = next.into_iter().map(|song| song.title).collect();
+    // From the song after the next: the app buffers the next one itself.
+    assert_eq!(
+        titles,
+        [
+            Some("Three".to_string()),
+            Some("Four".to_string()),
+            Some("Five".to_string())
+        ]
+    );
+}

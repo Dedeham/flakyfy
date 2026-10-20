@@ -577,6 +577,113 @@
             </div>
           </form>
         </div>
+        <div class="set-section" id="prefetch-section">
+          <div class="set-head">
+            <h3 class="set-title">Get upcoming songs ahead</h3>
+            <p class="set-desc">Downloads the next songs of what is playing as FLAC before they play, so a song you don't own starts lossless.</p>
+          </div>
+          <form data-section="prefetch" class="set-card" id="prefetch-form">
+            <div class="set-row">
+              <div class="set-info">
+                <label class="set-info-t" for="f-prefetch-enabled">Download songs ahead</label>
+                <div class="set-info-d">Octo's apps play the ready FLAC. Other apps need Wait for lossless on play. Off by default.</div>
+                <div class="set-info-more">Songs are kept in their own folder, outside your library. One nobody plays is deleted after the days set under More settings. A heart on a song keeps it: it moves into your library with no second download.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="f-prefetch-enabled" name="Prefetch.Enabled" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Ready now</div>
+                <div class="set-info-d" id="prefetch-status" role="status" aria-live="polite">Nothing downloaded ahead yet.</div>
+                <div class="set-info-d" id="prefetch-activity" hidden></div>
+              </div>
+              <button class="btn btn-ghost btn-danger" id="prefetch-clear" type="button">Clear downloaded-ahead songs</button>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t" id="prefetch-scope-label">Which songs</div>
+                <div class="set-info-d">Radio covers song radio, the stations and the mixes. Everything takes every song you don't own coming up next.</div>
+              </div>
+              <div class="set-ctrl">
+                <div class="seg" data-seg-for="f-prefetch-scope"><span class="seg-thumb"></span></div>
+                <select id="f-prefetch-scope" class="seg-src" name="Prefetch.Scope" hidden aria-label="Which songs are downloaded ahead">
+                  <option value="RadioOnly" selected>Radio</option>
+                  <option value="All">Everything</option>
+                </select>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <label class="set-info-t" for="f-prefetch-count">Songs ahead <span class="set-opt">1 to 10</span></label>
+                <div class="set-info-d">How many of the songs after the one playing are downloaded.</div>
+                <div class="set-info-more">The songs come from the play queue the app saved, or from a radio played in its own order. A station your app mixes on the phone has no order to follow.</div>
+              </div>
+              <input class="set-input" id="f-prefetch-count" name="Prefetch.Count" type="number" min="1" max="10" value="3" />
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <label class="set-info-t" for="f-prefetch-at-once">Songs at once <span class="set-opt">1 to 3</span></label>
+                <div class="set-info-d">How many download at the same time. Hearts and plays always go first.</div>
+                <div class="set-info-more">Always one fewer than the downloads Octo runs at once (Downloads at once, on the Soulseek page), so a heart never waits for a song downloaded ahead. With one at a time, nothing is downloaded ahead. To keep downloads from filling your connection, set a speed limit on slskd's own page.</div>
+              </div>
+              <input class="set-input" id="f-prefetch-at-once" name="Prefetch.AtOnce" type="number" min="1" max="3" value="1" />
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <label class="set-info-t" for="f-prefetch-pause">Pause when nothing plays</label>
+                <div class="set-info-d">Starts nothing new once nobody has played anything for ten minutes. On by default.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="f-prefetch-pause" name="Prefetch.PauseWhenStopped" checked /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <label class="set-info-t" for="f-prefetch-mixes">Keep mixes ready</label>
+                <div class="set-info-d">Keeps the first songs of each mix, and a few picked at random for shuffle, downloaded ahead.</div>
+                <div class="set-info-more">Checked every hour, for everyone who played something lately. These wait behind the songs coming up next.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="f-prefetch-mixes" name="Prefetch.KeepMixesReady" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <label class="set-info-t" for="f-prefetch-ready-count">Songs per mix <span class="set-opt">1 to 20</span></label>
+                <div class="set-info-d">How many from the start of each mix, and as many again at random.</div>
+              </div>
+              <input class="set-input" id="f-prefetch-ready-count" name="Prefetch.KeepReadyCount" type="number" min="1" max="20" value="5" />
+            </div>
+            <details class="set-more">
+              <summary>More settings</summary>
+              <div class="set-row">
+                <div class="set-info">
+                  <label class="set-info-t" for="f-prefetch-cache-gb">Space to use <span class="set-opt">GB</span></label>
+                  <div class="set-info-d">Once the folder holds this much, the songs played longest ago are deleted first.</div>
+                </div>
+                <input class="set-input" id="f-prefetch-cache-gb" name="Prefetch.CacheGb" type="number" min="1" max="2000" value="20" />
+              </div>
+              <div class="set-row">
+                <div class="set-info">
+                  <label class="set-info-t" for="f-prefetch-keep-days">Keep for <span class="set-opt">days</span></label>
+                  <div class="set-info-d">A song nobody played for this long is deleted, unless you hearted it.</div>
+                </div>
+                <input class="set-input" id="f-prefetch-keep-days" name="Prefetch.KeepDays" type="number" min="1" max="365" value="30" />
+              </div>
+              <div class="set-row">
+                <div class="set-info">
+                  <label class="set-info-t" for="f-prefetch-min-free">Leave free <span class="set-opt">GB</span></label>
+                  <div class="set-info-d">Nothing new is downloaded while the folder's disk has less free than this.</div>
+                </div>
+                <input class="set-input" id="f-prefetch-min-free" name="Prefetch.MinFreeGb" type="number" min="1" max="500" value="10" />
+              </div>
+              <div class="set-row stack">
+                <div class="set-info">
+                  <label class="set-info-t" for="f-prefetch-folder">Folder <span class="set-opt">optional</span></label>
+                  <div class="set-info-d">Where the songs are kept, outside your music folder. Blank keeps them in <code>prefetch</code> beside settings.json.</div>
+                  <div class="set-info-more">Songs already downloaded ahead stay in the old folder. Clear them before you move it.</div>
+                </div>
+                <input class="set-input" id="f-prefetch-folder" name="Prefetch.Folder" placeholder="/app/config/prefetch" />
+              </div>
+            </details>
+          </form>
+        </div>
 
       </section>
 

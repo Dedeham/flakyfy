@@ -1672,6 +1672,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "serde_repr",

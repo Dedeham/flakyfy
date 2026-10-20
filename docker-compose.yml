@@ -167,6 +167,22 @@ services:
       Spotiflac__TimeoutSeconds: ${SPOTIFLAC_TIMEOUT_SECONDS:-600}
       Spotiflac__AtOnce: ${SPOTIFLAC_AT_ONCE:-2}
 
+      # ----- get upcoming songs ahead (off by default) -----
+      # The next songs of what is playing, downloaded as FLAC before they play, into a folder
+      # outside the music folder (blank: prefetch beside settings.json). Octo's apps play them;
+      # other apps need Subsonic__WaitForLosslessOnPlay.
+      Prefetch__Enabled: ${PREFETCH_ENABLED:-false}
+      Prefetch__Scope: ${PREFETCH_SCOPE:-RadioOnly}
+      Prefetch__Count: ${PREFETCH_COUNT:-3}
+      Prefetch__AtOnce: ${PREFETCH_AT_ONCE:-1}
+      Prefetch__CacheGb: ${PREFETCH_CACHE_GB:-20}
+      Prefetch__KeepDays: ${PREFETCH_KEEP_DAYS:-30}
+      Prefetch__MinFreeGb: ${PREFETCH_MIN_FREE_GB:-10}
+      Prefetch__PauseWhenStopped: ${PREFETCH_PAUSE_WHEN_STOPPED:-true}
+      Prefetch__Folder: ${PREFETCH_FOLDER:-}
+      Prefetch__KeepMixesReady: ${PREFETCH_KEEP_MIXES_READY:-false}
+      Prefetch__KeepReadyCount: ${PREFETCH_KEEP_READY_COUNT:-5}
+
       # ----- Last.fm radio (core Octo feature; no separate Radio service) -----
       LastFm__ApiKey: ${LASTFM_API_KEY:-}
       LastFm__ApiSecret: ${LASTFM_API_SECRET:-}

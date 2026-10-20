@@ -85,6 +85,10 @@ fn missing_from(document: &Value) -> Vec<String> {
         if section == "Spotiflac" && document.get("Spotiflac").is_none() {
             continue;
         }
+        // And getting upcoming songs ahead (effective_document_keeps_prefetch).
+        if section == "Prefetch" && document.get("Prefetch").is_none() {
+            continue;
+        }
         for name in names {
             // The family notices are listed with the Family section.
             if name.starts_with("NotifyFamily") && document.get("Family").is_none() {
@@ -182,6 +186,44 @@ async fn effective_document_keeps_spotiflac() {
     state.settings_writer.replace(&file).expect("writes");
     let document = get(&saved, "/api/admin/raw-config").await.json();
     assert_eq!(document["Spotiflac"]["Enabled"], Value::Bool(false));
+    assert_eq!(missing_from(&document), Vec::<String>::new());
+}
+
+/// With Prefetch at its defaults neither document lists it, so the settings answers stay as they
+/// were; once it is on (or saved in settings.json) both list every Prefetch property.
+#[tokio::test]
+async fn effective_document_keeps_prefetch() {
+    let (_, off) = factory();
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&off, path).await.json();
+        assert!(document.get("Prefetch").is_none(), "{path}");
+    }
+
+    let mut settings = factory_settings();
+    settings.prefetch.enabled = true;
+    let on = app(AppState::for_tests(settings));
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&on, path).await.json();
+        assert_eq!(document["Prefetch"]["Enabled"], Value::Bool(true), "{path}");
+        assert_eq!(document["Prefetch"]["Scope"], "RadioOnly", "{path}");
+        assert_eq!(document["Prefetch"]["Count"], 3, "{path}");
+        assert_eq!(
+            document["Prefetch"]["PauseWhenStopped"],
+            Value::Bool(true),
+            "{path}"
+        );
+        assert_eq!(missing_from(&document), Vec::<String>::new(), "{path}");
+    }
+
+    let (state, saved) = factory();
+    let mut file = octo_core::settings::JsonObject::new();
+    file.insert(
+        "Prefetch".into(),
+        super::plumbing::n_obj([("Enabled", octo_core::json::dom::Node::Bool(false))]),
+    );
+    state.settings_writer.replace(&file).expect("writes");
+    let document = get(&saved, "/api/admin/raw-config").await.json();
+    assert_eq!(document["Prefetch"]["Enabled"], Value::Bool(false));
     assert_eq!(missing_from(&document), Vec::<String>::new());
 }
 

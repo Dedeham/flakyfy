@@ -14,7 +14,8 @@ use octo_core::common::dotnet::{is_blank, ordinal_ignore_case_key, utf16_len};
 use octo_core::json::dom::Node;
 use octo_core::settings::{
     AnimatedArtMode, FamilySettings, GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction,
-    LibraryActionSettings, LyricsSaveTo, SettingsWriteError, SpotiflacSettings,
+    LibraryActionSettings, LyricsSaveTo, PrefetchScope, PrefetchSettings, SettingsWriteError,
+    SpotiflacSettings,
 };
 use std::collections::HashSet;
 use tracing::{error, info, warn};
@@ -675,6 +676,27 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     {
         doc.insert("Spotiflac".into(), spotiflac_section(spotiflac));
     }
+    // Getting upcoming songs ahead is off by default, and listed the same way.
+    let prefetch = &current.prefetch;
+    if *prefetch != PrefetchSettings::default() || file.keys().any(|key| key.eq_ignore_ascii_case("Prefetch"))
+    {
+        doc.insert(
+            "Prefetch".into(),
+            n_obj([
+                ("Enabled", Node::Bool(prefetch.enabled)),
+                ("Scope", n_str(prefetch.scope.name())),
+                ("Count", n_num(prefetch.count)),
+                ("AtOnce", n_num(prefetch.at_once)),
+                ("CacheGb", n_num(prefetch.cache_gb)),
+                ("KeepDays", n_num(prefetch.keep_days)),
+                ("MinFreeGb", n_num(prefetch.min_free_gb)),
+                ("PauseWhenStopped", Node::Bool(prefetch.pause_when_stopped)),
+                ("Folder", n_str(&prefetch.folder)),
+                ("KeepMixesReady", Node::Bool(prefetch.keep_mixes_ready)),
+                ("KeepReadyCount", n_num(prefetch.keep_ready_count)),
+            ]),
+        );
+    }
     doc
 }
 
@@ -1015,6 +1037,35 @@ pub fn validate_discovery_stations(stations: &[Node]) -> Result<Option<String>, 
 /// shape matches the GET; any subset of keys may be supplied. The live settings are read again
 /// before the answer, so the very next request sees the save, but services that captured a
 /// value at startup keep theirs until a restart.
+/// The Prefetch section a save sends: a scope Octo knows, and whole numbers in range for the
+/// limits (each is also clamped at read time). The message to answer with, or None.
+pub fn validate_prefetch(patch: &JsonObject) -> Result<Option<String>, AppError> {
+    if let Some(key) = key_of(patch, "Scope")
+        && let Some(scope) = get_string(patch.get(&key))?
+        && !PrefetchScope::ALL
+            .iter()
+            .any(|known| known.name().eq_ignore_ascii_case(scope.trim()))
+    {
+        return Ok(Some(format!("Scope must be RadioOnly or All, not \"{scope}\".")));
+    }
+    for (name, low, high) in [
+        ("Count", 1, 10),
+        ("AtOnce", 1, 3),
+        ("CacheGb", 1, 2000),
+        ("KeepDays", 1, 365),
+        ("MinFreeGb", 1, 500),
+        ("KeepReadyCount", 1, 20),
+    ] {
+        if let Some(key) = key_of(patch, name)
+            && let Some(value) = get_int(patch.get(&key))?
+            && !(low..=high).contains(&value)
+        {
+            return Ok(Some(format!("{name} must be from {low} to {high}.")));
+        }
+    }
+    Ok(None)
+}
+
 pub async fn save_settings(
     State(state): State<AppState>,
     caller: Option<Extension<AdminCaller>>,
@@ -1063,6 +1114,11 @@ pub async fn save_settings(
     }
     if let Some(lists_patch) = child(&patch, "GeneratedPlaylists")
         && let Some(message) = validate_charts(lists_patch)
+    {
+        return Ok(error_json(StatusCode::BAD_REQUEST, &message));
+    }
+    if let Some(prefetch_patch) = child(&patch, "Prefetch")
+        && let Some(message) = validate_prefetch(prefetch_patch)?
     {
         return Ok(error_json(StatusCode::BAD_REQUEST, &message));
     }
@@ -1209,6 +1265,36 @@ mod tests {
         match Node::parse(json).expect("test JSON parses") {
             Node::Object(map) => map,
             _ => panic!("an object"),
+        }
+    }
+
+    #[test]
+    fn validate_prefetch_takes_known_scopes_and_limits_in_range() {
+        assert_eq!(
+            validate_prefetch(&obj(r#"{"Scope":"All","Count":10,"AtOnce":1,"CacheGb":2000}"#)).unwrap(),
+            None
+        );
+        assert_eq!(
+            validate_prefetch(&obj(r#"{"Scope":"radioonly","KeepReadyCount":20}"#)).unwrap(),
+            None
+        );
+        assert_eq!(
+            validate_prefetch(&obj(r#"{"Scope":"Everything"}"#))
+                .unwrap()
+                .as_deref(),
+            Some("Scope must be RadioOnly or All, not \"Everything\".")
+        );
+        for (bad, message) in [
+            (r#"{"Count":0}"#, "Count must be from 1 to 10."),
+            (r#"{"AtOnce":4}"#, "AtOnce must be from 1 to 3."),
+            (r#"{"KeepDays":366}"#, "KeepDays must be from 1 to 365."),
+            (r#"{"MinFreeGb":0}"#, "MinFreeGb must be from 1 to 500."),
+        ] {
+            assert_eq!(
+                validate_prefetch(&obj(bad)).unwrap().as_deref(),
+                Some(message),
+                "{bad}"
+            );
         }
     }
 

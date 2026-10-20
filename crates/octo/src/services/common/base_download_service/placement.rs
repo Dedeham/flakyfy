@@ -129,7 +129,8 @@ impl BaseDownloadService {
     }
 
     /// A song fetched ahead, moved to `<folder>/<provider>_<id>.<ext>`, where no library scan
-    /// looks. A copy of the song already there (and its facts) is replaced.
+    /// looks. A copy of the song already there (and its facts) is replaced. Refused for a folder
+    /// with other files in it that Octo did not make.
     pub(super) fn place_ahead(
         &self,
         current_path: &str,
@@ -137,7 +138,12 @@ impl BaseDownloadService {
         provider: &str,
         external_id: &str,
     ) -> std::io::Result<String> {
-        std::fs::create_dir_all(folder)?;
+        if !crate::services::prefetch::prepare_folder(folder)? {
+            return Err(std::io::Error::other(format!(
+                "{} has other files in it, so songs are not downloaded ahead there",
+                folder.display()
+            )));
+        }
         let name = crate::services::prefetch::file_name(provider, external_id, get_extension(current_path));
         let target = folder.join(name);
         if target.exists() {

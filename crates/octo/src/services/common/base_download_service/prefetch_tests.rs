@@ -321,3 +321,47 @@ async fn a_heart_waiting_on_a_download_ahead_keeps_its_file_rather_than_its_path
     assert!(store.ready("test", "t1").is_none());
     assert_eq!(history.get_recent(10).len(), 1);
 }
+
+#[tokio::test]
+async fn a_download_ahead_never_writes_into_a_row_that_has_ended() {
+    let root = tempfile::tempdir().expect("the music folder");
+    let folder = tempfile::tempdir().expect("the prefetch folder");
+    let tracker = Arc::new(AcquisitionTracker::new(None, Clock::system()));
+    let harness = build(
+        root.path(),
+        AppSettings::default(),
+        None,
+        Some(catalog(vec![("t1", song("t1"))])),
+        DownloadServices {
+            tracker: Some(tracker.clone()),
+            ..Default::default()
+        },
+    );
+    let staging = root.path().join(".octo-incoming").join("job");
+    harness.backend.land(move |_, id| {
+        std::fs::create_dir_all(&staging).expect("staging");
+        let path = staging.join(format!("{id}.flac"));
+        std::fs::write(&path, crate::services::test_support::flac()).expect("the file");
+        path.to_string_lossy().into_owned()
+    });
+    // A heart on the song ran earlier and ended.
+    tracker.begin("test", "t1", None, Some("alice"), None, None, None);
+    tracker.complete("test", "t1", None);
+    let lines = |tracker: &AcquisitionTracker| {
+        tracker
+            .detail("test:t1", None)
+            .and_then(|row| row.events)
+            .map_or(0, |events| events.len())
+    };
+    let before = lines(&tracker);
+    harness
+        .service
+        .download_ahead("test", "t1", folder.path(), &CancellationToken::new())
+        .await
+        .expect("downloaded ahead");
+    assert_eq!(lines(&tracker), before, "the ended row is as it was");
+
+    // Once the download ahead is over, lines that come after a row's end land as before.
+    tracker.log("test", "t1", "note", "Lyrics found", None);
+    assert_eq!(lines(&tracker), before + 1);
+}

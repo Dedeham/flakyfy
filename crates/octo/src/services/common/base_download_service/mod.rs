@@ -584,6 +584,10 @@ impl BaseDownloadService {
         // permit is the release, so it can never be released twice.
         let mut permit = Some(self.lock(cancellation_token).await?);
 
+        // A download ahead has no row of its own; its lines go only to a heart's row that runs.
+        let _hushed = options
+            .prefetch
+            .then(|| Hushed::new(self.services.tracker.as_ref(), external_provider, external_id));
         let outcome = self
             .download_locked(
                 external_provider,
@@ -1330,41 +1334,36 @@ impl BaseDownloadService {
         Ok(local_path)
     }
 
-    /// Takes a song fetched ahead out of its folder into a staging folder of its own under the
-    /// incoming folder, and gives the song back what its download learned. The staged path and
-    /// the source that brought it, or None when there is no such song (or it could not be moved,
-    /// and the song is downloaded as usual).
+    /// Takes a song fetched ahead into a staging folder of its own under the incoming folder (a
+    /// copy, when the song is playing now), and gives the song back what its download learned.
+    /// The staged path and the source that brought it, or None when there is no such song (or
+    /// it could not be taken, and the song is downloaded as usual).
     fn promote_ahead(
         &self,
         external_provider: &str,
         external_id: &str,
         song: &mut Song,
     ) -> Option<(String, Option<String>)> {
-        let taken = self
-            .services
-            .prefetched
-            .as_ref()?
-            .take(external_provider, external_id)?;
+        let prefetched = self.services.prefetched.as_ref()?;
+        if !prefetched.has(external_provider, external_id) {
+            return None;
+        }
         let staging = Path::new(&self.download_path())
             .join(crate::services::soulseek::soulseek_download_service::INCOMING_FOLDER_NAME)
             .join("prefetch")
             .join(uuid::Uuid::new_v4().simple().to_string());
-        let name = taken
-            .path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| format!("{external_provider}_{external_id}"));
-        let staged = staging.join(name).to_string_lossy().into_owned();
-        let moved = std::fs::create_dir_all(&staging)
-            .and_then(|()| placement::move_file(&taken.path.to_string_lossy(), &staged));
-        if let Err(e) = moved {
+        if let Err(e) = std::fs::create_dir_all(&staging) {
             warn!(
-                "Could not take the song downloaded ahead from {}: {e}; downloading it again",
-                taken.path.display()
+                "Could not make {}: {e}; downloading the song again",
+                staging.display()
             );
-            let _ = std::fs::remove_dir(&staging);
             return None;
         }
+        let name = crate::services::prefetch::file_name(external_provider, external_id, "flac");
+        let Some(taken) = prefetched.take(external_provider, external_id, &staging.join(name)) else {
+            let _ = std::fs::remove_dir(&staging);
+            return None;
+        };
         song.transcoded_from = taken.sidecar.transcoded_from.clone();
         song.source_peer = taken.sidecar.source_peer.clone().or(song.source_peer.take());
         song.source_file = taken.sidecar.source_file.clone().or(song.source_file.take());
@@ -1382,7 +1381,10 @@ impl BaseDownloadService {
                 None,
             )
         });
-        Some((staged, taken.sidecar.fetched_from.clone()))
+        Some((
+            taken.path.to_string_lossy().into_owned(),
+            taken.sidecar.fetched_from.clone(),
+        ))
     }
 
     /// The end of a download ahead: its facts beside the file in the folder, the folder's index
@@ -2060,6 +2062,35 @@ impl BaseDownloadService {
                 ))
             })
         })
+    }
+}
+
+/// A row hushed for a download ahead, for as long as it runs (to its end, or until its caller
+/// gives up on it).
+struct Hushed {
+    tracker: Option<Arc<AcquisitionTracker>>,
+    provider: String,
+    external_id: String,
+}
+
+impl Hushed {
+    fn new(tracker: Option<&Arc<AcquisitionTracker>>, provider: &str, external_id: &str) -> Self {
+        if let Some(tracker) = tracker {
+            tracker.hush(provider, external_id);
+        }
+        Hushed {
+            tracker: tracker.cloned(),
+            provider: provider.to_string(),
+            external_id: external_id.to_string(),
+        }
+    }
+}
+
+impl Drop for Hushed {
+    fn drop(&mut self) {
+        if let Some(tracker) = &self.tracker {
+            tracker.unhush(&self.provider, &self.external_id);
+        }
     }
 }
 

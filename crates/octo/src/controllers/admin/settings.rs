@@ -1033,13 +1033,16 @@ pub fn validate_discovery_stations(stations: &[Node]) -> Result<Option<String>, 
     Ok(None)
 }
 
-/// `POST /api/admin/settings`: writes a partial settings patch to the JSON file. The body
-/// shape matches the GET; any subset of keys may be supplied. The live settings are read again
-/// before the answer, so the very next request sees the save, but services that captured a
-/// value at startup keep theirs until a restart.
-/// The Prefetch section a save sends: a scope Octo knows, and whole numbers in range for the
-/// limits (each is also clamped at read time). The message to answer with, or None.
-pub fn validate_prefetch(patch: &JsonObject) -> Result<Option<String>, AppError> {
+/// The Prefetch section a save sends: a scope Octo knows, whole numbers in range for the limits
+/// (each is also clamped at read time), and a folder of its own: never the config folder, the
+/// music folder or any folder inside them, where clearing it would delete what is theirs.
+/// `taken` are those folders; `default` is the folder a blank one means, which is always
+/// allowed. The message to answer with, or None.
+pub fn validate_prefetch(
+    patch: &JsonObject,
+    taken: &[std::path::PathBuf],
+    default: Option<&std::path::Path>,
+) -> Result<Option<String>, AppError> {
     if let Some(key) = key_of(patch, "Scope")
         && let Some(scope) = get_string(patch.get(&key))?
         && !PrefetchScope::ALL
@@ -1063,9 +1066,72 @@ pub fn validate_prefetch(patch: &JsonObject) -> Result<Option<String>, AppError>
             return Ok(Some(format!("{name} must be from {low} to {high}.")));
         }
     }
+    if let Some(key) = key_of(patch, "Folder")
+        && let Some(folder) = get_string(patch.get(&key))?
+        && !is_blank(folder)
+    {
+        let folder = std::path::Path::new(folder.trim());
+        if !folder.is_absolute() {
+            return Ok(Some(
+                "Folder must be a whole path, such as /data/prefetch.".to_string(),
+            ));
+        }
+        let folder = lexical(folder);
+        if default.is_some_and(|default| lexical(default) == folder) {
+            return Ok(None);
+        }
+        if let Some(root) = taken
+            .iter()
+            .map(|root| lexical(root))
+            .find(|root| folder.starts_with(root))
+        {
+            return Ok(Some(format!(
+                "Folder must be a folder of its own, outside {}: songs downloaded ahead are deleted from it.",
+                root.display()
+            )));
+        }
+    }
     Ok(None)
 }
 
+/// A path with its `.` and `..` parts worked out, without reading the disk.
+fn lexical(path: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// The folders a Prefetch folder may not be or sit in: the config folder, and the music folder
+/// Octo downloads into (as configured, and as Navidrome's detected one).
+fn taken_folders(state: &AppState) -> Vec<std::path::PathBuf> {
+    let mut taken = Vec::new();
+    if let Some(config) = state.settings_writer.file_path().parent() {
+        taken.push(config.to_path_buf());
+    }
+    let configured = state.settings.raw("Library:DownloadPath").unwrap_or_default();
+    for music in [
+        configured.clone(),
+        state.navidrome_identity.effective_download_path(&configured),
+    ] {
+        if !is_blank(&music) {
+            taken.push(std::path::PathBuf::from(music));
+        }
+    }
+    taken
+}
+
+/// `POST /api/admin/settings`: writes a partial settings patch to the JSON file. The body
+/// shape matches the GET; any subset of keys may be supplied. The live settings are read again
+/// before the answer, so the very next request sees the save, but services that captured a
+/// value at startup keep theirs until a restart.
 pub async fn save_settings(
     State(state): State<AppState>,
     caller: Option<Extension<AdminCaller>>,
@@ -1118,7 +1184,16 @@ pub async fn save_settings(
         return Ok(error_json(StatusCode::BAD_REQUEST, &message));
     }
     if let Some(prefetch_patch) = child(&patch, "Prefetch")
-        && let Some(message) = validate_prefetch(prefetch_patch)?
+        && let Some(message) = validate_prefetch(
+            prefetch_patch,
+            &taken_folders(&state),
+            state
+                .settings_writer
+                .file_path()
+                .parent()
+                .map(|config| config.join("prefetch"))
+                .as_deref(),
+        )?
     {
         return Ok(error_json(StatusCode::BAD_REQUEST, &message));
     }
@@ -1268,18 +1343,65 @@ mod tests {
         }
     }
 
+    fn validate_prefetch_alone(patch: &JsonObject) -> Result<Option<String>, AppError> {
+        validate_prefetch(patch, &[], None)
+    }
+
+    #[test]
+    fn validate_prefetch_refuses_a_folder_in_the_config_or_music_folder() {
+        let taken = [
+            std::path::PathBuf::from("/app/config"),
+            std::path::PathBuf::from("/music"),
+        ];
+        // What a blank folder means, beside settings.json: Octo's own, marked when made.
+        let default = Some(std::path::Path::new("/app/config/prefetch"));
+        for bad in [
+            r#"{"Folder":"/app/config"}"#,
+            r#"{"Folder":"/app/config/"}"#,
+            r#"{"Folder":"/app/config/other"}"#,
+            r#"{"Folder":"/music/.ahead"}"#,
+            r#"{"Folder":"/data/../music"}"#,
+        ] {
+            let message = validate_prefetch(&obj(bad), &taken, default).unwrap();
+            assert!(
+                message
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("Folder must be a folder of its own")),
+                "{bad}: {message:?}"
+            );
+        }
+        assert_eq!(
+            validate_prefetch(&obj(r#"{"Folder":"prefetch"}"#), &taken, default)
+                .unwrap()
+                .as_deref(),
+            Some("Folder must be a whole path, such as /data/prefetch.")
+        );
+        for good in [
+            r#"{"Folder":""}"#,
+            r#"{"Folder":"/data/prefetch"}"#,
+            r#"{"Folder":"/musicx"}"#,
+            r#"{"Folder":"/app/config/prefetch"}"#,
+        ] {
+            assert_eq!(
+                validate_prefetch(&obj(good), &taken, default).unwrap(),
+                None,
+                "{good}"
+            );
+        }
+    }
+
     #[test]
     fn validate_prefetch_takes_known_scopes_and_limits_in_range() {
         assert_eq!(
-            validate_prefetch(&obj(r#"{"Scope":"All","Count":10,"AtOnce":1,"CacheGb":2000}"#)).unwrap(),
+            validate_prefetch_alone(&obj(r#"{"Scope":"All","Count":10,"AtOnce":1,"CacheGb":2000}"#)).unwrap(),
             None
         );
         assert_eq!(
-            validate_prefetch(&obj(r#"{"Scope":"radioonly","KeepReadyCount":20}"#)).unwrap(),
+            validate_prefetch_alone(&obj(r#"{"Scope":"radioonly","KeepReadyCount":20}"#)).unwrap(),
             None
         );
         assert_eq!(
-            validate_prefetch(&obj(r#"{"Scope":"Everything"}"#))
+            validate_prefetch_alone(&obj(r#"{"Scope":"Everything"}"#))
                 .unwrap()
                 .as_deref(),
             Some("Scope must be RadioOnly or All, not \"Everything\".")
@@ -1291,7 +1413,7 @@ mod tests {
             (r#"{"MinFreeGb":0}"#, "MinFreeGb must be from 1 to 500."),
         ] {
             assert_eq!(
-                validate_prefetch(&obj(bad)).unwrap().as_deref(),
+                validate_prefetch_alone(&obj(bad)).unwrap().as_deref(),
                 Some(message),
                 "{bad}"
             );

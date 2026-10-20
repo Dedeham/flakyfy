@@ -2,6 +2,10 @@
 //! each beside a `<file>.json` with what its download learned. The folder is the truth: the
 //! index is read from it on first use (and again when the folder setting changes), and when a
 //! song was last played is the time on its `.json`, so nothing else needs to be saved.
+//!
+//! Octo deletes only in a folder it made: one that holds its `.octo-prefetch` marker, written when
+//! the folder was created or found empty. A folder with other files in it and no marker is never
+//! downloaded into, and nothing in it is ever deleted.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,7 +14,10 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, Duration, Utc};
 use octo_core::common::Clock;
-use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
+use octo_core::fingerprint::recording_identity::RecordingKind;
+use octo_core::fingerprint::{
+    AcoustIdRecording, InconclusiveReason, VerificationResult, VerificationVerdict,
+};
 use octo_core::models::domain::Song;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -24,6 +31,9 @@ const IN_USE_FOR: Duration = Duration::minutes(15);
 
 /// The extension of a song's facts beside it.
 const SIDECAR_EXTENSION: &str = "json";
+
+/// The file that marks a folder as Octo's own, where it may delete.
+pub const FOLDER_MARKER: &str = ".octo-prefetch";
 
 /// What a download that fetched a song ahead learned, which the heart that keeps it later needs:
 /// the checks it passed, where it came from and what it was made from.
@@ -44,6 +54,8 @@ pub struct AheadSidecar {
     pub source_peer: Option<String>,
     pub source_file: Option<String>,
     pub verification: Option<VerificationMirror>,
+    /// A heart kept a copy while the song was playing: this file stays only for that play.
+    pub promoted: bool,
 }
 
 impl AheadSidecar {
@@ -72,12 +84,15 @@ impl AheadSidecar {
             source_peer: song.source_peer.clone(),
             source_file: song.source_file.clone(),
             verification: song.verification.as_deref().map(VerificationMirror::of),
+            promoted: false,
         }
     }
 }
 
 /// The parts of AcoustID's verdict that outlive the download: what decides whether a person is
-/// asked to review the song, what they are told, and what their answer is sent back with.
+/// asked to review the song, what they are told, what their answer is sent back with, and the
+/// recording it matched, which names and tags the song (NameFromMatch) and says how long the
+/// recording runs (LengthOff).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct VerificationMirror {
@@ -92,11 +107,16 @@ pub struct VerificationMirror {
     pub recording_id: Option<String>,
     pub deny_reason: String,
     pub tags_authoritative: bool,
+    pub r#match: Option<AcoustIdRecording>,
     pub fingerprint: Option<String>,
     pub duration_seconds: i32,
     pub acoust_id: Option<String>,
     pub candidate_recording_id: Option<String>,
     pub evidence: Option<String>,
+    pub kind: Option<RecordingKind>,
+    pub by_length: bool,
+    pub kind_certain: bool,
+    pub sole: bool,
 }
 
 impl VerificationMirror {
@@ -113,11 +133,16 @@ impl VerificationMirror {
             recording_id: result.recording_id.clone(),
             deny_reason: result.deny_reason.clone(),
             tags_authoritative: result.tags_authoritative,
+            r#match: result.r#match.clone(),
             fingerprint: result.fingerprint.clone(),
             duration_seconds: result.duration_seconds,
             acoust_id: result.acoust_id.clone(),
             candidate_recording_id: result.candidate_recording_id.clone(),
             evidence: result.evidence.clone(),
+            kind: result.kind,
+            by_length: result.by_length,
+            kind_certain: result.kind_certain,
+            sole: result.sole,
         }
     }
 
@@ -147,11 +172,16 @@ impl VerificationMirror {
             recording_id: self.recording_id.clone(),
             deny_reason: self.deny_reason.clone(),
             tags_authoritative: self.tags_authoritative,
+            r#match: self.r#match.clone(),
             fingerprint: self.fingerprint.clone(),
             duration_seconds: self.duration_seconds,
             acoust_id: self.acoust_id.clone(),
             candidate_recording_id: self.candidate_recording_id.clone(),
             evidence: self.evidence.clone(),
+            kind: self.kind,
+            by_length: self.by_length,
+            kind_certain: self.kind_certain,
+            sole: self.sole,
             ..Default::default()
         }
     }
@@ -160,6 +190,7 @@ impl VerificationMirror {
 /// A song taken out of the folder by the heart that keeps it.
 #[derive(Debug)]
 pub struct Taken {
+    /// Where the heart's copy is now.
     pub path: PathBuf,
     pub sidecar: AheadSidecar,
     /// The whole verdict, while Octo has not restarted since the song was fetched.
@@ -179,11 +210,16 @@ impl Taken {
     }
 }
 
-/// What the download base asks of the songs fetched ahead.
+/// What the download base and the heart chain ask of the songs fetched ahead.
 pub trait PrefetchedFiles: Send + Sync {
-    /// Takes the song's file out of the folder for good, with its facts, or None when there is
-    /// none. Its `.json` is gone once this returns, and nothing else can take or delete it.
-    fn take(&self, provider: &str, external_id: &str) -> Option<Taken>;
+    /// Whether the song is ready to be taken.
+    fn has(&self, provider: &str, external_id: &str) -> bool;
+
+    /// Puts the song's file at `into` for a heart to keep, with its facts, or None when there is
+    /// none. A song a play got in the last 15 minutes is copied, and its file stays for that play
+    /// until the sweep removes it; any other is moved out of the folder for good. Either way it
+    /// is never taken again.
+    fn take(&self, provider: &str, external_id: &str, into: &Path) -> Option<Taken>;
 
     /// A download put the song at `path`, its facts beside it.
     fn kept(
@@ -227,6 +263,26 @@ pub fn write_sidecar(file: &Path, sidecar: &AheadSidecar) -> std::io::Result<()>
     std::fs::write(sidecar_path(file), json)
 }
 
+/// Whether the folder is Octo's own: it holds the marker.
+pub fn owns_folder(folder: &Path) -> bool {
+    folder.join(FOLDER_MARKER).is_file()
+}
+
+/// Makes the folder Octo's own when it can: creates it with its marker when it is missing, and
+/// marks it when it is there and empty. True when it is Octo's; false for a folder with other
+/// files in it and no marker, which Octo never downloads into or deletes from.
+pub fn prepare_folder(folder: &Path) -> std::io::Result<bool> {
+    if owns_folder(folder) {
+        return Ok(true);
+    }
+    if folder.is_dir() && std::fs::read_dir(folder)?.next().is_some() {
+        return Ok(false);
+    }
+    std::fs::create_dir_all(folder)?;
+    std::fs::write(folder.join(FOLDER_MARKER), b"")?;
+    Ok(true)
+}
+
 fn key(provider: &str, external_id: &str) -> String {
     format!("{provider}:{external_id}")
 }
@@ -239,6 +295,10 @@ struct Entry {
     ready_at: DateTime<Utc>,
     artist: String,
     title: String,
+    /// A heart kept a copy: offered to no new play, and deleted once nobody played it lately.
+    promoted: bool,
+    /// When a play last got this file, since Octo started.
+    served: Option<DateTime<Utc>>,
     verification: Option<Box<VerificationResult>>,
 }
 
@@ -297,11 +357,15 @@ impl PrefetchStore {
         state
     }
 
-    /// The ready file of a song, or None when there is none.
+    /// The ready file of a song, or None when there is none (or a heart has taken it).
     pub fn ready(&self, provider: &str, external_id: &str) -> Option<PathBuf> {
         let mut state = self.current();
         let key = key(provider, external_id);
-        let path = state.entries.get(&key)?.path.clone();
+        let entry = state.entries.get(&key)?;
+        if entry.promoted {
+            return None;
+        }
+        let path = entry.path.clone();
         if path.is_file() {
             return Some(path);
         }
@@ -324,6 +388,7 @@ impl PrefetchStore {
                 return;
             };
             entry.last_used = now;
+            entry.served = Some(now);
             entry.path.clone()
         };
         set_modified(&sidecar_path(&path), now);
@@ -339,16 +404,20 @@ impl PrefetchStore {
         }
     }
 
-    /// How many songs are ready, and their size in bytes.
+    /// How many songs are ready, and their size in bytes (kept copies included, which still take
+    /// their space).
     pub fn sizes(&self) -> (usize, u64) {
         let state = self.current();
-        (state.entries.len(), state.entries.values().map(|e| e.size).sum())
+        (
+            state.entries.values().filter(|e| !e.promoted).count(),
+            state.entries.values().map(|e| e.size).sum(),
+        )
     }
 
     /// Every song ready, newest first.
     pub fn songs(&self) -> Vec<ReadySong> {
         let state = self.current();
-        let mut songs: Vec<(&String, &Entry)> = state.entries.iter().collect();
+        let mut songs: Vec<(&String, &Entry)> = state.entries.iter().filter(|(_, e)| !e.promoted).collect();
         songs.sort_by(|a, b| b.1.ready_at.cmp(&a.1.ready_at).then_with(|| a.0.cmp(b.0)));
         songs
             .into_iter()
@@ -362,10 +431,13 @@ impl PrefetchStore {
     }
 
     /// Deletes every song in the folder but those played in the last 15 minutes. Answers how
-    /// many went.
+    /// many went. Nothing goes from a folder that is not Octo's own.
     pub fn clear(&self) -> usize {
         let now = self.clock.now();
         let mut state = self.current();
+        if !state.read_from.as_deref().is_some_and(owns_folder) {
+            return 0;
+        }
         let gone: Vec<String> = state
             .entries
             .iter()
@@ -380,25 +452,29 @@ impl PrefetchStore {
         gone.len()
     }
 
-    /// Deletes the songs nobody played for `keep_days`, then the least lately played until the
-    /// folder holds at most `cap_bytes`. A song played in the last 15 minutes always stays.
-    /// Answers how many went.
+    /// Deletes the songs nobody played for `keep_days` (and a copy a heart kept, once nobody
+    /// played it lately), then the least lately played until the folder holds at most
+    /// `cap_bytes`. A song played in the last 15 minutes always stays, and nothing goes from a
+    /// folder that is not Octo's own. Answers how many went.
     pub fn sweep(&self, keep_days: i64, cap_bytes: u64) -> usize {
         let now = self.clock.now();
         let mut state = self.current();
-        let mut by_use: Vec<(String, DateTime<Utc>, u64)> = state
+        if !state.read_from.as_deref().is_some_and(owns_folder) {
+            return 0;
+        }
+        let mut by_use: Vec<(String, DateTime<Utc>, u64, bool)> = state
             .entries
             .iter()
-            .map(|(key, entry)| (key.clone(), entry.last_used, entry.size))
+            .map(|(key, entry)| (key.clone(), entry.last_used, entry.size, entry.promoted))
             .collect();
         by_use.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-        let mut total: u64 = by_use.iter().map(|(_, _, size)| size).sum();
+        let mut total: u64 = by_use.iter().map(|(_, _, size, _)| size).sum();
         let mut gone = 0;
-        for (key, last_used, size) in by_use {
+        for (key, last_used, size, promoted) in by_use {
             if now - last_used < IN_USE_FOR {
                 continue;
             }
-            let stale = now - last_used >= Duration::days(keep_days);
+            let stale = promoted || now - last_used >= Duration::days(keep_days);
             if !stale && total <= cap_bytes {
                 continue;
             }
@@ -421,20 +497,48 @@ impl PrefetchStore {
 }
 
 impl PrefetchedFiles for PrefetchStore {
-    fn take(&self, provider: &str, external_id: &str) -> Option<Taken> {
+    fn has(&self, provider: &str, external_id: &str) -> bool {
+        self.is_ready(provider, external_id)
+    }
+
+    fn take(&self, provider: &str, external_id: &str, into: &Path) -> Option<Taken> {
+        let now = self.clock.now();
         let mut state = self.current();
-        let entry = state.entries.remove(&key(provider, external_id))?;
+        let key = key(provider, external_id);
+        let entry = state.entries.get(&key).filter(|e| !e.promoted)?.clone();
         if !entry.path.is_file() {
+            state.entries.remove(&key);
             return None;
         }
         let side = sidecar_path(&entry.path);
-        let sidecar = std::fs::read(&side)
+        let mut sidecar = std::fs::read(&side)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<AheadSidecar>(&bytes).ok())
             .unwrap_or_default();
-        let _ = std::fs::remove_file(&side);
+        if entry.served.is_some_and(|served| now - served < IN_USE_FOR) {
+            // Playing now: the heart gets a copy of its own, since its tags are written in place,
+            // and this file stays as it is for the play.
+            if let Err(e) = std::fs::copy(&entry.path, into) {
+                warn!("Could not copy {} for a heart: {e}", entry.path.display());
+                return None;
+            }
+            sidecar.promoted = true;
+            let _ = write_sidecar(&entry.path, &sidecar);
+            set_modified(&side, entry.last_used);
+            if let Some(kept) = state.entries.get_mut(&key) {
+                kept.promoted = true;
+            }
+            sidecar.promoted = false;
+        } else {
+            if let Err(e) = move_file(&entry.path, into) {
+                warn!("Could not move {} for a heart: {e}", entry.path.display());
+                return None;
+            }
+            let _ = std::fs::remove_file(&side);
+            state.entries.remove(&key);
+        }
         Some(Taken {
-            path: entry.path,
+            path: into.to_path_buf(),
             sidecar,
             verification: entry.verification,
         })
@@ -465,14 +569,34 @@ impl PrefetchedFiles for PrefetchStore {
     }
 }
 
-/// The index of a folder: every song with its facts beside it. A file without facts is one whose
-/// download never finished, and facts without a file belong to a song already gone; both are
-/// deleted.
+/// A rename, or a copy and a delete across file systems. Never over an existing file.
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if to.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{} already exists", to.display()),
+        ));
+    }
+    match std::fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            std::fs::copy(from, to)?;
+            std::fs::remove_file(from)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// The index of a folder: every song with its facts beside it. In a folder that is Octo's own, a
+/// song file without facts is one whose download never finished, and facts without a file belong
+/// to a song already gone; both are deleted. Only files named the way songs are kept here count,
+/// and nothing is deleted from a folder that is not Octo's own.
 fn read_folder(folder: &Path) -> HashMap<String, Entry> {
     let mut entries = HashMap::new();
     let Ok(listing) = std::fs::read_dir(folder) else {
         return entries;
     };
+    let ours = owns_folder(folder);
     let files: Vec<PathBuf> = listing
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -484,7 +608,7 @@ fn read_folder(folder: &Path) -> HashMap<String, Entry> {
             .is_some_and(|e| e.eq_ignore_ascii_case(SIDECAR_EXTENSION));
         if is_sidecar {
             let audio = path.with_extension("");
-            if !audio.is_file() {
+            if ours && is_kept_name(&audio) && !audio.is_file() {
                 debug!(
                     "Removing facts of a song no longer downloaded ahead: {}",
                     path.display()
@@ -493,12 +617,14 @@ fn read_folder(folder: &Path) -> HashMap<String, Entry> {
             }
             continue;
         }
+        if !is_kept_name(path) {
+            continue;
+        }
         match read_entry(path) {
             Some((key, entry)) => {
                 entries.insert(key, entry);
             }
-            // Only a file named the way songs are kept here is Octo's to remove.
-            None if is_kept_name(path) => {
+            None if ours => {
                 info!(
                     "Removing a song whose download ahead never finished: {}",
                     path.display()
@@ -546,6 +672,8 @@ fn read_entry(path: &Path) -> Option<(String, Entry)> {
             ready_at,
             artist: sidecar.artist,
             title: sidecar.title,
+            promoted: sidecar.promoted,
+            served: None,
             verification: None,
         },
     ))
@@ -599,7 +727,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("a temp dir");
         let now = Arc::new(Mutex::new(Utc::now()));
         let folder = dir.path().join("prefetch");
-        std::fs::create_dir_all(&folder).expect("the folder");
+        assert!(prepare_folder(&folder).expect("the folder"));
         let clock_now = Arc::clone(&now);
         let store = PrefetchStore::new(
             Arc::new(move || folder.clone()),
@@ -623,8 +751,15 @@ mod tests {
                 transcoded_from: None,
                 verification: Some(Box::new(VerificationResult {
                     verdict: VerificationVerdict::Inconclusive,
-                    reason: InconclusiveReason::NoEntry,
+                    reason: InconclusiveReason::LengthOff,
                     duration_seconds: 201,
+                    r#match: Some(AcoustIdRecording::new(
+                        "rec-1",
+                        "Song",
+                        ["Artist"],
+                        Some("Album"),
+                        Some(1999),
+                    )),
                     ..Default::default()
                 })),
                 ..Default::default()
@@ -637,6 +772,12 @@ mod tests {
 
         fn later(&self, by: Duration) {
             *self.now.lock() += by;
+        }
+
+        fn staging(&self, name: &str) -> PathBuf {
+            let dir = self.dir.path().join("staging");
+            std::fs::create_dir_all(&dir).expect("staging");
+            dir.join(name)
         }
     }
 
@@ -664,28 +805,103 @@ mod tests {
         let w = world();
         let theirs = w.folder().join("Notes.txt");
         let song = w.folder().join("01 Song.flac");
+        let settings = w.folder().join("settings.json");
         std::fs::write(&theirs, b"mine").expect("a file");
         std::fs::write(&song, b"mine").expect("a file");
+        std::fs::write(&settings, b"{}").expect("a file");
         let folder = w.folder();
         let fresh = PrefetchStore::new(Arc::new(move || folder.clone()), Clock::system());
         assert_eq!(fresh.sizes(), (0, 0));
-        assert!(theirs.exists() && song.exists());
+        assert!(theirs.exists() && song.exists() && settings.exists());
     }
 
     #[test]
-    fn a_taken_song_leaves_the_index_with_its_facts() {
+    fn a_non_empty_folder_without_the_marker_keeps_every_file() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let folder = dir.path().to_path_buf();
+        // As the config folder looks: settings, state files, and files named like ours.
+        let files = [
+            "settings.json",
+            "external-ids.json",
+            "downloads-history.json",
+            "soulseek_abc.flac",
+            "soulseek_gone.flac.json",
+        ];
+        for name in files {
+            std::fs::write(folder.join(name), b"{}").expect("a file");
+        }
+        assert!(!prepare_folder(&folder).expect("read"), "not Octo's to fill");
+        let within = folder.clone();
+        let store = PrefetchStore::new(Arc::new(move || within.clone()), Clock::system());
+        assert_eq!(store.sizes(), (0, 0));
+        assert_eq!(store.sweep(1, 0), 0);
+        assert_eq!(store.clear(), 0);
+        for name in files {
+            assert!(folder.join(name).exists(), "{name}");
+        }
+        assert!(!folder.join(FOLDER_MARKER).exists());
+    }
+
+    #[test]
+    fn a_missing_or_empty_folder_becomes_octos_own() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let missing = dir.path().join("new/prefetch");
+        assert!(prepare_folder(&missing).expect("made"));
+        assert!(owns_folder(&missing));
+        let empty = dir.path().join("empty");
+        std::fs::create_dir_all(&empty).expect("a folder");
+        assert!(prepare_folder(&empty).expect("marked"));
+        assert!(owns_folder(&empty));
+    }
+
+    #[test]
+    fn a_taken_song_moves_out_with_its_facts() {
         let w = world();
         let path = w.put("a", 10);
-        let taken = w.store.take("soulseek", "a").expect("taken");
-        assert_eq!(taken.path, path);
+        w.later(Duration::minutes(20));
+        let into = w.staging("a.flac");
+        let taken = w.store.take("soulseek", "a", &into).expect("taken");
+        assert_eq!(taken.path, into);
+        assert!(into.is_file() && !path.exists());
         assert_eq!(taken.sidecar.fetched_from.as_deref(), Some("SpotiFLAC"));
         assert_eq!(taken.sidecar.format, "FLAC");
         let verdict = taken.verification().expect("the verdict");
         assert!(verdict.needs_review());
         assert_eq!(verdict.duration_seconds, 201);
+        // The recording it matched survives the restart that drops the whole verdict.
+        assert_eq!(verdict.r#match.as_ref().map(|m| m.title.as_str()), Some("Song"));
         assert!(!sidecar_path(&path).exists());
         assert!(w.store.ready("soulseek", "a").is_none());
-        assert!(w.store.take("soulseek", "a").is_none(), "taken once");
+        assert!(
+            w.store.take("soulseek", "a", &w.staging("again.flac")).is_none(),
+            "taken once"
+        );
+    }
+
+    #[test]
+    fn a_song_playing_now_is_copied_for_the_heart_and_stays_for_the_play() {
+        let w = world();
+        let path = w.put("a", 10);
+        w.store.touch("soulseek", "a");
+        let into = w.staging("a.flac");
+        let taken = w.store.take("soulseek", "a", &into).expect("taken");
+        assert!(into.is_file(), "the heart's own copy");
+        assert!(path.is_file(), "the playing file stays");
+        assert!(!taken.sidecar.promoted);
+        assert!(w.store.ready("soulseek", "a").is_none(), "offered to no new play");
+        assert!(
+            w.store.take("soulseek", "a", &w.staging("b.flac")).is_none(),
+            "taken once"
+        );
+        // Kept as kept after a restart, and gone once nobody played it lately.
+        let folder = w.folder();
+        let now = Arc::clone(&w.now);
+        let fresh = PrefetchStore::new(Arc::new(move || folder.clone()), Clock::new(move || *now.lock()));
+        assert!(fresh.ready("soulseek", "a").is_none());
+        assert_eq!(w.store.sweep(30, u64::MAX), 0, "still in use");
+        w.later(Duration::minutes(16));
+        assert_eq!(w.store.sweep(30, u64::MAX), 1);
+        assert!(!path.exists());
     }
 
     #[test]
@@ -762,7 +978,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("a temp dir");
         let which = Arc::new(Mutex::new(dir.path().join("one")));
         for name in ["one", "two"] {
-            std::fs::create_dir_all(dir.path().join(name)).expect("a folder");
+            assert!(prepare_folder(&dir.path().join(name)).expect("a folder"));
         }
         let path = dir.path().join("two").join(file_name("soulseek", "x", "flac"));
         std::fs::write(&path, [0; 4]).expect("the file");

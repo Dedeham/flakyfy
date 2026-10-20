@@ -21,6 +21,7 @@ use crate::services::i_download_service::IDownloadService;
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::library::{HeartOwnership, OwnedCopy};
 use crate::services::lidarr::ILidarrHeartAcquisitionService;
+use crate::services::prefetch::PrefetchedFiles;
 use crate::services::soulseek::soulseek_link::SoulseekLinkState;
 use crate::services::soulseek::{ExternalIdRegistry, ISoulseekLink};
 
@@ -38,6 +39,8 @@ pub struct HeartCoordinatorExtras {
     /// is already there, as before.
     pub owned: Option<Arc<HeartOwnership>>,
     pub stars: Option<Arc<StarOnArrival>>,
+    /// The songs fetched ahead: a heart on one is kept at once, without the source chain.
+    pub ahead: Option<Arc<dyn PrefetchedFiles>>,
 }
 
 /// How one song's heart chain ended.
@@ -191,6 +194,32 @@ impl HeartAcquisitionCoordinator {
         client_id: Option<&str>,
         owner: Option<&str>,
     ) {
+        self.queue_play_as(provider, external_id, requested_by, client_id, owner, false);
+    }
+
+    /// A song coming up next, queued with DownloadOnPlay on as the play it will be, only
+    /// earlier. Unlike a play under way, it is queued with Wait for lossless on play on too,
+    /// since that waits only for the song playing.
+    pub fn queue_play_ahead(
+        self: &Arc<Self>,
+        provider: &str,
+        external_id: &str,
+        requested_by: Option<&str>,
+        client_id: Option<&str>,
+        owner: Option<&str>,
+    ) {
+        self.queue_play_as(provider, external_id, requested_by, client_id, owner, true);
+    }
+
+    fn queue_play_as(
+        self: &Arc<Self>,
+        provider: &str,
+        external_id: &str,
+        requested_by: Option<&str>,
+        client_id: Option<&str>,
+        owner: Option<&str>,
+        ahead: bool,
+    ) {
         let settings = self.settings.current().subsonic.clone();
         // A family member's play keeps a copy only when they may add songs at once, and then in
         // their own library; `owner` is who signed in. Everyone else plays as always.
@@ -203,7 +232,7 @@ impl HeartAcquisitionCoordinator {
         };
         // WaitForLosslessOnPlay acquires the track itself, from its own source.
         if settings.download_on_play
-            && !settings.wait_for_lossless_on_play
+            && (ahead || !settings.wait_for_lossless_on_play)
             && let Some(source) = self.play_source()
         {
             let holds = self
@@ -706,6 +735,39 @@ impl HeartAcquisitionCoordinator {
             .await
         {
             return Ok(TrackOutcome::AlreadyThere);
+        }
+        // A song fetched ahead is kept at once: no outage hold, no Lidarr hand-off. The download
+        // takes the file from the folder instead of a transfer.
+        if self
+            .extras
+            .ahead
+            .as_ref()
+            .is_some_and(|ahead| ahead.has(provider, external_id))
+        {
+            info!("{provider}:{external_id} was downloaded ahead; keeping that copy");
+            let completion = self.direct_queue.enqueue_for(
+                target,
+                false,
+                provider,
+                external_id,
+                true,
+                false,
+                true,
+                Some(DownloadSource::Soulseek),
+                true,
+                requested_by,
+                false,
+                None,
+            );
+            return Ok(match completion.wait().await {
+                Ok(path) => TrackOutcome::Landed(path),
+                Err(failure) => {
+                    if let Some(tracker) = self.tracker() {
+                        tracker.fail(provider, external_id, Some(&failure.to_string()));
+                    }
+                    TrackOutcome::Failed(failure.to_string())
+                }
+            });
         }
         let steps: Vec<HeartDownloadSource> = self
             .enabled_steps(false)

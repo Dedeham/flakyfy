@@ -43,6 +43,7 @@ use crate::services::family::AudioGate;
 use crate::services::i_download_service::{DirectStreamInfo, IDownloadService};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::listen_brainz::ListenBrainzService;
+use crate::services::listening::{ListeningLog, Play as ListeningPlay};
 use crate::services::local::ILocalLibraryService;
 use crate::services::soulseek::{ExternalIdRegistry, RadioQueueStore, SoulseekMetadataService};
 use crate::services::subsonic::SubsonicProxyService;
@@ -156,6 +157,8 @@ struct Shared_ {
     recommendations: Option<Arc<LastFmRadioRecommendationService>>,
     /// The audio gate's rules, once the app hands them over.
     family: OnceLock<Arc<AudioGate>>,
+    /// The listening log each finished song is written to, once the app hands it over.
+    listening: OnceLock<Arc<ListeningLog>>,
 }
 
 /// The songs a stream plays after its station's snapshot, asked of the station's picker a few
@@ -287,6 +290,7 @@ impl LastFmRadioStreamService {
                 last_fm_scrobbles: parts.last_fm_scrobbles,
                 recommendations: parts.recommendations,
                 family: OnceLock::new(),
+                listening: OnceLock::new(),
             }),
             proxy: parts.proxy,
             resolver,
@@ -328,6 +332,12 @@ impl LastFmRadioStreamService {
     /// stream follows its listener's family rules.
     pub fn use_audio_gate(&self, gate: Arc<AudioGate>) {
         let _ = self.shared.family.set(gate);
+    }
+
+    /// Hands over the listening log: each song a stream plays through is written to its
+    /// listener's.
+    pub fn use_listening(&self, log: Arc<ListeningLog>) {
+        let _ = self.shared.listening.set(log);
     }
 
     /// The radio streams that may play at once now: 8, or the family's share when Family is on
@@ -1221,6 +1231,45 @@ impl LastFmRadioStreamService {
         song: &Song,
     ) {
         let id = song.id.clone();
+        if let Some(log) = self.shared.listening.get().filter(|log| log.recording()) {
+            let seconds = i64::from(track.duration.or(song.duration).unwrap_or(0).max(0));
+            let play = ListeningPlay {
+                song_id: id.clone(),
+                cover_id: id.clone(),
+                artist: track.artist.clone(),
+                title: track.title.clone(),
+                album: track.album.clone().unwrap_or_default(),
+                seconds,
+                is_local: song.is_local,
+                app: "Internet radio".to_string(),
+                played_at: Utc::now() - chrono::TimeDelta::seconds(seconds),
+                source: "internet-radio".to_string(),
+                ..Default::default()
+            };
+            let genres: Vec<String> = track
+                .genre
+                .clone()
+                .or_else(|| song.genre.clone())
+                .into_iter()
+                .collect();
+            match &self.shared.last_fm {
+                Some(last_fm) => crate::services::listening::record_in_background(
+                    Arc::clone(log),
+                    Arc::clone(last_fm),
+                    crate::services::listening::Completed {
+                        user: session.username.clone(),
+                        play,
+                        genres,
+                        album: None,
+                    },
+                ),
+                None => {
+                    let mut play = play;
+                    play.genre = genres.into_iter().next();
+                    log.record(&session.username, play);
+                }
+            }
+        }
         self.shared.state.record_play(
             &session.username,
             LastFmRadioPlay {

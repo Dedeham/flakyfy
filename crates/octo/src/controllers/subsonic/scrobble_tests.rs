@@ -859,3 +859,83 @@ async fn api_key_requests_arriving_together_ask_once() {
     assert_eq!(fixture.token_info_calls(), 1);
     assert_eq!(fixture.last_fm.calls_to("track.updateNowPlaying").len(), 4);
 }
+
+// ---------------------------------------------------------------------------------------
+// Listening
+// ---------------------------------------------------------------------------------------
+
+/// The fixture with the radio and ListenBrainz off, so only the listening log learns.
+async fn listening_only() -> Fixture {
+    let fixture = Fixture::new(false, false).await;
+    let mut settings = (*fixture.state.settings.current()).clone();
+    settings.last_fm.enable_radio = false;
+    settings.last_fm.enable_personalized_stations = false;
+    settings.listen_brainz.token = String::new();
+    settings.listen_brainz.user_tokens.clear();
+    fixture.state.settings.set(settings);
+    fixture
+}
+
+async fn as_octo_app(fixture: &Fixture, query: &str) {
+    let reply = send(
+        &fixture.app,
+        axum::http::Method::GET,
+        &format!("/rest/scrobble?u=bob&t=token&s=salt&c=Octo&f=json&{query}"),
+        &[("User-Agent", "Octo/1.9.0 (Android)")],
+        "",
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+}
+
+#[tokio::test]
+async fn a_completed_play_is_written_down_with_its_app_whatever_the_radio_does() {
+    let fixture = listening_only().await;
+    let started = minutes_ago_ms(3);
+    as_octo_app(&fixture, "id=lib1&submission=false").await;
+    as_octo_app(&fixture, &format!("id=lib1&submission=true&time={started}")).await;
+    let log = Arc::clone(&fixture.state.listening);
+    until(move || !log.plays_of("bob").is_empty()).await;
+    let plays = fixture.state.listening.plays_of("bob");
+    assert_eq!(plays.len(), 1);
+    let play = &plays[0];
+    assert_eq!(play.song_id, "lib1");
+    assert_eq!(play.title, "Title lib1");
+    assert_eq!(play.genre.as_deref(), Some("Rock"));
+    assert_eq!(play.app, "Octo 1.9.0 (Android)");
+    assert_eq!(play.platform, "android");
+    assert_eq!(play.source, "scrobble");
+    assert!(play.is_local);
+    assert_eq!(play.played_at.timestamp_millis(), started);
+    // Timed from the now-playing a moment ago, never past the song's 180 seconds.
+    assert!(play.seconds <= 180, "{}", play.seconds);
+    // The radio learned nothing: it is off.
+    assert_eq!(fixture.plays("bob"), 0);
+}
+
+#[tokio::test]
+async fn a_heart_while_the_song_plays_marks_the_play() {
+    let fixture = listening_only().await;
+    as_octo_app(&fixture, "id=lib2&submission=false").await;
+    let star = fixture
+        .get("/rest/star?u=bob&t=token&s=salt&c=Octo&f=json&id=lib2")
+        .await;
+    assert!(star.contains(r#""status":"ok""#), "{star}");
+    as_octo_app(&fixture, "id=lib2&submission=true").await;
+    let log = Arc::clone(&fixture.state.listening);
+    until(move || !log.plays_of("bob").is_empty()).await;
+    assert!(fixture.state.listening.plays_of("bob")[0].hearted);
+}
+
+#[tokio::test]
+async fn with_recording_off_no_play_is_written() {
+    let fixture = listening_only().await;
+    let mut settings = (*fixture.state.settings.current()).clone();
+    settings.listening.enabled = false;
+    fixture.state.settings.set(settings);
+    as_octo_app(&fixture, "id=lib3&submission=false").await;
+    as_octo_app(&fixture, "id=lib3&submission=true").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(fixture.state.listening.plays_of("bob").is_empty());
+    assert!(fixture.state.listening.people().is_empty());
+}

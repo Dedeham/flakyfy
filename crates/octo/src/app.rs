@@ -534,6 +534,8 @@ pub struct AppInner {
     pub family_playlist_requests: crate::services::family::family_playlists::PlaylistAddHook,
     /// `family-pool.json`: the one copy of each member download and who links it.
     pub family_pool: Arc<FamilyPoolStore>,
+    /// `listening/`: each person's completed plays, for their Listening page.
+    pub listening: Arc<crate::services::listening::ListeningLog>,
     /// Octo's admin calls to Navidrome for the family (accounts, libraries, players, scans).
     pub navidrome_admin: Arc<NavidromeAdmin>,
     /// Which library every song is in, read from Navidrome while Family is on.
@@ -1286,6 +1288,7 @@ struct Stores {
     family_saved: Arc<SavedStore>,
     family_playlists: Arc<FamilyPlaylistStore>,
     family_pool: Arc<FamilyPoolStore>,
+    listening: Arc<crate::services::listening::ListeningLog>,
 }
 
 impl Stores {
@@ -1396,6 +1399,10 @@ impl Stores {
                 config_dir.join("family-playlists.json"),
             ))),
             family_pool: Arc::new(FamilyPoolStore::new(Some(config_dir.join("family-pool.json")))),
+            listening: Arc::new(crate::services::listening::ListeningLog::new(
+                config_dir.join("listening"),
+                settings.clone(),
+            )),
         }
     }
 
@@ -2070,6 +2077,7 @@ impl Radio {
             last_fm_scrobbles: Some(integrations.last_fm_scrobbles.clone()),
             recommendations: Some(recommendations.clone()),
         });
+        streams.use_listening(stores.listening.clone());
         let warmup = Arc::new(LastFmRadioWarmupService::new(streams.clone(), state.clone()));
         let refresh_worker = Arc::new(LastFmRadioRefreshWorker::new(
             refresh_queue.clone(),
@@ -2903,6 +2911,15 @@ impl AppState {
             let prefetch = prefetch.clone();
             workers.register("PrefetchService", move |stopping| prefetch.clone().run(stopping));
         }
+        // Listening: the radio history copied in once, then old plays pruned once a day.
+        let listening = stores.listening.clone();
+        let history = radio.state.clone();
+        let listening_last_fm = integrations.last_fm.clone();
+        workers.register("ListeningLog", move |stopping| {
+            listening
+                .clone()
+                .run(history.clone(), listening_last_fm.clone(), stopping)
+        });
         let charts = Charts::build(
             &settings,
             &stores,
@@ -3200,6 +3217,7 @@ impl AppState {
             family_playlists: stores.family_playlists,
             family_playlist_requests: Default::default(),
             family_pool: stores.family_pool,
+            listening: stores.listening,
             navidrome_admin: family_navidrome.0,
             library_index: family_navidrome.1,
             library_scope: family_navidrome.2,
@@ -3621,6 +3639,7 @@ impl AppState {
             family_playlists: stores.family_playlists,
             family_playlist_requests: Default::default(),
             family_pool: stores.family_pool,
+            listening: stores.listening,
             navidrome_admin: family_navidrome.0,
             library_index: family_navidrome.1,
             library_scope: family_navidrome.2,

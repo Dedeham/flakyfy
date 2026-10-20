@@ -18,6 +18,7 @@ pub mod last_fm;
 pub mod library;
 pub mod lidarr;
 pub mod listen_brainz;
+pub mod listening;
 pub mod local;
 pub mod lyrics;
 pub mod metadata;

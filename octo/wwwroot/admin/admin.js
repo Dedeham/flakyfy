@@ -169,6 +169,7 @@ function activateTab(name, { focus = false } = {}) {
   if (name === 'soulseek' && typeof loadSharing === 'function') loadSharing();
   if (name === 'family' && typeof loadFamily === 'function') loadFamily();
   if (name === 'downloads' && typeof loadPrefetch === 'function') loadPrefetch();
+  if (typeof showListening === 'function') showListening(name === 'listening');
   if (focus) {
     window.scrollTo({ top: 0 });
     const heading = document.querySelector(`section[data-pane="${name}"] h1`);
@@ -595,6 +596,7 @@ async function loadSettings() {
   const invalid = document.getElementById('config-invalid-banner');
   if (invalid) invalid.hidden = currentSettings?._meta?.ConfigFileValid !== false;
 
+  ensureKeepDaysChoice(currentSettings?.Listening?.KeepDays);
   // Populate every <input>/<select> whose name="Section.Key" matches.
   document.querySelectorAll('[name]').forEach(el => {
     if (!el.name?.includes('.')) return;
@@ -4337,6 +4339,9 @@ document.getElementById('fetched-refresh')?.addEventListener('click', loadFetche
 const AMBIENT_PICK_KEY = 'octo.ambient.pick';
 const AMBIENT_LAST_KEY = 'octo.ambient.last';
 let ambientSongs = [];
+// The Listening page, once mounted, and whether it is the page on screen.
+let listeningPage = null;
+let listeningShown = false;
 
 function ambientStoreGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function ambientStoreSet(key, value) {
@@ -4358,10 +4363,15 @@ function applyAmbient(colors, accent) {
 }
 
 // Start in the last colour before anything has loaded.
-try {
-  const last = JSON.parse(ambientStoreGet(AMBIENT_LAST_KEY) || 'null');
-  if (last) applyAmbient(last.colors, last.accent);
-} catch { /* nothing kept */ }
+function applyLastAmbient() {
+  try {
+    const last = JSON.parse(ambientStoreGet(AMBIENT_LAST_KEY) || 'null');
+    if (last) applyAmbient(last.colors, last.accent);
+    else applyAmbient(null, null);
+  } catch { /* nothing kept */ }
+}
+applyLastAmbient();
+let ambientLoaded = false;
 
 function chosenAmbientSong() {
   const picked = ambientStoreGet(AMBIENT_PICK_KEY);
@@ -4370,11 +4380,15 @@ function chosenAmbientSong() {
   return ambientSongs.find(s => ambientKey(s) === picked) || ambientSongs[0] || null;
 }
 
-function renderLatestFetched() {
+// lights: true puts the dashboard's lights back even while the Listening page is open (it
+// lights the page from its own top cover, and asks for these back when it has none).
+function renderLatestFetched(lights = false) {
   const card = document.getElementById('latest-fetched');
   if (!card) return;
   const song = chosenAmbientSong();
-  if (applyAmbient(song?.colors, song?.accent)) {
+  if (!lights && listeningShown) {
+    // The Listening page keeps its own lights while it is open.
+  } else if (applyAmbient(song?.colors, song?.accent)) {
     ambientStoreSet(AMBIENT_LAST_KEY, JSON.stringify({ colors: song.colors, accent: song.accent }));
   } else {
     ambientStoreSet(AMBIENT_LAST_KEY, null);
@@ -4432,6 +4446,7 @@ function loadAmbient() {
       if (!r.ok) return;
       const data = await r.json();
       ambientSongs = Array.isArray(data.songs) ? data.songs : [];
+      ambientLoaded = true;
       renderLatestFetched();
     } catch {
       // The light is a nicety: the page keeps whatever colour it has.
@@ -4441,6 +4456,73 @@ function loadAmbient() {
   })();
   return ambientLoading;
 }
+
+// ── Listening: each person's plays, drawn by /admin/listening.js ───────────────────────────
+// The days kept as a choice of its own when it is not one of the presets (set in settings.json).
+function ensureKeepDaysChoice(days) {
+  const select = document.getElementById('f-listening-keep');
+  const n = Number(days);
+  if (!select || !Number.isInteger(n) || n <= 0) return;
+  if (![...select.options].some(option => Number(option.value) === n)) {
+    const option = document.createElement('option');
+    option.value = String(n);
+    option.textContent = `${n} days`;
+    const after = [...select.options].find(o => Number(o.value) > n);
+    select.insertBefore(option, after || null);
+  }
+}
+// Mounted the first time the page opens. Leaving it gives the dashboard its own lights back;
+// coming back reloads it.
+function showListening(on) {
+  if (on === listeningShown) {
+    if (on) listeningPage?.reload();
+    return;
+  }
+  listeningShown = on;
+  if (!on) {
+    listeningPage?.pause();
+    return;
+  }
+  const holder = document.getElementById('listening-root');
+  if (!holder || !window.OctoListening) return;
+  if (listeningPage) {
+    listeningPage.resume();
+    return;
+  }
+  listeningPage = window.OctoListening.mount(holder, {
+    title: 'Listening',
+    canSeeEveryone: true,
+    // The dashboard's own lights, as its song picks them; before they have loaded (the page
+    // opened at #listening), the last ones kept, then the song's once they answer.
+    restoreLights: () => {
+      if (ambientLoaded) renderLatestFetched(true);
+      else {
+        applyLastAmbient();
+        loadAmbient();
+      }
+    },
+    cover: item => (item.songId ? `/api/admin/find/cover?id=${encodeURIComponent(item.songId)}` : ''),
+    fetch: async (days, user) => {
+      const query = `range=${days}${user ? `&user=${encodeURIComponent(user)}` : ''}`;
+      const r = await api(`/api/admin/listening?${query}`, { cache: 'no-store' });
+      const data = await r.json().catch(() => null);
+      return { ok: r.ok, status: r.status, data, error: data?.error || `Octo answered ${r.status}.` };
+    },
+  });
+}
+
+document.getElementById('listening-clear')?.addEventListener('click', async () => {
+  if (!(await askConfirm('Clear listening history?', 'Every play on record is removed, for everyone, and the Listening pages start over.', 'Clear history', true))) return;
+  try {
+    const r = await api('/api/admin/listening/clear', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    toast(data.cleared === 1 ? 'Cleared 1 play' : `Cleared ${data.cleared ?? 0} plays`);
+    listeningPage?.reload();
+  } catch (e) {
+    toast(`Couldn't clear the history: ${e.message}`, 'err');
+  }
+});
 
 // ── How a download was tagged ───────────────────────────────────────────────
 // The same block under a Fetched songs row and under "Try it on a song": the release that won

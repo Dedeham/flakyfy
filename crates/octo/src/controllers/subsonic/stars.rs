@@ -33,7 +33,9 @@ use crate::services::family::list_rules::{Edit, edit};
 use crate::services::family::{FamilyCaller, HeartOutcome, SavedAlbum, SavedSong, family_caller};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::LastFmRadioTrackResolver;
+use crate::services::last_fm::last_fm_radio_track_resolver::ScrobbleDetails;
 use crate::services::library::{IgnoredRating, RatingActionRequest, RatingIgnored};
+use crate::services::listening::{self, AlbumLookup, Play as ListeningPlay};
 use crate::services::soulseek::SoulseekMetadataService;
 use crate::services::subsonic::RelayError;
 use octo_core::family::abilities::RequestQuality;
@@ -41,6 +43,9 @@ use octo_core::family::request::RequestKind;
 
 /// How many outside songs after a scrobbled one have their stream readied to play at once.
 const NEXT_STREAMS_WARMED: usize = 3;
+
+/// The rating that counts as a heart for the listening log.
+const TOP_RATING: i32 = 5;
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
@@ -121,6 +126,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
 
     let ids = sent_ids(&call, "id");
     state.imports.forget_cached_songs(&ids);
+    let hearted_ids = ids.clone();
     let album_ids = sent_ids(&call, "albumId");
     let artist_ids = sent_ids(&call, "artistId");
     // What a heart on an outside song or album does for this person: a download into the
@@ -232,6 +238,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     if split && library.is_empty() {
         // Navidrome has never seen these ids, so relaying the star would just error.
         outside.queue(&state, &call).await;
+        note_listening_hearts(&state, &call, &hearted_ids).await;
         return Ok(builder.create_response(&format, "starred").into_response());
     }
 
@@ -258,6 +265,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             // it refused leaves nothing queued or held.
             if accepted {
                 outside.queue(&state, &call).await;
+                note_listening_hearts(&state, &call, &hearted_ids).await;
                 if let Some(holder) = &holder {
                     for (song, copy) in &owned {
                         info!("{song} is in the library as {copy}; favorited that copy for {holder}");
@@ -1058,6 +1066,11 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
                 .is_some_and(|check| is_successful_subsonic_response(&check.body, &format))
             {
                 record_radio_ban(&state, &call, external_rater, &item_id, external_stars).await;
+                if external_stars == TOP_RATING {
+                    state
+                        .listening
+                        .heart(external_rater, std::slice::from_ref(&item_id), Utc::now());
+                }
             }
         }
         return Ok(builder.create_response(&format, "setRating").into_response());
@@ -1086,6 +1099,11 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
     if let (Some(stars), Some(rater)) = (stars, rater.as_deref()) {
         state.generated_playlists.rated(rater, &item_id, i64::from(stars));
         record_radio_ban(&state, &call, rater, &item_id, stars).await;
+        if stars == TOP_RATING {
+            state
+                .listening
+                .heart(rater, std::slice::from_ref(&item_id), Utc::now());
+        }
     }
 
     let settings = state.settings.current().library_actions.clone();
@@ -1220,6 +1238,8 @@ fn try_parse_int(text: &str) -> Option<i32> {
 /// songs are not: Navidrome has no such media to record.
 pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult {
     let caller = family_caller(req.extensions()).cloned();
+    // The device the family gate found, read before the request is taken apart.
+    let device_id = family_caller(req.extensions()).and_then(|caller| caller.device_id.clone());
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -1300,7 +1320,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
             if is_successful_subsonic_response(&check.body, &format) {
                 prewarm_queue();
                 note_now_playing(&state, &call, caller.as_ref(), &ids, &submissions);
-                learn_from_scrobbles(&state, &call, &ids, &submissions, &times).await?;
+                learn_from_scrobbles(&state, &call, &ids, &submissions, &times, device_id.as_deref()).await?;
             }
             let content_type = check
                 .content_type
@@ -1321,7 +1341,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
         if is_successful_subsonic_response(&result.body, &format) {
             prewarm_queue();
             note_now_playing(&state, &call, caller.as_ref(), &ids, &submissions);
-            learn_from_scrobbles(&state, &call, &ids, &submissions, &times).await?;
+            learn_from_scrobbles(&state, &call, &ids, &submissions, &times, device_id.as_deref()).await?;
         }
         let content_type = result
             .content_type
@@ -1400,6 +1420,7 @@ async fn learn_from_scrobbles(
     ids: &[String],
     submissions: &[String],
     times: &[String],
+    device_id: Option<&str>,
 ) -> Result<(), RelayError> {
     // Called only once Navidrome has accepted these credentials. An API key sign-in has no
     // u, so its owner is asked of Navidrome; nobody to name means nothing is learned.
@@ -1420,7 +1441,8 @@ async fn learn_from_scrobbles(
     let learning = last_fm_settings.enable_radio && last_fm_settings.enable_personalized_stations;
     let submitting = state.listen_brainz.is_enabled_for(&username);
     let scrobbling = state.last_fm_scrobbles.is_enabled_for(&username);
-    if !learning && !submitting && !scrobbling {
+    let listening = state.listening.recording();
+    if !learning && !submitting && !scrobbling && !listening {
         return Ok(());
     }
     let resolver = resolver(state, call);
@@ -1438,6 +1460,11 @@ async fn learn_from_scrobbles(
         // those to a Navidrome that scrobbles them itself (else they would count twice).
         let outside = state.local_library.parse_song_id(song_id).0;
         let last_fm_takes = scrobbling && (outside || state.last_fm_scrobbles.takes_library_plays());
+        // A start of play ends the play before it, which the listening log then writes down.
+        if !completed && listening {
+            let ended = state.listening.now_playing(&username, song_id, Utc::now());
+            listening::write_settled(state.listening.clone(), state.last_fm.clone(), ended);
+        }
         if !completed && !last_fm_takes {
             continue;
         }
@@ -1454,7 +1481,13 @@ async fn learn_from_scrobbles(
         }
         // Until something has learned from the play, it is not taken: a song that could not
         // be looked up this time is withdrawn, so the client's retry counts.
-        let song = resolver.resolve_scrobble(song_id, &call.parameters).await;
+        let resolved = resolver
+            .resolve_scrobble_with_details(song_id, &call.parameters)
+            .await;
+        let (song, details) = match resolved {
+            Some((song, details)) => (Some(song), details),
+            None => (None, ScrobbleDetails::default()),
+        };
         let Some(song) = song.filter(|s| !s.artist.is_empty() && !s.title.is_empty()) else {
             if completed {
                 state
@@ -1475,10 +1508,13 @@ async fn learn_from_scrobbles(
             }
             continue;
         }
-        let played_at = time
+        let sent_time = time
             .and_then(try_parse_long)
-            .and_then(from_unix_time_milliseconds)
-            .unwrap_or_else(Utc::now);
+            .and_then(from_unix_time_milliseconds);
+        let played_at = sent_time.unwrap_or_else(Utc::now);
+        if listening {
+            record_listening(state, call, &username, &song, details, sent_time, device_id);
+        }
         if learning {
             recorded |= state.last_fm_radio_state.record_play(
                 &username,
@@ -1524,6 +1560,71 @@ async fn learn_from_scrobbles(
         state.last_fm_radio_refresh_queue.enqueue(&username, None);
     }
     Ok(())
+}
+
+/// Tells the listening log an app reported the play as played. It is written once it ends,
+/// its genre worked out then, after the reply.
+fn record_listening(
+    state: &AppState,
+    call: &SubsonicCall,
+    username: &str,
+    song: &Song,
+    details: ScrobbleDetails,
+    sent_time: Option<DateTime<Utc>>,
+    device_id: Option<&str>,
+) {
+    let now = Utc::now();
+    let user_agent = call.header("user-agent").unwrap_or_default();
+    let client = call.param_opt("c").unwrap_or("");
+    let album = details
+        .album_id
+        .clone()
+        .filter(|_| song.is_local)
+        .map(|album_id| AlbumLookup {
+            proxy: call.proxy.clone(),
+            parameters: call.parameters.clone(),
+            album_id,
+        });
+    let mut genres = details.genres;
+    if genres.is_empty()
+        && let Some(genre) = song.genre.as_deref().filter(|g| !g.trim().is_empty())
+    {
+        genres.push(genre.to_string());
+    }
+    let play = ListeningPlay {
+        song_id: song.id.clone(),
+        cover_id: details.cover_art.unwrap_or_else(|| song.id.clone()),
+        artist: song.artist.clone(),
+        album_artist: details.album_artist,
+        title: song.title.clone(),
+        album: song.album.clone(),
+        is_local: song.is_local,
+        app: octo_core::family::device::app_label(client, &user_agent),
+        platform: listening::platform_of(&user_agent).to_string(),
+        device_id: device_id.map(str::to_string),
+        source: "scrobble".to_string(),
+        ..Default::default()
+    };
+    let ended = state.listening.completed(
+        username,
+        listening::Draft { play, genres, album },
+        song.duration.map(i64::from),
+        sent_time,
+        now,
+    );
+    listening::write_settled(state.listening.clone(), state.last_fm.clone(), ended);
+}
+
+/// The song ids a star or a top rating named, written down as hearts in the listening log so
+/// a play on at the time is marked hearted while playing.
+async fn note_listening_hearts(state: &AppState, call: &SubsonicCall, ids: &[String]) {
+    if ids.is_empty() || !state.listening.recording() {
+        return;
+    }
+    let at = Utc::now();
+    if let Some(username) = listener(state, call).await {
+        state.listening.heart(&username, ids, at);
+    }
 }
 
 /// A 64-bit integer: surrounding white space and a sign are allowed.

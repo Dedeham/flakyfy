@@ -632,22 +632,25 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
                 .into_response();
         };
         let call = &call;
+        let owner = &owner;
         let entries: Vec<Node> = futures::stream::iter(list.tracks.clone())
             .map(|track| async move {
-                if let Some(library_id) = &track.library_id
-                    && let Some(song) = library_song_json(call, library_id).await
-                {
-                    return Node::from_value(&song);
+                if let Some(library_id) = &track.library_id {
+                    if let Some(song) = state.imports.cached_song(owner, library_id) {
+                        return Node::from_value(&song);
+                    }
+                    if let Some(song) = library_song_json(call, library_id).await {
+                        state.imports.cache_song(owner, library_id, song.clone());
+                        return Node::from_value(&song);
+                    }
                 }
                 let song = crate::services::imports::import_streaming::preview_song(
                     &state.external_id_registry,
                     &track,
                 );
                 let mut fields = builder.convert_song_to_json(&song);
-                // File exports often omit lengths. Psysonic passes this field directly
-                // to audio_play's required numeric durationHint: 0 means unknown and
-                // lets the decoder determine the length, without inventing one or
-                // changing the preview's stable routing ID.
+                // A list read from a file may have no lengths, and some players need the
+                // field to be a number: 0 says the length is unknown.
                 fields.entry("duration".to_string()).or_insert(0.into());
                 Node::from_value(&Value::Object(fields))
             })

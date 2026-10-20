@@ -106,6 +106,35 @@ impl ImportStore {
         owners
     }
 
+    /// The owners of streaming lists that have a song by this artist and title without a
+    /// library copy yet. Loose on purpose: a wrong guess only costs one more match.
+    pub fn streaming_owners_missing(&self, artist: Option<&str>, title: Option<&str>) -> Vec<String> {
+        let Some(title) = title.map(loose).filter(|title| !title.is_empty()) else {
+            return Vec::new();
+        };
+        let artist = artist.map(loose).unwrap_or_default();
+        let mut owners: Vec<String> = Vec::new();
+        for list in self
+            .lists
+            .lock()
+            .iter()
+            .filter(|list| list.stream_without_downloading)
+        {
+            let misses = list.tracks.iter().any(|track| {
+                track.library_id.is_none()
+                    && loose(&track.title) == title
+                    && (artist.is_empty() || {
+                        let named = loose(&track.artist);
+                        named.contains(&artist) || artist.contains(&named)
+                    })
+            });
+            if misses && !owners.iter().any(|owner| eq_ignore_case(owner, &list.owner)) {
+                owners.push(list.owner.clone());
+            }
+        }
+        owners
+    }
+
     /// Reconstruct an imported song evicted from the registry's bounded LRU. The import
     /// itself is durable, including after a preview becomes local or Octo restarts.
     pub fn preview_routing(&self, id: &str) -> Option<SoulseekRouting> {
@@ -218,6 +247,14 @@ pub(crate) fn culture_compare_ignore_case(a: &str, b: &str) -> Ordering {
         to_lower_invariant(&a.nfd().collect::<String>())
             .cmp(&to_lower_invariant(&b.nfd().collect::<String>()))
     })
+}
+
+/// Lowercase letters and digits only, for comparing names written slightly differently.
+fn loose(text: &str) -> String {
+    text.nfkc()
+        .flat_map(char::to_lowercase)
+        .filter(|c| c.is_alphanumeric())
+        .collect()
 }
 
 #[cfg(test)]

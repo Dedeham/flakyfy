@@ -208,10 +208,28 @@ impl ImportMatcher {
     }
 
     /// Playlist reads reuse the library index and already learned ISRCs. They never start
-    /// catalog lookups, source refreshes or downloads on a player's request.
-    pub async fn match_streaming_tracks_for(&self, owner: &str, tracks: &mut [ImportTrack]) {
-        let Some(index) = self.library_index().await else {
-            return;
+    /// catalog lookups, source refreshes or downloads on a player's request, and read the library
+    /// only when `read_if_stale` says a song they miss has landed: false when no index read in
+    /// the last [`Self::KEEP_INDEX_FOR`] is at hand otherwise.
+    pub async fn match_streaming_tracks_for(
+        &self,
+        owner: &str,
+        tracks: &mut [ImportTrack],
+        read_if_stale: bool,
+    ) -> bool {
+        let fresh = self
+            .index
+            .lock()
+            .clone()
+            .filter(|(_, at)| self.now() - *at < Self::KEEP_INDEX_FOR)
+            .map(|(index, _)| index);
+        let index = match fresh {
+            Some(index) => index,
+            None if read_if_stale => match self.library_index().await {
+                Some(index) => index,
+                None => return false,
+            },
+            None => return false,
         };
         self.within(owner, |visible| {
             for track in tracks {
@@ -220,6 +238,7 @@ impl ImportMatcher {
                     .map(|row| row.id.clone());
             }
         });
+        true
     }
 
     /// Which way round a plain list's lines are written, judged by which reading names more of

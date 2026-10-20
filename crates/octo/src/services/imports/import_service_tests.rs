@@ -47,7 +47,7 @@ async fn streaming_is_private_and_never_queues_downloads_or_writes_a_navidrome_p
 }
 
 #[tokio::test]
-async fn a_streaming_link_is_a_snapshot_even_when_the_old_follow_switches_are_on() {
+async fn a_streaming_list_that_gets_missing_songs_still_follows_its_link() {
     let rig = rig().await;
     let added = rig
         .service
@@ -63,10 +63,33 @@ async fn a_streaming_link_is_a_snapshot_even_when_the_old_follow_switches_are_on
     let calls = rig.calls().await;
     *rig.now.lock() += TimeDelta::days(7);
     rig.service.loop_once().await.unwrap();
+    assert!(
+        rig.calls().await.len() > calls.len(),
+        "a list that keeps a playlist or gets missing songs reads its link again, streaming or not"
+    );
+}
+
+#[tokio::test]
+async fn a_list_that_only_streams_never_reads_its_link_again() {
+    let rig = rig().await;
+    let added = rig
+        .service
+        .add_link("alice", &format!("https://open.spotify.com/playlist/{THEIRS}"))
+        .await
+        .unwrap();
+    let id = added.list_id.unwrap();
+    assert!(rig.service.set_streaming("alice", &id, true).ok);
+    rig.store.update("alice", &id, |list| {
+        list.keep_playlist = false;
+        list.get_missing = false;
+    });
+    let calls = rig.calls().await;
+    *rig.now.lock() += TimeDelta::days(7);
+    rig.service.loop_once().await.unwrap();
     assert_eq!(
         rig.calls().await,
         calls,
-        "a streaming snapshot must not reread its source"
+        "a streaming-only list stays the snapshot it was"
     );
     assert!(rig.queue.snapshot(None).is_empty());
 }

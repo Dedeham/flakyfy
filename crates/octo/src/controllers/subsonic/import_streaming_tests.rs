@@ -23,7 +23,7 @@ use crate::services::soulseek::ExternalIdRegistry;
 const AUTH: &str = "u=alice&t=good&s=salt&v=1.16.1&c=test";
 
 struct Rig {
-    _server: MockServer,
+    server: MockServer,
     state: AppState,
     app: App,
     library: Arc<Mutex<Vec<LibrarySongRow>>>,
@@ -156,7 +156,7 @@ async fn rig_with_duration(known: bool) -> Rig {
     Rig {
         app: app(&state),
         state,
-        _server: server,
+        server,
         library,
         preview,
         streams,
@@ -338,7 +338,7 @@ async fn import_streaming_unavailable_local_song_falls_back_to_preview_without_d
             r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"Gone"}}}"#,
         ))
         .with_priority(1)
-        .mount(&r._server)
+        .mount(&r.server)
         .await;
     let detail = get(
         &r.app,
@@ -449,4 +449,89 @@ async fn import_streaming_replaces_preview_with_local_after_a_heart_download_wit
     // A queue opened earlier still uses the preview's advertised audio format.
     let old_queue = get(&r.app, &format!("/rest/stream?{AUTH}&id={}", r.preview)).await;
     assert_eq!(old_queue.body.as_ref(), b"preview audio");
+}
+
+async fn get_song_calls(r: &Rig) -> usize {
+    r.server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|request| request.url.path().trim_end_matches(".view") == "/rest/getSong")
+        .count()
+}
+
+#[tokio::test]
+async fn import_streaming_a_second_open_reuses_the_library_songs_it_read() {
+    let r = rig().await;
+    let open = format!("/rest/getPlaylist?{AUTH}&f=json&id={}", r.playlist_id);
+    let first = get(&r.app, &open).await.envelope();
+    let after_first = get_song_calls(&r).await;
+    assert!(after_first > 0);
+    let second = get(&r.app, &open).await.envelope();
+    assert_eq!(
+        get_song_calls(&r).await,
+        after_first,
+        "the second open asks Navidrome nothing"
+    );
+    assert_eq!(first["playlist"]["entry"], second["playlist"]["entry"]);
+}
+
+#[tokio::test]
+async fn import_streaming_a_heart_reads_that_song_again_on_the_next_open() {
+    let r = rig().await;
+    let open = format!("/rest/getPlaylist?{AUTH}&f=json&id={}", r.playlist_id);
+    get(&r.app, &open).await;
+    get(&r.app, &format!("/rest/star?{AUTH}&f=json&id=nd-teardrop")).await;
+    let before = get_song_calls(&r).await;
+    get(&r.app, &open).await;
+    // The list holds the hearted song twice; the two entries may each read it.
+    let after = get_song_calls(&r).await;
+    assert!(
+        after > before && after <= before + 2,
+        "only the hearted song is read again"
+    );
+}
+
+#[tokio::test]
+async fn import_streaming_another_songs_download_never_rereads_the_library_on_open() {
+    let r = rig().await;
+    let open = format!("/rest/getPlaylist?{AUTH}&f=json&id={}", r.playlist_id);
+    get(&r.app, &open).await;
+    let reads = Arc::new(Mutex::new(0usize));
+    let counted = reads.clone();
+    let pages = r.library.clone();
+    r.state
+        .imports
+        .matcher()
+        .set_read_page(Arc::new(move |start, count| {
+            *counted.lock() += 1;
+            let page: Vec<_> = pages
+                .lock()
+                .iter()
+                .skip(start as usize)
+                .take(count as usize)
+                .cloned()
+                .collect();
+            let n = page.len();
+            Box::pin(async move { Some((page, n)) })
+        }));
+    let tracker = &r.state.acquisition_tracker;
+    tracker.begin(
+        "soulseek",
+        "unrelated",
+        None,
+        Some("bob"),
+        Some("Portishead"),
+        Some("Roads"),
+        Some("Dummy"),
+    );
+    tracker.complete("soulseek", "unrelated", Some("nd-roads"));
+    let entries = get(&r.app, &open).await.envelope()["playlist"]["entry"].clone();
+    assert_eq!(
+        *reads.lock(),
+        0,
+        "a song no streaming list misses leaves the library index alone"
+    );
+    assert_eq!(entries[1]["id"], r.preview);
 }

@@ -551,6 +551,30 @@ quality and this weekly upgrade search Soulseek for up to `SLSKD_UPGRADE_SEARCH_
 (default 90, 30 to 300) instead of the usual `SLSKD_SEARCH_WAIT_SECONDS`, because they look for
 songs the quick search did not find. A change to it applies after a restart.
 
+A Better quality candidate has to sound like the file it replaces before it takes its place, since
+that file is the one you trust. Thirty seconds at the start, in the middle and at the end of each
+are fingerprinted (Chromaprint, as for download verification) and compared, and only when every
+window is 85% alike or more does the candidate replace the file. Remasters and live takes often
+share their intro and part ways later, which is why the middle and the end count. A few seconds
+of intro on one of them (a YouTube copy, say) are allowed, a length more than 20 seconds apart is
+another cut of the song and refuses at once, and a window of silence or a steady tone says nothing
+and is skipped. A candidate that is another song or may be another version is thrown away and the
+next peer is tried, and one that could not be compared is refused too. The check runs for every
+peer in the search and once more just before the swap, so it covers Lidarr as well. When no copy
+matches, the lossy file stays, which is the right answer when there is no lossless copy of that
+recording. It does not apply to Wrong song and Wrong version (their original is the wrong one), to a
+copy you said to take in any quality, or, in the search, to a copy you picked (that one is compared
+at the swap).
+
+Measured on real, freely licensed music: the same recording scored 92 to 100% alike in every
+encoding tried (MP3 128k, mono 64k, resampled, with 5 s of added intro; 56 cases from 28 netlabel
+albums and 66 cases from 22 YouTube videos with vocals under a Creative Commons licence, each as two
+independent YouTube encodings); 378 pairs of different tracks scored 38 to 59.5% (median 52%) and
+231 pairs of different YouTube songs at most 58.2%; another pianist's performance of the same piece
+scored 58 to 64%, and the same recording 3% faster 81 to 84%, 6% faster 72 to 83%, 10% faster or
+slower 63 to 73%. The 85% line sits above every copy at another speed and below every copy of the
+same recording.
+
 Two things to know before turning ratings on. Clearing a rating afterwards needs the rating
 owner's own credentials, because Subsonic ratings are per user, so **Octo caches a replayable
 Subsonic auth triplet per user in memory** for as long as it runs. And because no client asks

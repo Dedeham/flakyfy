@@ -109,7 +109,6 @@ parity/.run/
 !docs/family.md
 !docs/rust-migration/known-diffs.md
 !scripts/admin-icons/SOURCES.md
-!AGENTS.md
 
 # Claude Code: the shared project settings are committed, personal ones are not.
 .claude/settings.local.json

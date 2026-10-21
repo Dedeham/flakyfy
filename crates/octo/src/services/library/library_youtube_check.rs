@@ -4,8 +4,9 @@
 //! a person starts it from the dashboard. A song that sounds nothing like its copy becomes a Review
 //! question; nothing is ever changed or removed. It goes a few songs an hour, only while nothing
 //! is downloading, only of whoever keeps the library, and carries on where it stopped after a
-//! restart. A song is stamped when it was answered, so it is never asked twice; a YouTube Music or
-//! shim that could not answer is not an answer and is tried again.
+//! restart: the files are walked once in order and the cursor is the only memory a run needs. A
+//! YouTube Music or shim that could not answer is not an answer and is tried again, but not for
+//! ever: a song that cannot be answered after two rests is counted as having no copy.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,7 +20,6 @@ use octo_core::common::Clock;
 use octo_core::fingerprint::fingerprint_compare::CrossCheck;
 use octo_core::fingerprint::verification::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::json::datetime;
-use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::models::domain::Song;
 use octo_core::settings::SettingsStore;
 use octo_media::audio::AudioFingerprinter;
@@ -36,7 +36,6 @@ use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
 use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::fingerprint::you_tube_cross_check::{Compared, compare};
-use crate::services::framework::DotnetDictionary;
 use crate::services::library::library_walk;
 use crate::services::state_file;
 use crate::services::you_tube::YouTubeResolver;
@@ -78,7 +77,7 @@ impl YoutubeChecker for AppYoutubeChecker {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct YoutubeCheckState {
     /// A run is going: started from the dashboard and not yet finished.
@@ -89,9 +88,6 @@ pub struct YoutubeCheckState {
     /// Library-relative path of the last file dealt with this run; empty at its start.
     #[serde(default, deserialize_with = "state_file::null_as_default")]
     pub cursor: String,
-    /// Library-relative path to the size and modified time it had when answered.
-    #[serde(default, with = "super::state_dictionary")]
-    pub checked: DotnetDictionary<String>,
     #[serde(default)]
     pub total: i32,
     /// Songs looked at this run.
@@ -115,33 +111,13 @@ pub struct YoutubeCheckState {
     pub finished_utc: Option<DateTime<Utc>>,
 }
 
-impl Default for YoutubeCheckState {
-    fn default() -> Self {
-        YoutubeCheckState {
-            running: false,
-            paused: false,
-            cursor: String::new(),
-            checked: DotnetDictionary::new(),
-            total: 0,
-            done: 0,
-            asked: 0,
-            alike: 0,
-            unsure: 0,
-            no_copy: 0,
-            started_utc: None,
-            finished_utc: None,
-        }
-    }
-}
-
 struct StoreInner {
     state: YoutubeCheckState,
     dirty: bool,
 }
 
-/// youtube-check.json. [`YoutubeCheckState::checked`] holds a line per library song, so the file
-/// is written by [`YoutubeCheckStore::run_flusher`] every few seconds, not on every change, and
-/// at once when a run starts, pauses or finishes.
+/// youtube-check.json, written by [`YoutubeCheckStore::run_flusher`] every few seconds, not on
+/// every change, and at once when a run starts, pauses or finishes.
 pub struct YoutubeCheckStore {
     path: Option<PathBuf>,
     inner: Mutex<StoreInner>,
@@ -272,13 +248,9 @@ pub struct LibraryYoutubeCheck {
     /// Changes when a run starts, so work in flight for the last one drops its result.
     generation: AtomicI32,
     unavailable_in_a_row: AtomicI32,
+    /// The song YouTube could not be asked about, and how many rests it has cost.
+    stuck: Mutex<(String, i32)>,
     hold: Mutex<(String, Option<String>)>,
-}
-
-/// The next file to check, with the size and modified time it has now.
-struct Pick {
-    target: Option<String>,
-    stamp: Option<String>,
 }
 
 impl LibraryYoutubeCheck {
@@ -286,6 +258,9 @@ impl LibraryYoutubeCheck {
     /// Answers in a row YouTube Music or the shim could not give before the check rests.
     pub const MAX_UNAVAILABLE_IN_A_ROW: i32 = 5;
     pub const REST_WHEN_UNAVAILABLE: Duration = Duration::from_secs(3600);
+    /// Rests one song may cost before it is counted as having no copy, so a video that never plays
+    /// (region-locked, age-gated) cannot hold the whole run.
+    pub const MAX_RESTS_PER_SONG: i32 = 2;
     pub const IDLE_CHECK: Duration = Duration::from_secs(60);
     pub const BUSY_CHECK: Duration = Duration::from_secs(30);
 
@@ -310,6 +285,7 @@ impl LibraryYoutubeCheck {
             files: Mutex::new(None),
             generation: AtomicI32::new(0),
             unavailable_in_a_row: AtomicI32::new(0),
+            stuck: Mutex::new((String::new(), 0)),
             hold: Mutex::new(("Idle".to_string(), None)),
         }
     }
@@ -344,6 +320,13 @@ impl LibraryYoutubeCheck {
         self.generation.fetch_add(1, Ordering::SeqCst);
         *self.files.lock() = None;
         self.unavailable_in_a_row.store(0, Ordering::SeqCst);
+        *self.stuck.lock() = (String::new(), 0);
+        // Said at once: the worker may be resting, and the page must not say "not started".
+        self.hold(
+            "Waiting",
+            Some("Starting: the first song is compared within a minute or two."),
+            Duration::ZERO,
+        );
         let now = self.clock.now();
         self.store.update(|s| {
             *s = YoutubeCheckState {
@@ -458,8 +441,7 @@ impl LibraryYoutubeCheck {
         };
         let interval = Duration::from_secs_f64(3600.0 / f64::from(per_hour));
         let cursor = self.store.read(|s| s.cursor.clone());
-        let pick = self.next_target(&files, &root, cursor);
-        let Some(target) = pick.target.clone() else {
+        let Some(target) = self.next_target(&files, &root, cursor) else {
             // Nothing is left: the run is over, and it does not start again by itself.
             let now = self.clock.now();
             self.store.update(|s| {
@@ -476,44 +458,20 @@ impl LibraryYoutubeCheck {
                 Self::IDLE_CHECK,
             );
         };
-        self.check(generation, &root, &keeper, &target, pick, interval)
-            .await
+        self.check(generation, &root, &keeper, &target, interval).await
     }
 
-    /// The next file after `cursor` to check. A file that is gone, outside the shared library,
-    /// already asked about, or answered since it last changed is passed over.
-    fn next_target(&self, files: &[String], root: &str, cursor: String) -> Pick {
+    /// The next file after `cursor` to check. A file that is gone, outside the shared library or
+    /// already asked about is passed over.
+    fn next_target(&self, files: &[String], root: &str, cursor: String) -> Option<String> {
         let view = self.shared_view();
         let reviewed = self.notices.reviewed_paths();
-        let mut pick = Pick {
-            target: None,
-            stamp: None,
-        };
-        let mut i = first_after(files, &cursor);
-        while i < files.len() && pick.target.is_none() {
-            let relative = &files[i];
+        files[first_after(files, &cursor)..].iter().find_map(|relative| {
             let full = full_path(root, relative);
-            let stamp = std::fs::metadata(&full)
-                .ok()
-                .filter(|m| m.is_file())
-                .map(|m| format!("{}:{}", m.len(), modified_ticks(&m)));
-            let passed_over = match &stamp {
-                None => true,
-                Some(stamp) => {
-                    !Self::in_shared(view.as_ref(), &full)
-                        || reviewed.contains(&full)
-                        || self
-                            .store
-                            .read(|s| s.checked.get(relative).is_some_and(|seen| seen == stamp))
-                }
-            };
-            if !passed_over {
-                pick.target = Some(relative.clone());
-                pick.stamp = stamp;
-            }
-            i += 1;
-        }
-        pick
+            let there = std::fs::metadata(&full).is_ok_and(|m| m.is_file());
+            (there && Self::in_shared(view.as_ref(), &full) && !reviewed.contains(&full))
+                .then(|| relative.clone())
+        })
     }
 
     async fn check(
@@ -522,7 +480,6 @@ impl LibraryYoutubeCheck {
         root: &str,
         keeper: &str,
         target: &str,
-        pick: Pick,
         interval: Duration,
     ) -> Duration {
         let full = full_path(root, target);
@@ -540,10 +497,22 @@ impl LibraryYoutubeCheck {
         }
         if answer == Compared::Unavailable {
             let in_a_row = self.unavailable_in_a_row.fetch_add(1, Ordering::SeqCst) + 1;
-            if in_a_row >= Self::MAX_UNAVAILABLE_IN_A_ROW {
-                self.unavailable_in_a_row.store(0, Ordering::SeqCst);
+            if in_a_row < Self::MAX_UNAVAILABLE_IN_A_ROW {
+                return self.hold("Running", None, interval);
+            }
+            self.unavailable_in_a_row.store(0, Ordering::SeqCst);
+            let rests = {
+                let mut stuck = self.stuck.lock();
+                if stuck.0 == target {
+                    stuck.1 += 1;
+                } else {
+                    *stuck = (target.to_string(), 1);
+                }
+                stuck.1
+            };
+            if rests < Self::MAX_RESTS_PER_SONG {
                 warn!(
-                    "YouTube Music did not answer {in_a_row} times in a row; the YouTube check rests an hour"
+                    "YouTube could not be asked {in_a_row} times in a row; the YouTube check rests an hour"
                 );
                 return self.hold(
                     "Waiting",
@@ -551,9 +520,12 @@ impl LibraryYoutubeCheck {
                     Self::REST_WHEN_UNAVAILABLE,
                 );
             }
-            return self.hold("Running", None, interval);
+            // Two rests on the same song: it is the song, not YouTube. Counted as having no copy.
+            warn!("The YouTube check gives up on {target}: it could not be compared after {rests} rests");
+            *self.stuck.lock() = (String::new(), 0);
+        } else {
+            self.unavailable_in_a_row.store(0, Ordering::SeqCst);
         }
-        self.unavailable_in_a_row.store(0, Ordering::SeqCst);
 
         let mut asked = false;
         let (mut alike, mut unsure, mut no_copy) = (0, 0, 0);
@@ -579,9 +551,7 @@ impl LibraryYoutubeCheck {
             },
             _ => no_copy = 1,
         }
-        let stamp = pick.stamp.clone().unwrap_or_default();
         self.store.update(|s| {
-            s.checked.set(target.to_string(), stamp);
             s.cursor = target.to_string();
             s.done += 1;
             s.asked += i32::from(asked);
@@ -633,14 +603,6 @@ fn first_after(files: &[String], cursor: &str) -> usize {
         Ok(index) => index + 1,
         Err(index) => index,
     }
-}
-
-/// The file's last write time in 100 ns ticks since 0001-01-01.
-fn modified_ticks(metadata: &std::fs::Metadata) -> i64 {
-    metadata
-        .modified()
-        .map(|modified| dotnet_ticks(DateTime::<Utc>::from(modified)))
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

@@ -362,8 +362,8 @@ async fn recheck_octo_downloads(State(state): State<AppState>) -> Response {
     accepted(&json!({ "ok": true, "files": files }))
 }
 
-/// The one-time YouTube check: how far it has got and why it is waiting. Counts only, no file or
-/// person, like the Review sweep.
+/// The one-time YouTube check: how far it has got and why it is waiting. Counts and the name of
+/// whoever is asked, never a file or a song, like the Review sweep.
 async fn get_youtube_check(State(state): State<AppState>) -> Response {
     let s = state.library_youtube_check.status();
     ok(&json!({

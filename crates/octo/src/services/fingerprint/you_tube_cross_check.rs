@@ -70,9 +70,10 @@ impl Compared {
 }
 
 /// The file against the official copy of `artist - title`, over the first half minute of each.
-/// `NoReference` when YouTube Music has no confident row or the file cannot be fingerprinted, and
-/// `Unavailable` when YouTube Music or the stream could not answer, so a caller that remembers its
-/// answers does not remember a failure. Either way there is no opinion on the file.
+/// `NoReference` when YouTube Music has no confident row or the file is not there, and
+/// `Unavailable` when YouTube Music, the stream or the file's own fingerprint could not be had, so a
+/// caller that remembers its answers does not remember a failure. Either way there is no opinion
+/// on the file.
 pub async fn compare(
     fingerprinter: &AudioFingerprinter,
     youtube: &YouTubeResolver,
@@ -86,7 +87,14 @@ pub async fn compare(
     let timeout = settings.effective_fingerprint_timeout_seconds();
     // The file first: one that cannot be read costs no request to YouTube.
     let Some(ours) = fingerprinter.fingerprint_raw(path, seconds, timeout).await else {
-        return Compared::NoReference;
+        // A file that is not there is a final answer. One that is there and gives no fingerprint is
+        // more likely fpcalc missing or busy than a bad file, and must not be taken for "no copy"
+        // by a caller that remembers its answers; a file that never decodes is given up on there.
+        return if path.is_file() {
+            Compared::Unavailable
+        } else {
+            Compared::NoReference
+        };
     };
     let reference = match youtube.music_lookup(artist, title, length).await {
         MusicLookup::Found(hit) => hit,

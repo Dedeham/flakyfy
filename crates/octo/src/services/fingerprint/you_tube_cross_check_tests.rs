@@ -324,3 +324,27 @@ async fn compare_with_an_unreadable_file_is_a_final_no_reference() {
     assert_eq!(found, Compared::NoReference);
     assert!(shim.received_requests().await.unwrap_or_default().is_empty());
 }
+
+/// A file that is there but gives no fingerprint (fpcalc missing, busy, or bytes that are not audio)
+/// is not a final "no copy": the caller asks again, and gives up on a file that never works.
+#[tokio::test]
+async fn compare_with_a_file_that_gives_no_fingerprint_is_unavailable() {
+    let garbage = std::env::temp_dir().join(format!("octo-xcheck-{}-garbage.flac", std::process::id()));
+    std::fs::write(&garbage, b"not audio at all").expect("written");
+    let shim = MockServer::start().await;
+    let youtube = YouTubeResolver::with_base_url(Some(&shim.uri()));
+
+    let found = compare(
+        &AudioFingerprinter::new(),
+        &youtube,
+        &garbage,
+        "Artist",
+        "Song",
+        Some(40),
+        &SoulseekSettings::default(),
+    )
+    .await;
+
+    assert_eq!(found, Compared::Unavailable);
+    assert!(shim.received_requests().await.unwrap_or_default().is_empty());
+}

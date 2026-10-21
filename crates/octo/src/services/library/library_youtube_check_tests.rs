@@ -281,8 +281,11 @@ async fn a_failure_of_youtube_is_not_an_answer() {
 
     worker.start();
     worker.tick().await;
-    // Not stamped, not counted, and tried again.
-    assert_eq!(worker.store().read(|s| (s.done, s.checked.len())), (0, 0));
+    // Not counted, the cursor has not moved past it, and it is tried again.
+    assert_eq!(
+        worker.store().read(|s| (s.done, s.cursor.clone())),
+        (0, String::new())
+    );
     run_to_the_end(&worker).await;
 
     assert_eq!(checker.asked(), ["a.flac", "a.flac"]);
@@ -306,7 +309,7 @@ async fn five_failures_in_a_row_make_it_rest_an_hour() {
 
     assert_eq!(wait, LibraryYoutubeCheck::REST_WHEN_UNAVAILABLE);
     assert_eq!(worker.status().state, "Waiting");
-    assert_eq!(worker.store().read(|s| s.checked.len()), 0);
+    assert_eq!(worker.store().read(|s| s.done), 0);
 }
 
 #[tokio::test]
@@ -474,4 +477,91 @@ fn a_corrupt_state_file_is_set_aside_and_the_check_starts_over() {
 
     assert!(!store.read(|s| s.running));
     assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn a_song_that_cannot_be_compared_after_two_rests_is_counted_as_having_no_copy() {
+    let check = Check::new();
+    check.tagged("a-region-locked.flac");
+    check.tagged("b-fine.flac");
+    // Ten failures on the first song (two rests of five), then the second answers.
+    let mut script = vec![Compared::Unavailable; 10];
+    script.push(outcome(CrossCheck::Match, 0.95));
+    let checker = FakeChecker::answering(script);
+    let (worker, _) = check.simple(checker.clone());
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    let (no_copy, alike, done) = worker.store().read(|s| (s.no_copy, s.alike, s.done));
+    assert_eq!((no_copy, alike, done), (1, 1, 2));
+    assert_eq!(checker.asked().last().map(String::as_str), Some("b-fine.flac"));
+    assert!(!worker.store().read(|s| s.running));
+}
+
+#[tokio::test]
+async fn an_answer_between_failures_starts_the_count_again() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    check.tagged("b.flac");
+    // Four failures, an answer, four more: never five in a row, so it never rests.
+    let mut script = vec![Compared::Unavailable; 4];
+    script.push(outcome(CrossCheck::Match, 0.95));
+    script.extend(vec![Compared::Unavailable; 4]);
+    script.push(outcome(CrossCheck::Match, 0.95));
+    let (worker, _) = check.simple(FakeChecker::answering(script));
+
+    worker.start();
+    for _ in 0..20 {
+        let wait = worker.tick().await;
+        assert_ne!(wait, LibraryYoutubeCheck::REST_WHEN_UNAVAILABLE);
+        if !worker.store().read(|s| s.running) {
+            break;
+        }
+    }
+
+    assert_eq!(worker.store().read(|s| (s.alike, s.running)), (2, false));
+}
+
+#[tokio::test]
+async fn pressing_start_says_so_at_once() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let (worker, _) = check.simple(FakeChecker::answering(vec![]));
+
+    worker.start();
+    let status = worker.status();
+
+    assert!(status.running);
+    assert_eq!(status.state, "Waiting");
+    assert!(
+        status.reason.as_deref().is_some_and(|r| r.contains("Starting")),
+        "{status:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_finished_run_stays_finished_after_a_restart() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let first = FakeChecker::answering(vec![outcome(CrossCheck::Match, 0.95)]);
+    let (worker, notices) = check.simple(first);
+    worker.start();
+    run_to_the_end(&worker).await;
+    drop(worker);
+
+    let second = FakeChecker::answering(vec![]);
+    let worker = check.worker(
+        second.clone(),
+        notices,
+        settings_of(60),
+        Arc::new(FakeActivity::default()),
+    );
+    for _ in 0..5 {
+        worker.tick().await;
+    }
+
+    assert!(second.asked().is_empty());
+    assert_eq!(worker.status().state, "Idle");
+    assert!(worker.store().read(|s| s.finished_utc.is_some() && !s.running));
 }

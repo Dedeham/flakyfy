@@ -2801,7 +2801,7 @@ async function loadYoutubeCheck() {
     } else {
       parts.push('Compares each song in your library with its official YouTube Music copy, once.');
     }
-    if (s.reason && s.state !== 'Running') parts.push(s.reason);
+    if (s.running && s.reason && s.state !== 'Running') parts.push(s.reason);
     status.textContent = parts.join(' ');
     const start = document.getElementById('youtube-check-start');
     const pause = document.getElementById('youtube-check-pause');

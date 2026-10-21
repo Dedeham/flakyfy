@@ -207,3 +207,33 @@ async fn compare_without_a_reference_has_no_opinion() {
 
     assert_eq!(found, None);
 }
+
+// The retry budget decides when Soulseek stops asking peers, so a miscount either wastes downloads
+// of wrong files or gives up on a song that still had a good peer.
+
+#[test]
+fn gives_up_only_at_the_budget() {
+    assert!(!gives_up(0, 3, false, false));
+    assert!(!gives_up(2, 3, false, false));
+    assert!(gives_up(3, 3, false, false));
+    assert!(gives_up(4, 3, false, false));
+    assert!(gives_up(1, 1, false, false));
+}
+
+#[test]
+fn gives_up_never_while_a_transcode_is_held_or_the_caller_is_gone() {
+    assert!(!gives_up(3, 3, true, false));
+    assert!(!gives_up(3, 3, false, true));
+    assert!(!gives_up(9, 3, true, true));
+}
+
+#[test]
+fn retries_setting_stays_between_one_and_ten() {
+    for (set, expected) in [(0, 1), (-4, 1), (3, 3), (10, 10), (99, 10)] {
+        let s = SoulseekSettings {
+            youtube_cross_check_retries: set,
+            ..Default::default()
+        };
+        assert_eq!(s.effective_youtube_cross_check_retries(), expected, "{set}");
+    }
+}

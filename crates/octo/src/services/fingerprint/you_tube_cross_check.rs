@@ -43,6 +43,13 @@ pub fn wanted(verdict: &VerificationResult, settings: &SoulseekSettings) -> bool
         )
 }
 
+/// Whether Soulseek stops asking peers for the song: `rejected` files in a row did not sound like
+/// it, which is `retries` or more. Not while a transcode is held back (that is the right song, and
+/// the walk delivers it) and not once the caller has gone, who is not waiting for anything.
+pub fn gives_up(rejected: i32, retries: i32, transcode_held: bool, caller_gone: bool) -> bool {
+    rejected >= retries && !transcode_held && !caller_gone
+}
+
 /// The file against the official copy of `artist - title`. None when there is no confident copy
 /// on YouTube Music, or either side could not be fingerprinted: no opinion.
 pub async fn compare(

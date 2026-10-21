@@ -1648,11 +1648,12 @@ impl SoulseekDownloadService {
                                 // Enough files that are not the song: stop asking peers and let the
                                 // source chain go on. A transcode held back is the right song, so it
                                 // is delivered by the walk instead.
-                                if cross_check_rejected
-                                    >= cross_settings.effective_youtube_cross_check_retries()
-                                    && reserve.is_none()
-                                    && !caller_gave_up
-                                {
+                                if you_tube_cross_check::gives_up(
+                                    cross_check_rejected,
+                                    cross_settings.effective_youtube_cross_check_retries(),
+                                    reserve.is_some(),
+                                    caller_gave_up,
+                                ) {
                                     return Err(file_not_found(format!(
                                         "{cross_check_rejected} Soulseek files for '{artist} - {title}' did not sound like its YouTube copy"
                                     )));

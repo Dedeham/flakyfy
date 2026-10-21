@@ -21,7 +21,6 @@ pub mod listen_brainz;
 pub mod local;
 pub mod lyrics;
 pub mod metadata;
-pub mod monitoring;
 pub mod notifications;
 pub mod radio;
 pub mod sonic;

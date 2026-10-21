@@ -318,8 +318,6 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "LibraryActions:KeepRatedCopies",
     "Subsonic:DownloadAlbumOnSongStar",
     "Metadata:AnimatedArt",
-    "Monitoring:Enabled",
-    "Monitoring:RetentionDays",
     "Soulseek:YoutubeCrossCheck",
     "Soulseek:YoutubeCrossCheckRetries",
     "LibraryActions:YoutubeCheckPerHour",

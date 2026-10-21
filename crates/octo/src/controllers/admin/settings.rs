@@ -673,14 +673,6 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             );
         }
     }
-    let monitoring = &current.monitoring;
-    doc.insert(
-        "Monitoring".into(),
-        n_obj([
-            ("Enabled", Node::Bool(monitoring.enabled)),
-            ("RetentionDays", n_num(monitoring.retention_days)),
-        ]),
-    );
     doc
 }
 

@@ -346,12 +346,6 @@ services:
       # folder, so it needs no volume of its own and stays out of your library. Off until
       # you turn it on here or on the dashboard.
       Family__Enabled: ${FAMILY_ENABLED:-false}
-      # ----- Monitoring -----
-      # Counts the length of every finished play per person and day, with its genre,
-      # platform and app, for the dashboard's Monitoring page. Song names are not kept.
-      # Off until you turn it on here or on the dashboard.
-      Monitoring__Enabled: ${MONITORING_ENABLED:-false}
-      Monitoring__RetentionDays: ${MONITORING_RETENTION_DAYS:-365}
       # ----- Logging -----
       # The two lines for every request and those for every call Octo makes to another
       # service are left out (Warning), so the log holds Octo's own lines and costs less

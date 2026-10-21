@@ -779,10 +779,9 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, the sweep's
     // replacing two: LibraryActions:ReviewSweepAutoReplace and :ReviewSweepAutoReplacePerDay,
     // then LibraryActions:KeepRatedCopies, Subsonic:DownloadAlbumOnSongStar and
-    // Metadata:AnimatedArt, then the Monitoring page's two (Monitoring:Enabled and :RetentionDays),
-    // then the YouTube comparison's two: Soulseek:YoutubeCrossCheck and :YoutubeCrossCheckRetries,
-    // then LibraryActions:YoutubeCheckPerHour, listed last.
-    assert_eq!(rows.len(), 208);
+    // Metadata:AnimatedArt, then the YouTube comparison's two: Soulseek:YoutubeCrossCheck and
+    // :YoutubeCrossCheckRetries, then LibraryActions:YoutubeCheckPerHour, listed last.
+    assert_eq!(rows.len(), 206);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()
@@ -795,8 +794,6 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(rows[200]["Key"], "LibraryActions:KeepRatedCopies");
     assert_eq!(rows[201]["Key"], "Subsonic:DownloadAlbumOnSongStar");
     assert_eq!(rows[202]["Key"], "Metadata:AnimatedArt");
-    assert_eq!(rows[203]["Key"], "Monitoring:Enabled");
-    assert_eq!(rows[204]["Key"], "Monitoring:RetentionDays");
     assert_eq!(row("Subsonic:DownloadAlbumOnSongStar")["IsSecret"], false);
     assert_eq!(
         row("LibraryActions:ReviewSweepAutoReplacePerDay")["IsSecret"],

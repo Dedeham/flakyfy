@@ -157,7 +157,6 @@ function activateTab(name, { focus = false } = {}) {
   if ((name === 'status' || name === 'fetched') && typeof loadAmbient === 'function') loadAmbient();
   if (name === 'lossy' && typeof loadLossy === 'function') loadLossy();
   if (name === 'health' && typeof loadHealth === 'function') loadHealth();
-  if (name === 'monitoring' && typeof loadMonitoring === 'function') loadMonitoring();
   if (name === 'imports' && typeof loadImports === 'function') loadImports();
   if (name === 'raw' && typeof loadRawConfig === 'function') loadRawConfig();
   if (name === 'sources' && typeof loadConfigSources === 'function') loadConfigSources();
@@ -517,7 +516,6 @@ async function refreshStatus() {
     lastStatus = data;
     renderSetupChecklist();
     detectFamily();
-    detectMonitoring();
   } catch (e) {
     document.querySelectorAll('.status-card').forEach(card => {
       card.classList.add('bad');
@@ -8845,147 +8843,6 @@ document.getElementById('health-body')?.addEventListener('keydown', event => {
   if (to === undefined) return;
   event.preventDefault();
   pickHealthCheck(names[(to + names.length) % names.length], true);
-});
-
-// ────────────────────────────────────────────────────────────────
-// Monitoring: shown only on a server that answers /api/admin/monitoring
-// ────────────────────────────────────────────────────────────────
-// A server without it (the C# build serving these same files) answers 404, so the entry stays
-// hidden there. Only "sign in first" (401) or no answer is asked again on the next status read.
-let monitoringSupport = null;
-let monitoringLoading = false;
-
-function detectMonitoring() {
-  if (monitoringSupport) return monitoringSupport;
-  monitoringSupport = fetch('/api/admin/monitoring?days=1', { credentials: 'same-origin' })
-    .then(r => {
-      if (r.status === 401) monitoringSupport = null;
-      return r.ok;
-    })
-    .catch(() => {
-      monitoringSupport = null;
-      return false;
-    })
-    .then(supported => {
-      const nav = document.getElementById('monitoring-nav');
-      const pane = document.getElementById('monitoring-pane');
-      if (nav) nav.hidden = !supported;
-      if (pane) pane.hidden = !supported;
-      return supported;
-    });
-  return monitoringSupport;
-}
-
-function fmtListening(seconds) {
-  const minutes = Math.round((seconds ?? 0) / 60);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return hours >= 100 || rest === 0 ? `${hours.toLocaleString()} h` : `${hours} h ${rest} min`;
-}
-
-// A ranked list as bars: the longest is full width, the rest are scaled to it.
-function monitoringBars(rows, empty = 'Nothing yet') {
-  if (!rows?.length) return `<p class="set-desc">${esc(empty)}</p>`;
-  const top = Math.max(...rows.map(r => r.seconds), 1);
-  return `<ul class="mon-list">${rows.map(r => `<li>
-      <span class="mon-name">${esc(r.name)}</span>
-      <span class="mon-track" aria-hidden="true"><span class="mon-fill" style="width:${Math.max(2, Math.round(r.seconds / top * 100))}%"></span></span>
-      <span class="mon-val">${esc(fmtListening(r.seconds))}</span>
-    </li>`).join('')}</ul>`;
-}
-
-function monitoringDays(daily) {
-  if (!daily?.length) return '';
-  const top = Math.max(...daily.map(d => d.seconds), 1);
-  // A long range is thinned to about a hundred bars, each the sum of its days.
-  const step = Math.ceil(daily.length / 100);
-  const groups = [];
-  for (let i = 0; i < daily.length; i += step) {
-    const part = daily.slice(i, i + step);
-    groups.push({ from: part[0].date, to: part[part.length - 1].date, seconds: part.reduce((n, d) => n + d.seconds, 0) });
-  }
-  const high = Math.max(...groups.map(g => g.seconds), 1);
-  const bars = groups.map(g => {
-    const label = `${g.from === g.to ? g.from : `${g.from} to ${g.to}`}: ${fmtListening(g.seconds)}`;
-    return `<span class="mon-day" title="${esc(label)}" role="img" aria-label="${esc(label)}"><span style="height:${g.seconds ? Math.max(3, Math.round(g.seconds / high * 100)) : 0}%"></span></span>`;
-  }).join('');
-  return `<div class="mon-days">${bars}</div>
-    <div class="mon-days-axis"><span>${esc(daily[0].date)}</span><span>${esc(fmtListening(top))} on the busiest day</span><span>${esc(daily[daily.length - 1].date)}</span></div>`;
-}
-
-function renderMonitoring(data) {
-  const body = document.getElementById('monitoring-body');
-  const { summary } = data;
-  document.getElementById('monitoring-off').hidden = data.enabled;
-  if (!summary.totals.plays) {
-    body.innerHTML = stateBlock('empty', data.enabled
-      ? 'No finished plays in this range yet.'
-      : 'Nothing counted yet.');
-    return;
-  }
-  const names = rows => rows.map(r => r.name).join(', ');
-  const users = summary.users.map(u => `<tr>
-      <td>${esc(u.user)}</td>
-      <td class="num">${esc(fmtListening(u.seconds))}</td>
-      <td class="num">${u.plays.toLocaleString()}</td>
-      <td>${esc(names(u.genres) || '–')}</td>
-      <td>${esc(names(u.platforms) || '–')}</td>
-      <td>${esc(names(u.apps) || '–')}</td>
-    </tr>`).join('');
-  body.innerHTML = `
-    <div class="mon-kpis">
-      <div class="info-card"><div class="mon-kpi-v">${esc(fmtListening(summary.totals.seconds))}</div><div class="mon-kpi-l">Listened</div></div>
-      <div class="info-card"><div class="mon-kpi-v">${summary.totals.plays.toLocaleString()}</div><div class="mon-kpi-l">Plays</div></div>
-      <div class="info-card"><div class="mon-kpi-v">${summary.totals.listeners.toLocaleString()}</div><div class="mon-kpi-l">${summary.totals.listeners === 1 ? 'Listener' : 'Listeners'}</div></div>
-    </div>
-    <div class="info-card"><div class="settings-card-title">Hours per day</div>${monitoringDays(summary.daily)}</div>
-    <div class="info-card"><div class="settings-card-title">Listeners</div>
-      <div class="mon-scroll"><table class="mon-table">
-        <thead><tr><th>Who</th><th class="num">Time</th><th class="num">Plays</th><th>Top genres</th><th>Platform</th><th>App</th></tr></thead>
-        <tbody>${users}</tbody>
-      </table></div>
-    </div>
-    <div class="mon-grid">
-      <div class="info-card"><div class="settings-card-title">Top genres</div>${monitoringBars(summary.genres)}</div>
-      <div class="info-card"><div class="settings-card-title">Platforms</div>${monitoringBars(summary.platforms)}</div>
-      <div class="info-card"><div class="settings-card-title">Apps</div>${monitoringBars(summary.apps)}</div>
-    </div>`;
-}
-
-async function loadMonitoring() {
-  const body = document.getElementById('monitoring-body');
-  if (!body || monitoringLoading) return;
-  monitoringLoading = true;
-  const refresh = document.getElementById('monitoring-refresh');
-  if (refresh) refresh.disabled = true;
-  try {
-    const days = document.getElementById('monitoring-range').value;
-    const r = await api(`/api/admin/monitoring?days=${encodeURIComponent(days)}`, { cache: 'no-store' });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-    renderMonitoring(data);
-  } catch (e) {
-    body.innerHTML = stateBlock('error', `The listening log could not be read (${e.message || 'no answer'}).`);
-  } finally {
-    monitoringLoading = false;
-    if (refresh) refresh.disabled = false;
-  }
-}
-
-document.getElementById('monitoring-range')?.addEventListener('change', () => loadMonitoring());
-document.getElementById('monitoring-refresh')?.addEventListener('click', () => loadMonitoring());
-document.getElementById('monitoring-clear')?.addEventListener('click', async () => {
-  const sure = await askDialog({
-    title: 'Forget all listening?',
-    message: 'The whole listening log is deleted. This cannot be undone.',
-    confirm: 'Forget',
-    danger: true,
-  });
-  if (!sure) return;
-  const r = await api('/api/admin/monitoring', { method: 'DELETE' });
-  toast(r.ok ? 'Listening log cleared' : 'The log could not be cleared', r.ok ? 'ok' : 'error');
-  if (r.ok) loadMonitoring();
 });
 
 // ────────────────────────────────────────────────────────────────

@@ -166,6 +166,7 @@ function activateTab(name, { focus = false } = {}) {
   if (name === 'lastfm' && typeof loadRadioOutcomes === 'function') loadRadioOutcomes();
   if (name === 'lastfm' && typeof loadLastFmScrobbling === 'function') loadLastFmScrobbling();
   if (name === 'lastfm' && typeof loadLastFmAccount === 'function') loadLastFmAccount();
+  if (name === 'mixes' && typeof loadPrecache === 'function') loadPrecache();
   if (name === 'about' && typeof loadUpdate === 'function') loadUpdate();
   if (name === 'soulseek' && typeof loadSharing === 'function') loadSharing();
   if (name === 'family' && typeof loadFamily === 'function') loadFamily();
@@ -5013,6 +5014,96 @@ findEl('trash-list')?.addEventListener('click', async event => {
 // are drawn here. Every word from Apple (a genre's or a list's name, an error) goes on the page
 // as text, never as HTML.
 let chartsInfo = null;
+
+// Play instantly: the lists the pre-cache can keep ready, a tick and a number for each, and what
+// it has fetched. Every change saves the whole selection.
+let precacheInfo = null;
+
+async function loadPrecache() {
+  let r;
+  try {
+    r = await api('/api/admin/precache', { cache: 'no-store' });
+  } catch {
+    return;
+  }
+  if (!r.ok) return;
+  precacheInfo = await r.json();
+  renderPrecache();
+}
+
+function renderPrecache() {
+  const box = document.getElementById('precache-lists');
+  const summary = document.getElementById('precache-summary');
+  if (!box || !summary || !precacheInfo) return;
+  const info = precacheInfo;
+  const ready = info.cached.length;
+  const waiting = info.cached.filter(c => c.note).length;
+  const parts = [];
+  parts.push(info.enabled ? 'Fetching ahead is on.' : 'Fetching ahead is off: turn it on above.');
+  parts.push(`${ready} song${ready === 1 ? '' : 's'} fetched and waiting to be played.`);
+  if (waiting) parts.push(`${waiting} untouched for ${info.keepDays} days${info.dryRun ? ' (dry run: none is moved)' : ''}.`);
+  if (info.lastFillUtc) parts.push(`Last round ${relativeTime(info.lastFillUtc)}.`);
+  summary.textContent = parts.join(' ');
+  if (!info.lists.length) {
+    const none = document.createElement('div');
+    none.className = 'set-info-d';
+    none.textContent = 'No list to pick yet. Made for you lists appear once a listener has opened them, and charts once they are made.';
+    box.replaceChildren(none);
+    return;
+  }
+  box.replaceChildren(...info.lists.map(list => {
+    const row = document.createElement('div');
+    row.className = 'precache-row';
+    const name = `${list.label}${info.lists.some(o => o !== list && o.label === list.label) ? ` (${list.owner})` : ''}`;
+    const tick = document.createElement('input');
+    tick.type = 'checkbox';
+    tick.checked = list.picked;
+    tick.dataset.owner = list.owner;
+    tick.dataset.key = list.key;
+    tick.setAttribute('aria-label', `Keep ${name} ready`);
+    const text = document.createElement('span');
+    text.textContent = `${name}: ${list.outside} song${list.outside === 1 ? '' : 's'} to fetch, ${list.ready} ready`;
+    const count = document.createElement('input');
+    count.type = 'number';
+    count.className = 'set-input precache-count';
+    count.min = '1';
+    count.max = '50';
+    count.placeholder = String(info.defaultCount);
+    count.value = list.count ?? '';
+    count.disabled = !list.picked;
+    count.dataset.owner = list.owner;
+    count.dataset.key = list.key;
+    count.setAttribute('aria-label', `Songs of ${name} to keep ready`);
+    row.append(tick, text, count);
+    return row;
+  }));
+}
+
+async function savePrecachePicks() {
+  const box = document.getElementById('precache-lists');
+  const summary = document.getElementById('precache-summary');
+  if (!box) return;
+  const picks = Array.from(box.querySelectorAll('input[type="checkbox"]:checked')).map(tick => {
+    const count = box.querySelector(`input.precache-count[data-owner="${CSS.escape(tick.dataset.owner)}"][data-key="${CSS.escape(tick.dataset.key)}"]`);
+    return { owner: tick.dataset.owner, key: tick.dataset.key, count: count?.value ? Number(count.value) : null };
+  });
+  try {
+    const r = await api('/api/admin/precache', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ picks }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    precacheInfo = await r.json();
+    renderPrecache();
+  } catch (e) {
+    if (summary) summary.textContent = `Could not save the picks: ${e.message}`;
+  }
+}
+
+document.getElementById('precache-lists')?.addEventListener('change', event => {
+  if (event.target.matches('input[type="checkbox"], input.precache-count')) savePrecachePicks();
+});
 
 async function loadCharts() {
   const details = document.querySelectorAll('#charts-section .charts-detail');

@@ -139,6 +139,35 @@ pub struct GeneratedPlaylistSettings {
     /// it) or a two-letter Apple country such as "us" or "gb". Environment variable:
     /// CHART_COUNTRY
     pub chart_country: String,
+
+    /// Fetch a few songs of the lists picked on the Mixes page ahead of time, so a shuffle starts
+    /// at once instead of waiting for a search. Only songs from outside the library are fetched;
+    /// they are kept like any download, and let go again after PrecacheKeepDays if nobody starred,
+    /// rated or played them. Off by default: it downloads without being asked.
+    /// Environment variable: PRECACHE
+    pub precache: bool,
+
+    /// How many songs of a picked list are kept ready at a time, unless the list has its own
+    /// number. A round fetches only what is missing from that.
+    /// Environment variable: PRECACHE_COUNT
+    pub precache_count: i32,
+
+    /// How often the picked lists are looked at again. Environment variable: PRECACHE_INTERVAL_HOURS
+    pub precache_interval_hours: i32,
+
+    /// How long a song fetched ahead is kept if nobody took it up.
+    /// Environment variable: PRECACHE_KEEP_DAYS
+    pub precache_keep_days: i32,
+
+    /// Plays that make a fetched song a library song to keep. Starred or rated songs are kept
+    /// whatever their plays. Environment variable: PRECACHE_MIN_PLAYS
+    pub precache_min_plays: i32,
+
+    /// Only say which songs would be let go, and let none go. On to begin with, since letting a
+    /// song go moves a file. A song goes to the Recently removed trash, never straight out; the
+    /// library actions must be on, with Delete and the person on the allowlist, for it to move at
+    /// all. Environment variable: PRECACHE_DRY_RUN
+    pub precache_dry_run: bool,
 }
 
 impl Default for GeneratedPlaylistSettings {
@@ -176,6 +205,12 @@ impl Default for GeneratedPlaylistSettings {
             popular_now: true,
             charts: "new,trending,18,14,6".to_string(),
             chart_country: "auto".to_string(),
+            precache: false,
+            precache_count: 5,
+            precache_interval_hours: 6,
+            precache_keep_days: 30,
+            precache_min_plays: 2,
+            precache_dry_run: true,
         }
     }
 }
@@ -285,6 +320,22 @@ impl GeneratedPlaylistSettings {
 
     pub fn effective_new_days(&self) -> i32 {
         self.new_days.clamp(1, 3650)
+    }
+
+    pub fn effective_precache_count(&self) -> i32 {
+        self.precache_count.clamp(1, 50)
+    }
+
+    pub fn effective_precache_interval_hours(&self) -> i32 {
+        self.precache_interval_hours.clamp(1, 24 * 7)
+    }
+
+    pub fn effective_precache_keep_days(&self) -> i32 {
+        self.precache_keep_days.clamp(1, 3650)
+    }
+
+    pub fn effective_precache_min_plays(&self) -> i32 {
+        self.precache_min_plays.clamp(1, 1000)
     }
 
     /// A format that is not a format (a stray brace) names the mix the default way

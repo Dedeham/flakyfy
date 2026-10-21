@@ -2675,6 +2675,9 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .set-row-stack { flex-direction: column; align-items: stretch; gap: 10px; }
 .chart-choices { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .chart-choice { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.precache-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 13px; padding: 4px 0; }
+.precache-row > span { flex: 1 1 16em; }
+.precache-count { width: 5em; }
 .chart-status { padding: 8px 16px 12px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
 .chart-status-note { margin-top: 4px; color: var(--text-faint); }
 

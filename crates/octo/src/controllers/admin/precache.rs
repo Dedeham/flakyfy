@@ -136,6 +136,10 @@ fn status(state: &AppState) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    use axum::http::Method;
+    use octo_core::settings::AppSettings;
+
+    use super::super::test_app::{admin_write, app, get, send};
     use super::*;
 
     fn list(owner: &str, key: &str) -> ListInfo {
@@ -194,5 +198,62 @@ mod tests {
         );
         assert_eq!(kept[0].count, Some(1));
         assert_eq!(kept[1].count, Some(50));
+    }
+    #[tokio::test]
+    async fn get_answers_the_settings_and_no_lists_before_any_is_made() {
+        let app = app(AppState::for_tests(AppSettings::default()));
+
+        let reply = get(&app, "/api/admin/precache").await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        let body = reply.json();
+        assert_eq!(body["enabled"], false);
+        assert_eq!(body["dryRun"], true);
+        assert_eq!(body["defaultCount"], 5);
+        assert_eq!(body["keepDays"], 30);
+        assert_eq!(body["lists"].as_array().map(Vec::len), Some(0));
+        assert_eq!(body["cached"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[tokio::test]
+    async fn put_without_the_admin_header_is_refused() {
+        let app = app(AppState::for_tests(AppSettings::default()));
+
+        let reply = send(
+            &app,
+            Method::PUT,
+            "/api/admin/precache",
+            &[],
+            Some(r#"{"picks":[]}"#),
+        )
+        .await;
+
+        assert_eq!(reply.status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn put_of_something_that_is_not_picks_is_a_400() {
+        let app = app(AppState::for_tests(AppSettings::default()));
+
+        let reply = admin_write(&app, Method::PUT, "/api/admin/precache", Some("not json")).await;
+
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn put_leaves_out_a_list_that_does_not_exist() {
+        let state = AppState::for_tests(AppSettings::default());
+        let app = app(state.clone());
+
+        let reply = admin_write(
+            &app,
+            Method::PUT,
+            "/api/admin/precache",
+            Some(r#"{"picks":[{"owner":"jamie","key":"for:newreleases","count":3}]}"#),
+        )
+        .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(state.playlist_precache_worker.store().read(|s| s.picks.len()), 0);
     }
 }

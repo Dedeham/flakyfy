@@ -13,6 +13,7 @@ use std::path::Path;
 use octo_core::fingerprint::fingerprint_compare::{self, CrossCheck, MAX_SHIFT};
 use octo_core::settings::SoulseekSettings;
 use octo_media::audio::AudioFingerprinter;
+use octo_media::tags::TagFile;
 
 use super::you_tube_cross_check::CLIP_SECONDS;
 
@@ -24,6 +25,9 @@ pub enum SameRecording {
     Differs(f64),
     /// Alike enough to doubt: another version, a remaster, a live take.
     Unsure(f64),
+    /// The lengths are too far apart for an intro: another cut of the song. The difference in
+    /// seconds, positive when the candidate is the longer.
+    LengthDiffers(i32),
     /// A fingerprint could not be made of one of the files.
     CannotTell,
 }
@@ -45,7 +49,7 @@ impl SameRecording {
     /// Whether the audio itself says it is another song or version. A comparison that could not be
     /// made says nothing, so a candidate is not thrown away for it.
     pub fn is_another_sound(self) -> bool {
-        matches!(self, Self::Differs(_) | Self::Unsure(_))
+        matches!(self, Self::Differs(_) | Self::Unsure(_) | Self::LengthDiffers(_))
     }
 
     /// Why the original stays, for the journal and the log.
@@ -61,6 +65,11 @@ impl SameRecording {
                 "may be another version of the song it would replace ({}% alike), so the original stays",
                 percent(s)
             ),
+            Self::LengthDiffers(seconds) => format!(
+                "is {}s {} than the song it would replace, so it may be another cut and the original stays",
+                seconds.abs(),
+                if seconds > 0 { "longer" } else { "shorter" }
+            ),
             Self::CannotTell => {
                 "could not be compared with the song it would replace, so the original stays".to_string()
             }
@@ -68,26 +77,65 @@ impl SameRecording {
     }
 }
 
-/// `candidate` against `original`, the first half minute of each.
+/// Two lengths further apart than this are another cut of the song (an extended mix, a radio edit),
+/// not an intro. A short intro on a YouTube copy, a few seconds, is the same song and stays inside
+/// it; the fingerprint slide (`MAX_SHIFT`, about twelve seconds) absorbs it.
+const LENGTH_GAP_SECONDS: i32 = 20;
+
+/// Where the windows of `clip` seconds start in a file of `shorter` seconds: the start, the middle and
+/// the end, as far as the file is long enough for them not to overlap. The same times are used in both
+/// files, so an intro on one of them is a constant offset the slide absorbs.
+pub(crate) fn window_starts(shorter: i32, clip: i32) -> Vec<i32> {
+    let last = shorter - clip;
+    if clip <= 0 || last < clip {
+        vec![0]
+    } else if last < clip * 2 {
+        vec![0, last]
+    } else {
+        vec![0, last / 2, last]
+    }
+}
+
+fn length_of(path: &Path) -> Option<i32> {
+    TagFile::open(path).ok().map(|file| file.duration_seconds())
+}
+
+/// `candidate` against `original`, in up to three windows. Every window has to match: a remaster or
+/// a live take often shares its intro with the song and parts ways later.
 pub async fn same_recording(
     fingerprinter: &AudioFingerprinter,
     candidate: &Path,
     original: &Path,
     settings: &SoulseekSettings,
 ) -> SameRecording {
-    let seconds = settings.effective_fingerprint_seconds().min(CLIP_SECONDS);
+    let clip = settings.effective_fingerprint_seconds().min(CLIP_SECONDS);
     let timeout = settings.effective_fingerprint_timeout_seconds();
-    let (new, old) = tokio::join!(
-        fingerprinter.fingerprint_raw(candidate, seconds, timeout),
-        fingerprinter.fingerprint_raw(original, seconds, timeout),
-    );
-    let (Some(new), Some(old)) = (new, old) else {
-        return SameRecording::CannotTell;
+    let lengths = (length_of(candidate), length_of(original));
+    let starts = match lengths {
+        (Some(new), Some(old)) => {
+            if (new - old).abs() > LENGTH_GAP_SECONDS {
+                return SameRecording::LengthDiffers(new - old);
+            }
+            window_starts(new.min(old), clip)
+        }
+        // The length is not known, so only the start is compared.
+        _ => vec![0],
     };
-    match fingerprint_compare::similarity(&new, &old, MAX_SHIFT) {
-        Some(similarity) => SameRecording::from_similarity(similarity),
-        None => SameRecording::CannotTell,
+    let mut worst: Option<f64> = None;
+    for start in starts {
+        let (new, old) = tokio::join!(
+            fingerprinter.fingerprint_raw_window(candidate, start, clip, timeout),
+            fingerprinter.fingerprint_raw_window(original, start, clip, timeout),
+        );
+        let (Some(new), Some(old)) = (new, old) else {
+            return SameRecording::CannotTell;
+        };
+        let Some(similarity) = fingerprint_compare::similarity(&new, &old, MAX_SHIFT) else {
+            return SameRecording::CannotTell;
+        };
+        worst = Some(worst.map_or(similarity, |w| w.min(similarity)));
     }
+    worst.map_or(SameRecording::CannotTell, SameRecording::from_similarity)
 }
 
 #[cfg(test)]

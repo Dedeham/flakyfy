@@ -109,3 +109,74 @@ async fn a_missing_file_cannot_be_told() {
     assert_eq!(judged(&gone, &mp3).await, SameRecording::CannotTell);
     assert_eq!(judged(&mp3, &gone).await, SameRecording::CannotTell);
 }
+
+#[test]
+fn windows_cover_start_middle_and_end_of_a_long_file_and_only_the_start_of_a_short_one() {
+    assert_eq!(window_starts(200, 30), vec![0, 85, 170]);
+    assert_eq!(window_starts(80, 30), vec![0, 50]);
+    assert_eq!(window_starts(40, 30), vec![0]);
+    assert_eq!(window_starts(100, 0), vec![0]);
+}
+
+#[test]
+fn a_length_gap_is_a_reason_to_keep_the_original() {
+    let longer = SameRecording::LengthDiffers(45);
+    assert!(!longer.allows_replacing());
+    assert!(longer.is_another_sound());
+    assert!(longer.refusal().contains("45s longer"));
+    assert!(
+        SameRecording::LengthDiffers(-30)
+            .refusal()
+            .contains("30s shorter")
+    );
+}
+
+/// Another tune, long enough (80 s) to follow forty seconds of `LONG_MELODY` to 120 s, so the file
+/// is not refused for its length before the windows are compared.
+const LONG_OTHER_MELODY: &str = "aevalsrc='0.4*sin(2*PI*t*(300+70*floor(mod(t*5,9)))) + 0.2*sin(2*PI*t*(500+30*floor(mod(t*3,5))))':d=80:s=44100";
+
+const LONG_MELODY: &str = "aevalsrc='0.4*sin(2*PI*t*(220+55*floor(mod(t*3,8)))) + 0.2*sin(2*PI*t*(330+40*floor(mod(t*2,7))))':d=120:s=44100";
+
+#[tokio::test]
+async fn a_youtube_copy_with_a_short_intro_is_still_the_same_song() {
+    if !tools_present() {
+        return;
+    }
+    let mp3 = make(
+        "intro.mp3",
+        LONG_MELODY,
+        &["-af", "adelay=5000|5000", "-c:a", "libmp3lame", "-b:a", "128k"],
+    );
+    let flac = make("intro.flac", LONG_MELODY, &["-c:a", "flac"]);
+
+    let found = judged(&flac, &mp3).await;
+
+    assert!(found.allows_replacing(), "{found:?}");
+}
+
+#[tokio::test]
+async fn the_same_start_with_another_ending_never_replaces() {
+    if !tools_present() {
+        return;
+    }
+    let mp3 = make("tail.mp3", LONG_MELODY, &["-c:a", "libmp3lame", "-b:a", "128k"]);
+    let other = std::env::temp_dir().join(format!("octo-same-{}-tail.flac", std::process::id()));
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", LONG_MELODY])
+        .args(["-f", "lavfi", "-i", LONG_OTHER_MELODY])
+        .args([
+            "-filter_complex",
+            "[0]atrim=0:40[a];[1]atrim=0:80,asetpts=PTS-STARTPTS[b];[a][b]concat=n=2:v=0:a=1",
+            "-c:a",
+            "flac",
+        ])
+        .arg(&other)
+        .status()
+        .expect("ffmpeg runs");
+    assert!(status.success());
+
+    let found = judged(&other, &mp3).await;
+
+    // Refused for the sound of its later windows, not for its length: the start alone would match.
+    assert!(matches!(found, SameRecording::Differs(_)), "{found:?}");
+}

@@ -2588,6 +2588,15 @@
               <div class="set-info"><div class="set-info-t">Re-check Octo's downloads</div><div class="set-info-d" id="review-sweep-recheck-status">Checks every song Octo downloaded once more, then stops. Useful after changing the minimum match score.</div><div class="set-info-more">At least 60 songs an hour, even with the library check at 0. Songs already answered in Review are not asked about again.</div></div>
               <button class="btn btn-ghost" type="button" id="review-sweep-recheck" data-recheck-octo><span>Re-check</span></button>
             </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">YouTube check <span class="set-opt">songs an hour</span></div><div class="set-info-d">0 is off. Only while nothing is downloading.</div></div>
+              <input class="set-input" name="LibraryActions.YoutubeCheckPerHour" type="number" min="0" max="360" data-number="true" />
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Check every song against YouTube</div><div class="set-info-d" id="youtube-check-status">Compares each song in your library with its official YouTube Music copy, once.</div><div class="set-info-more"><p>A song that sounds nothing like its copy becomes a question in Review. Nothing is changed or removed. The first half minute of each is compared here, nothing is uploaded.</p><p>Songs YouTube Music has no confident copy of are left alone, and a song is never asked twice. If YouTube Music stops answering, the check rests an hour and carries on. Press the button again to forget the answers and compare everything anew.</p></div></div>
+              <button class="btn btn-ghost" type="button" id="youtube-check-pause" hidden><span>Pause</span></button>
+              <button class="btn btn-ghost" type="button" id="youtube-check-start"><span>Check</span></button>
+            </div>
             <details class="set-more">
               <summary>Playlist name and size</summary>
               <div class="set-row stack">

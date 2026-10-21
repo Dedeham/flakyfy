@@ -411,6 +411,8 @@ $(setting USE_LOCAL_STAGING false)
 $(setting EXPLICIT_FILTER All)
 $(setting CACHE_DURATION_HOURS 1)
 $(setting ENABLE_EXTERNAL_PLAYLISTS false)
+$(setting MONITORING_ENABLED false)
+$(setting MONITORING_RETENTION_DAYS 365)
 
 # === yt-dlp shim (defaults are fine) ===
 $(setting YTDLP_MAX_CONCURRENT 5)

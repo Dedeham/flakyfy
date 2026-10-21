@@ -12,6 +12,7 @@ pub mod lidarr;
 pub mod lyrics;
 pub mod metadata;
 pub mod models;
+pub mod monitoring;
 pub mod notifications;
 pub mod places;
 pub mod radio;

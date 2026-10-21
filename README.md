@@ -296,6 +296,22 @@ music folder with no setup, and stays out of your own library; see
 [Where members' music lives](docs/family.md#where-members-music-lives). Music on rclone, SMB
 or NFS storage: see [Cloud and network storage](docs/family.md#cloud-and-network-storage).
 
+## Monitoring
+
+The dashboard's Monitoring page shows who listens and for how long, which genres they listen
+to most, and on which platform (iOS, Android, Windows, ...) and in which app. It is off until
+you turn it on under Monitoring settings on that page (`MONITORING_ENABLED`, default `false`).
+
+- It adds up the length of every play a music app reports as finished, per person and day. A
+  song skipped early adds nothing, so the hours are a floor. Song names are not kept.
+- Songs from outside your library have no genre and count as Unknown.
+- The log is `listening.json` in the config folder. Days older than `MONITORING_RETENTION_DAYS`
+  (default `365`) are dropped, and the page can forget everything at once.
+- The platform and app come from the app's name and User-Agent. An app Octo does not know shows
+  under its own name, with the platform Unknown.
+
+Only the Rust build has it; the page hides itself on a server without it.
+
 ## Notifications
 
 Optional push notifications for the download lifecycle, because Subsonic has no way to

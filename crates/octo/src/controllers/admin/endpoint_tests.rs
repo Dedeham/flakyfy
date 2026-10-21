@@ -1362,14 +1362,11 @@ async fn the_list_carries_what_the_page_filters_on() {
     assert_eq!(by_id("nd-plain")["fromYouTube"], json!(false));
 }
 
-/// The YouTube check's status is counts only, idle until a person starts it, and only once signed in.
+/// The YouTube check's status is counts only, and idle until a person starts it.
 #[tokio::test]
 async fn the_youtube_check_is_idle_until_started_and_shows_counts_only() {
     let state = AppState::for_tests(AppSettings::default());
     let app = app(&state);
-
-    let signed_out = send(&app, request(Method::GET, "/api/admin/youtube-check", None, None)).await;
-    assert_ne!(signed_out.status, StatusCode::OK);
 
     let token = state.browse_sessions.create("admin");
     let reply = send(

@@ -567,13 +567,15 @@ A Better quality candidate has to sound like the file it replaces before it take
 seconds at the start, in the middle and at the end of each are fingerprinted and compared, and only
 when every window matches (70% alike or more) does the candidate replace the file: a remaster or a
 live take often shares its intro and parts ways later. A few seconds of intro on one of them (a
-YouTube copy) are allowed, a length 20 seconds or more apart is another cut of the song and refuses
-at once. A candidate that is another song, or may be another version, is thrown away, its peer is
-remembered and the next one is tried, and a candidate that could not be compared is refused too. The
-check runs for every peer in the search and once more just before the swap, so it covers Lidarr as
-well. When no copy matches, the lossy file stays, which is the right answer when there is no lossless
-copy of that recording. It does not apply to Wrong song and Wrong version (their original is the
-wrong one) or to a copy you picked yourself.
+YouTube copy) are allowed, a length more than 20 seconds apart is another cut of the song and
+refuses at once. A candidate that is another song, or may be another version, is thrown away and
+the next one is tried (its peer is remembered only when it is clearly another sound), and a
+candidate that could not be compared is refused too. The check runs for every peer in the search
+and once more just before the swap, so it covers Lidarr as well; a copy you picked in Find songs is
+the only candidate, so it is compared at the swap only. When no copy matches, the lossy file stays,
+which is the right answer when there is no lossless copy of that recording. It does not apply to
+Wrong song and Wrong version (their original is the wrong one) or to a copy you said to take in any
+quality.
 
 Two things to know before turning ratings on. Clearing a rating afterwards needs the rating
 owner's own credentials, because Subsonic ratings are per user, so **Octo caches a replayable
@@ -668,9 +670,10 @@ check. Press **Check every song against YouTube** (Library actions, Review) and 
 library is compared once with its official YouTube Music copy, over the first half minute of each,
 only while nothing is downloading and only of the person who keeps the library. A song that sounds
 nothing like its copy (under 60% alike) becomes a question in Review; nothing is changed or removed,
-and a song is never asked twice. Songs with no tags, or no confident copy on YouTube Music, are left
+and a song already asked about is not asked again. Songs with no tags, or no confident copy on YouTube Music, are left
 alone, and a YouTube Music that stops answering makes the check rest an hour rather than call every
-song fine. Its place is kept in `youtube-check.json` beside the settings, so a restart carries on
+song fine (a song that still cannot be compared after two such rests is counted as having no copy,
+so one video that never plays cannot hold the run). Its place is kept in `youtube-check.json` beside the settings, so a restart carries on
 where it was; the button again forgets the answers and starts over.
 
 `LIBRARY_ACTIONS_DUPLICATES` adds a Duplicates playlist per allowed user: recordings the
@@ -989,15 +992,16 @@ before it, and every check that cannot decide keeps the file, except where it sa
 | 6 | Same recording (Better quality) | the candidate against the file it replaces: start, middle, end, 30 s each, and the length | refused, the lossy file stays | built in |
 | 7 | Library check | every song already in the library against its YouTube copy, once | asked about in Review, never changed | `LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR` |
 
-How the comparison works. Chromaprint makes one 32-bit number per tenth of a second. Two numbers
-that are the same sound differ in few bits (a lossy copy of a song scores 90 to 100% alike), and
-two unrelated sounds in about half (noise or another song about 40 to 55%). One fingerprint is slid
+How the comparison works. Chromaprint makes one 32-bit number per eighth of a second. Two numbers
+that are the same sound differ in few bits, and two unrelated sounds in about half. In tests with
+generated audio a lossy copy of the same sound scored 92 to 100% alike and noise or another tune
+40 to 55%; real music varies, which is why the band between 60% and 70% is only asked about. One fingerprint is slid
 against the other by up to about 12 seconds, so a different intro or a leading silence does not
 matter, and the best fit counts. 70% alike or more is the same recording, under 60% is not, and in
 between it is doubtful: such a file is asked about, or, when it is about to replace a trusted file,
 refused. The thresholds are constants. Nothing is uploaded: both sides are fingerprinted here, the
 YouTube copy through the shim's `/stream`, a Range-capable stream of which ffmpeg reads only the
-first half minute.
+first half minute (at most; `SLSKD_FINGERPRINT_SECONDS` below 30 shortens it).
 
 What keeps this from going wrong:
 

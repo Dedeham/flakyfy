@@ -327,10 +327,18 @@ fn is_flac_path(path: &str) -> bool {
     dotnet::eq_ignore_case(get_extension(path), ".flac")
 }
 
+/// A walk in [`BaseDownloadService::album_walks`]: the source and the people it walks for, and
+/// its answer once it ends.
+struct RunningWalk {
+    source: Option<DownloadSource>,
+    requested_by: Option<Vec<String>>,
+    answer: watch::Receiver<Option<bool>>,
+}
+
 /// An album's place in [`BaseDownloadService::album_walks`], given up when its walk ends, however
 /// it ends.
 struct AlbumWalkEntry<'a> {
-    walks: &'a Mutex<HashMap<String, watch::Receiver<Option<bool>>>>,
+    walks: &'a Mutex<HashMap<String, RunningWalk>>,
     album_external_id: &'a str,
 }
 
@@ -338,6 +346,14 @@ impl Drop for AlbumWalkEntry<'_> {
     fn drop(&mut self) {
         self.walks.lock().remove(self.album_external_id);
     }
+}
+
+/// Waits for a walk to end and gives its answer, `None` when it ended without one (it panicked or
+/// its caller left). Its answer's sender goes only after its place is given up, so the album is
+/// free by the time this returns.
+async fn walk_ended(running: &mut watch::Receiver<Option<bool>>) -> Option<bool> {
+    while running.changed().await.is_ok() {}
+    *running.borrow()
 }
 
 /// Abstract base class for download services, as a struct: common download logic, tracking,
@@ -364,10 +380,10 @@ pub struct BaseDownloadService {
     /// The albums being fetched song by song outside a walk, newest last: their tracks are
     /// filed and tagged as one walk's would be.
     held_albums: Mutex<Vec<Arc<AlbumTagContext<Loudness>>>>,
-    /// The albums being walked, by external id, each with its walk's answer once it ends. A walk
-    /// asked for while one of the same album runs waits for that one: two walks side by side would
-    /// each queue a batch for the same songs, and the second would orphan the first.
-    album_walks: Mutex<HashMap<String, watch::Receiver<Option<bool>>>>,
+    /// The albums being walked, by external id, each with its walk's source, people and answer. A
+    /// walk asked for while one of the same album runs waits for that one: two walks side by side
+    /// would each queue a batch for the same songs, and the second would orphan the first.
+    album_walks: Mutex<HashMap<String, RunningWalk>>,
     /// One permit: one download at a time inside the lock.
     download_lock: Semaphore,
 
@@ -1519,8 +1535,10 @@ impl BaseDownloadService {
         .boxed()
     }
 
-    /// One walk of an album at a time. A request that comes while one runs answers what that walk
-    /// answers, and starts no walk of its own.
+    /// One walk of an album at a time. A request that comes while one runs for the same source and
+    /// the same people answers what that walk answers, and starts no walk of its own. Any other
+    /// request waits for that walk to end and then walks the album itself: its own source may find
+    /// what the running one could not, and its own people decide what it may upgrade.
     async fn walk_album(
         &self,
         album_external_id: &str,
@@ -1530,28 +1548,49 @@ impl BaseDownloadService {
         cancellation_token: &CancellationToken,
         requested_by: Option<Vec<String>>,
     ) -> anyhow::Result<bool> {
-        let running = {
-            let mut walks = self.album_walks.lock();
-            match walks.get(album_external_id) {
-                Some(running) => Err(running.clone()),
-                None => {
-                    let (answer, running) = watch::channel(None);
-                    walks.insert(album_external_id.to_string(), running);
-                    Ok(answer)
+        let answer = loop {
+            let running = {
+                let mut walks = self.album_walks.lock();
+                match walks.get(album_external_id) {
+                    Some(running) => Err((
+                        running.source == source_override && running.requested_by == requested_by,
+                        running.answer.clone(),
+                    )),
+                    None => {
+                        let (answer, running) = watch::channel(None);
+                        walks.insert(
+                            album_external_id.to_string(),
+                            RunningWalk {
+                                source: source_override,
+                                requested_by: requested_by.clone(),
+                                answer: running,
+                            },
+                        );
+                        Ok(answer)
+                    }
                 }
-            }
-        };
-        let answer = match running {
-            Ok(answer) => answer,
-            Err(mut running) => {
+            };
+            let (shared, mut running) = match running {
+                Ok(answer) => break answer,
+                Err(waiting) => waiting,
+            };
+            if shared {
                 info!("Album {album_external_id} is being walked already; this request waits for that walk");
-                // A walk that ended without an answer (it panicked) or a caller that left answers false.
-                return Ok(tokio::select! {
-                    _ = cancellation_token.cancelled() => false,
-                    ended = running.wait_for(Option::is_some) => ended.ok().and_then(|ended| *ended).unwrap_or(false),
-                });
+            } else {
+                info!(
+                    "Album {album_external_id} is being walked for another source or person; this request walks it once that walk ends"
+                );
+            }
+            let ended = tokio::select! {
+                _ = cancellation_token.cancelled() => return Ok(false),
+                ended = walk_ended(&mut running) => ended,
+            };
+            if shared {
+                // A walk that ended without an answer answers false.
+                return Ok(ended.unwrap_or(false));
             }
         };
+        // Made after `answer`, so it drops first: the album is free before the walk's waiters wake.
         let _walking = AlbumWalkEntry {
             walks: &self.album_walks,
             album_external_id,

@@ -101,8 +101,6 @@ use crate::services::library::library_youtube_check::{
     AppYoutubeChecker, LibraryYoutubeCheck, YoutubeCheckStore,
 };
 use crate::services::library::navidrome_song_list;
-use crate::services::library::playlist_precache_worker::PlaylistPrecacheWorker;
-use crate::services::library::precache_world::{PrecacheParts, build_precache};
 use crate::services::library::tidy::worker::ListSongs;
 use crate::services::library::tidy::{TidyJournal, TidyServices, TidyStore, TidyWorker};
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
@@ -111,7 +109,7 @@ use crate::services::library::{
     IdentitySweepStore, LibraryIdentitySweep, LibraryIdentitySweepParts, LibraryReviewSweepParts,
     LibraryReviewSweepWorker, MusicBrainzRecordingFacts, MusicBrainzReleaseTracks, NavidromeOtherListeners,
     NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker, ReviewSweepStore, SnapshotSweepLibrary,
-    SweepReplacer, UpgradeWorker, UpgradeWorkerParts,
+    UpgradeWorker, UpgradeWorkerParts,
 };
 use crate::services::library::{
     HeartOwnership, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionJournal,
@@ -504,9 +502,6 @@ pub struct AppInner {
     pub library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
     /// `LibraryYoutubeCheck`: the one-time comparison of every library song with its YouTube copy.
     pub library_youtube_check: Arc<LibraryYoutubeCheck>,
-    /// `PlaylistPrecacheWorker`: fetches a few songs of the picked lists ahead, and lets untouched
-    /// ones go; its picks and ledger are `precache.json`. The "PlaylistPrecacheWorker" worker.
-    pub playlist_precache_worker: Arc<PlaylistPrecacheWorker>,
     /// `IdentitySweepStore`: the library tag check's place and answers, `identity-sweep.json`.
     /// Its 5-second flush is the "IdentitySweepStore" worker.
     pub identity_sweep_store: Arc<IdentitySweepStore>,
@@ -2333,35 +2328,6 @@ pub struct TestServices {
     pub apple_music_base_url: Option<String>,
 }
 
-/// The playlist pre-cache over the pieces it reads: the lists the radio and the charts make, the
-/// acquisition queue, and the review sweep's replacer, which knows who marked a song and moves it
-/// to the trash.
-fn build_playlist_precache(
-    settings: &Arc<SettingsStore>,
-    config_dir: &std::path::Path,
-    navidrome: &NavidromeServices,
-    acquisition: &Acquisition,
-    radio: &Radio,
-    charts: &Charts,
-    library_jobs: &LibraryJobs,
-) -> Arc<PlaylistPrecacheWorker> {
-    let identity = navidrome.navidrome_identity.clone();
-    build_precache(
-        settings,
-        config_dir,
-        PrecacheParts {
-            generated: radio.generated_playlists.clone(),
-            charts: charts.playlists.clone(),
-            local: navidrome.local_library.clone(),
-            queue: acquisition.track_acquisition_queue.clone(),
-            replacer: library_jobs.sweep_replacer.clone(),
-            marks: navidrome.navidrome_playlist_api.clone(),
-            admin_name: Arc::new(move || identity.admin_user_name()),
-        },
-    )
-    .1
-}
-
 /// The queues and sweeps: the upgrade queue's worker, the weekly quality upgrade, the
 /// notice playlists, the duplicate scan and the library Review sweep, over the stores the
 /// [`Stores`] hold.
@@ -2373,8 +2339,6 @@ struct LibraryJobs {
     fingerprint_sweep_verifier: Arc<FingerprintSweepVerifier>,
     library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
     library_youtube_check: Arc<LibraryYoutubeCheck>,
-    /// What replaces a song and reads who marked it: the review sweep's, and the pre-cache's.
-    sweep_replacer: Arc<dyn SweepReplacer>,
 }
 
 impl LibraryJobs {
@@ -2436,28 +2400,6 @@ impl LibraryJobs {
             .with_library_scope(navidrome.library_scope.clone()),
         );
         let fingerprint_sweep_verifier = Arc::new(FingerprintSweepVerifier::new());
-        // The admin's marks are read with Octo's admin sign-in and each Family member's with
-        // their own. Anyone else on the server, or a member whose marks cannot be read, keeps
-        // the song a question.
-        let sweep_replacer: Arc<dyn SweepReplacer> = Arc::new(ExecutorSweepReplacer::new(
-            navidrome.navidrome_song_path_resolver.clone(),
-            executor.clone(),
-            navidrome.navidrome_playlist_api.clone(),
-            Some(Arc::new(NavidromeMemberMarks::new(
-                Arc::clone(settings),
-                navidrome.http.clone(),
-                Arc::clone(&stores.family_store),
-                Arc::new(MemberCredentials::new(
-                    Arc::clone(&stores.family_store),
-                    Arc::clone(&stores.family_vault),
-                    Arc::clone(settings),
-                )),
-            ))),
-            Arc::new(NavidromeOtherListeners::new(
-                navidrome.navidrome_admin.clone(),
-                stores.family_store.clone(),
-            )),
-        ));
         let resolver = navidrome.navidrome_song_path_resolver.clone();
         let library_review_sweep_worker = Arc::new(
             LibraryReviewSweepWorker::new(
@@ -2474,7 +2416,28 @@ impl LibraryJobs {
                 Clock::system(),
             )
             .with_library_scope(navidrome.library_scope.clone())
-            .with_replacer(sweep_replacer.clone()),
+            // The admin's marks are read with Octo's admin sign-in and each Family member's with
+            // their own. Anyone else on the server, or a member whose marks cannot be read, keeps
+            // the song a question.
+            .with_replacer(Arc::new(ExecutorSweepReplacer::new(
+                navidrome.navidrome_song_path_resolver.clone(),
+                executor.clone(),
+                navidrome.navidrome_playlist_api.clone(),
+                Some(Arc::new(NavidromeMemberMarks::new(
+                    Arc::clone(settings),
+                    navidrome.http.clone(),
+                    Arc::clone(&stores.family_store),
+                    Arc::new(MemberCredentials::new(
+                        Arc::clone(&stores.family_store),
+                        Arc::clone(&stores.family_vault),
+                        Arc::clone(settings),
+                    )),
+                ))),
+                Arc::new(NavidromeOtherListeners::new(
+                    navidrome.navidrome_admin.clone(),
+                    stores.family_store.clone(),
+                )),
+            ))),
         );
         // Walks the library once, when a person starts it, and keeps to the shared library.
         let resolver = navidrome.navidrome_song_path_resolver.clone();
@@ -2502,7 +2465,6 @@ impl LibraryJobs {
             fingerprint_sweep_verifier,
             library_review_sweep_worker,
             library_youtube_check,
-            sweep_replacer,
         }
     }
 
@@ -2942,21 +2904,6 @@ impl AppState {
             &config_dir,
         );
         charts.register_workers(&workers);
-        let playlist_precache_worker = build_playlist_precache(
-            &settings,
-            &config_dir,
-            &navidrome,
-            &acquisition,
-            &radio,
-            &charts,
-            &library_jobs,
-        );
-        {
-            let precache = playlist_precache_worker.clone();
-            workers.register("PlaylistPrecacheWorker", move |stopping| {
-                precache.clone().run(stopping)
-            });
-        }
         let sync_catalog = Arc::new(SyncCatalogService::new(
             navidrome.subsonic_proxy.clone(),
             metadata_service.clone(),
@@ -3231,7 +3178,6 @@ impl AppState {
             library_identity_sweep,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             library_youtube_check: library_jobs.library_youtube_check,
-            playlist_precache_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
             library_edits,
@@ -3419,15 +3365,6 @@ impl AppState {
             metadata_service.clone(),
             Some(&apple_base),
             &config_dir,
-        );
-        let playlist_precache_worker = build_playlist_precache(
-            &settings,
-            &config_dir,
-            &navidrome,
-            &acquisition,
-            &radio,
-            &charts,
-            &library_jobs,
         );
         let sync_catalog = Arc::new(SyncCatalogService::new(
             navidrome.subsonic_proxy.clone(),
@@ -3655,7 +3592,6 @@ impl AppState {
             library_identity_sweep,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             library_youtube_check: library_jobs.library_youtube_check,
-            playlist_precache_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
             library_edits,
@@ -3994,7 +3930,6 @@ mod tests {
             "LibraryReviewSweepWorker",
             "YoutubeCheckStore",
             "LibraryYoutubeCheck",
-            "PlaylistPrecacheWorker",
             "IdentitySweepStore",
             "LibraryIdentitySweep",
         ] {
@@ -4025,13 +3960,6 @@ mod tests {
                 .identity_sweep_store
                 .path()
                 .is_some_and(|p| p.ends_with("identity-sweep.json"))
-        );
-        assert!(
-            state
-                .playlist_precache_worker
-                .store()
-                .path()
-                .is_some_and(|p| p.ends_with("precache.json"))
         );
         assert!(state.upgrade_queue.snapshot().is_empty());
         assert_eq!(

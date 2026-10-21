@@ -6,6 +6,7 @@
 //! asked for, at a length within [`LENGTH_SLACK_SECONDS`] of it. Any other disagreement leaves
 //! the file to a person, like any sound AcoustID could not place.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -44,6 +45,12 @@ pub const MATCH_AT_MOST: f64 = 0.25;
 /// same song (a re-recording, a cover, up to 0.37), and below every wrong file against a
 /// believed preview (from 0.39).
 pub const MISMATCH_FROM: f64 = 0.38;
+/// At least this share of a stretch's items have to be different numbers for it to say anything.
+/// Silence, a pure tone or a steady hum fingerprints to a few repeated numbers, and two such
+/// stretches look alike whatever they are (silence against a 440 Hz tone, 94% alike). Real music
+/// measured 84% at the lowest over 83 stretches (median 99%), 10 s of silence in a 30 s stretch
+/// leaves 72% and 20 s leaves 36%.
+pub const MIN_DISTINCT_SHARE: f64 = 0.7;
 /// The most of a preview's audio that is read.
 pub const MAX_PREVIEW_BYTES: usize = 40 * 1024 * 1024;
 /// How long reading the preview may take.
@@ -258,9 +265,36 @@ pub fn trustworthy(request: &PreviewRequest<'_>, preview: &PreviewFacts) -> bool
     .is_same()
 }
 
+/// For each position, whether the `window` items that start there have enough in them to be
+/// compared (see [`MIN_DISTINCT_SHARE`]).
+fn informative_windows(items: &[u32], window: usize) -> Vec<bool> {
+    let need = (window as f64 * MIN_DISTINCT_SHARE).ceil() as usize;
+    let mut counts: HashMap<u32, u32> = HashMap::new();
+    let mut out = Vec::with_capacity(items.len().saturating_sub(window) + 1);
+    for (i, item) in items.iter().enumerate() {
+        *counts.entry(*item).or_default() += 1;
+        if i >= window {
+            let gone = items[i - window];
+            if let Some(count) = counts.get_mut(&gone) {
+                *count -= 1;
+                if *count == 0 {
+                    counts.remove(&gone);
+                }
+            }
+        }
+        if i + 1 >= window {
+            out.push(counts.len() >= need);
+        }
+    }
+    out
+}
+
 /// The best [`WINDOW_SECONDS`] stretch at which the download's fingerprint lines up with the
 /// preview's, over every offset from the preview [`MAX_LAG_SECONDS`] behind to
-/// [`MAX_LEAD_SECONDS`] ahead. None when either is shorter than the stretch.
+/// [`MAX_LEAD_SECONDS`] ahead. None when either is shorter than the stretch, or when the preview
+/// has no stretch with sound in it to say what the download should be. Only stretches with sound
+/// in both count, so a silent gap or a held tone in each never passes for the same song; a
+/// download with no such stretch against a preview that has one is as different as it gets.
 pub fn compare(file: &[u32], preview: &[u32]) -> Option<Comparison> {
     let window = (WINDOW_SECONDS / ITEM_SECONDS).round() as usize;
     if file.len() < window || preview.len() < window {
@@ -269,6 +303,17 @@ pub fn compare(file: &[u32], preview: &[u32]) -> Option<Comparison> {
     let lead = (MAX_LEAD_SECONDS / ITEM_SECONDS).round() as isize;
     let lag = (MAX_LAG_SECONDS / ITEM_SECONDS).round() as isize;
     let (file_len, preview_len) = (file.len() as isize, preview.len() as isize);
+    let file_ok = informative_windows(file, window);
+    let preview_ok = informative_windows(preview, window);
+    if !preview_ok.contains(&true) {
+        return None;
+    }
+    if !file_ok.contains(&true) {
+        return Some(Comparison {
+            bit_error: 0.5,
+            offset_seconds: 0.0,
+        });
+    }
     let mut best: Option<(u32, isize)> = None;
     let mut errors: Vec<u32> = Vec::with_capacity(file.len());
     for shift in -lag..=lead {
@@ -281,12 +326,19 @@ pub fn compare(file: &[u32], preview: &[u32]) -> Option<Comparison> {
         errors.clear();
         errors.extend((start..end).map(|i| (file[i as usize] ^ preview[(i + shift) as usize]).count_ones()));
         let mut run: u32 = errors[..window].iter().sum();
-        let mut lowest = run;
+        let mut lowest = if file_ok[start as usize] && preview_ok[(start + shift) as usize] {
+            run
+        } else {
+            u32::MAX
+        };
         for i in window..errors.len() {
             run = run + errors[i] - errors[i - window];
-            lowest = lowest.min(run);
+            let from = start as usize + i + 1 - window;
+            if file_ok[from] && preview_ok[(from as isize + shift) as usize] {
+                lowest = lowest.min(run);
+            }
         }
-        if best.is_none_or(|(errors, _)| lowest < errors) {
+        if lowest != u32::MAX && best.is_none_or(|(errors, _)| lowest < errors) {
             best = Some((lowest, shift));
         }
     }

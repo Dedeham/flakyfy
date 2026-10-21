@@ -305,6 +305,46 @@ fn too_little_audio_is_not_compared() {
     assert_eq!(compare(&sound(1, 120.0), &[]), None);
 }
 
+/// A held tone: one number over and over.
+fn tone(seconds: f64) -> Vec<u32> {
+    vec![0x5A5A_5A5A; (seconds / ITEM_SECONDS) as usize]
+}
+
+/// Silence in both is not the same song: the best stretch of a song with a quiet gap has to be
+/// one with sound in it.
+#[test]
+fn a_silent_stretch_in_both_does_not_pass_for_the_same_song() {
+    let mut file = tone(40.0);
+    file.extend(sound(1, 80.0));
+    let mut preview = tone(40.0);
+    preview.extend(sound(2, 150.0));
+    let comparison = compare(&file, &preview).expect("enough audio");
+    // A stretch may be up to 30% silence, and that part agrees by itself: unclear, never a match.
+    assert!(comparison.bit_error > MATCH_AT_MOST, "{comparison:?}");
+    assert_ne!(judge(&comparison, true), Heard::Match);
+}
+
+/// The sound after a silent gap still lines up with the song.
+#[test]
+fn a_right_file_with_a_silent_gap_still_matches() {
+    let song = sound(3, 150.0);
+    let mut file = tone(35.0);
+    file.extend(&song);
+    let comparison = compare(&file, &reencoded(&song, 2)).expect("enough audio");
+    assert_eq!(judge(&comparison, true), Heard::Match, "{comparison:?}");
+}
+
+#[test]
+fn a_silent_file_is_not_the_song() {
+    let comparison = compare(&tone(120.0), &sound(1, 200.0)).expect("a preview with sound");
+    assert_eq!(judge(&comparison, true), Heard::Mismatch, "{comparison:?}");
+}
+
+#[test]
+fn a_silent_preview_says_nothing() {
+    assert_eq!(compare(&sound(1, 120.0), &tone(200.0)), None);
+}
+
 // ---- The check end to end ---------------------------------------------------------------
 
 /// A shim that knows the song's video but cannot send it, counting what it was asked.

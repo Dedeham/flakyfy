@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
 use super::play_source::PlaySources;
+use super::preview_copies::PreviewCopies;
 use super::queue_window::{SavedQueue, window};
 use super::store::{PrefetchStore, free_bytes, prepare_folder};
 use crate::services::common::base_download_service::AheadBusy;
@@ -174,6 +175,7 @@ pub struct PrefetchService {
     sources: PlaySources,
     wake: Notify,
     mixes: OnceLock<Arc<GeneratedPlaylistService>>,
+    copies: OnceLock<Arc<PreviewCopies>>,
 }
 
 impl PrefetchService {
@@ -185,6 +187,7 @@ impl PrefetchService {
             sources,
             wake: Notify::new(),
             mixes: OnceLock::new(),
+            copies: OnceLock::new(),
         })
     }
 
@@ -208,6 +211,16 @@ impl PrefetchService {
     /// Gives the service the mixes, for keeping them ready. Once only.
     pub fn use_mixes(&self, mixes: Arc<GeneratedPlaylistService>) {
         let _ = self.mixes.set(mixes);
+    }
+
+    /// Gives the service the preview copies, which it sweeps with its own folder. Once only.
+    pub fn use_preview_copies(&self, copies: Arc<PreviewCopies>) {
+        let _ = self.copies.set(copies);
+    }
+
+    /// The preview copies, once given.
+    pub fn preview_copies(&self) -> Option<&Arc<PreviewCopies>> {
+        self.copies.get()
     }
 
     fn settings(&self) -> PrefetchSettings {
@@ -563,6 +576,9 @@ impl PrefetchService {
             self.parts
                 .store
                 .sweep(settings.effective_keep_days(), settings.effective_cache_bytes());
+            if let Some(copies) = self.copies.get() {
+                copies.sweep();
+            }
         }
         if !settings.enabled {
             let mut state = self.state.lock();

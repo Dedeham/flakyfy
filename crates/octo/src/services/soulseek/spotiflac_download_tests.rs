@@ -325,6 +325,7 @@ impl Setup {
             lidarr_imports: None,
             lidarr_fetcher: None,
             spotiflac: Some(spotiflac),
+            preview_copies: None,
         };
         let (service, _) = SoulseekDownloadService::build(core, services, parts);
         Fetch {

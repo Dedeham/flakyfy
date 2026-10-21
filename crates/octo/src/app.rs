@@ -132,7 +132,9 @@ use crate::services::metadata::{
 };
 use crate::services::metadata::{GenreBackfillJournal, GenreBackfillStore, GenreBackfillWorker};
 use crate::services::notifications::{DiscordSink, INotificationSink, NotificationService, NtfySink};
-use crate::services::prefetch::{PrefetchParts, PrefetchService, PrefetchStore, PrefetchedFiles};
+use crate::services::prefetch::{
+    PrefetchParts, PrefetchService, PrefetchStore, PrefetchedFiles, PreviewCopies,
+};
 use crate::services::radio::{
     IRadioSource, LastFmRadioSource, ListenBrainzRadioSource, RadioOutcomeStore, RadioSourceSet,
     SongRadioService, SoundsAlikeRadioSource, YouTubeMusicRadioSource,
@@ -312,6 +314,8 @@ pub struct AppInner {
     /// `PrefetchService`: upcoming songs fetched ahead into the prefetch folder
     /// (`Prefetch:Folder`, or `<config>/prefetch`); its loop is the "PrefetchService" worker.
     pub prefetch: Arc<PrefetchService>,
+    /// `PreviewCopies`: whole copies of outside songs' previews, `<config>/preview-copies`.
+    pub preview_copies: Arc<PreviewCopies>,
     /// `DirectoryBrowser`: the dashboard's folder picker.
     pub directory_browser: Arc<DirectoryBrowser>,
     /// `BrowseSessionStore`: dashboard sign-ins, `browse-sessions.json`.
@@ -925,6 +929,7 @@ impl Acquisition {
                         lidarr_imports: Some(lidarr_import_handoff.clone()),
                         lidarr_fetcher: Some(lidarr_track_fetcher.clone()),
                         spotiflac: Some(spotiflac.clone()),
+                        preview_copies: Some(stores.preview_copies.clone()),
                     },
                 );
                 (download_base as Arc<dyn IDownloadService>, Some(backend))
@@ -1268,6 +1273,7 @@ struct Stores {
     external_id_registry: Arc<ExternalIdRegistry>,
     radio_queues: Arc<RadioQueueStore>,
     prefetch_store: Arc<PrefetchStore>,
+    preview_copies: Arc<PreviewCopies>,
     directory_browser: Arc<DirectoryBrowser>,
     browse_sessions: Arc<BrowseSessionStore>,
     rejected_peers: Arc<RejectedPeerRegistry>,
@@ -1334,6 +1340,15 @@ impl Stores {
             }),
             Clock::system(),
         ));
+        // Whole copies of previews, beside settings.json. No new copy starts while the disk has less
+        // free than getting songs ahead keeps.
+        let copies_settings = settings.clone();
+        let preview_copies = PreviewCopies::new(
+            config_dir.join("preview-copies"),
+            you_tube_resolver.clone(),
+            Clock::system(),
+            move || copies_settings.current().prefetch.effective_min_free_bytes(),
+        );
         let cover_settings = settings.clone();
         let local_cover_cache = Arc::new(LocalCoverCache::new(
             config_dir.join("cover-cache"),
@@ -1359,6 +1374,7 @@ impl Stores {
             external_id_registry,
             radio_queues: Arc::new(RadioQueueStore::new()),
             prefetch_store,
+            preview_copies,
             directory_browser: Arc::new(DirectoryBrowser::new()),
             browse_sessions: Arc::new(BrowseSessionStore::new(Some(
                 config_dir.join("browse-sessions.json"),
@@ -2907,6 +2923,7 @@ impl AppState {
             soulseek.link.clone(),
         );
         prefetch.use_mixes(radio.generated_playlists.clone());
+        prefetch.use_preview_copies(stores.preview_copies.clone());
         {
             let prefetch = prefetch.clone();
             workers.register("PrefetchService", move |stopping| prefetch.clone().run(stopping));
@@ -3101,6 +3118,7 @@ impl AppState {
             local_cover_cache: stores.local_cover_cache,
             radio_queues: stores.radio_queues,
             prefetch,
+            preview_copies: stores.preview_copies,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
             sign_in_throttle: admin_sign_in.throttle,
@@ -3383,6 +3401,7 @@ impl AppState {
             soulseek.link.clone(),
         );
         prefetch.use_mixes(radio.generated_playlists.clone());
+        prefetch.use_preview_copies(stores.preview_copies.clone());
         // Apple's pages from the test's mock server, else an address that refuses at once (a
         // port the system handed out and let go: never port 1, which WSL's mirrored networking
         // lets time out). The warm worker is not run.
@@ -3523,6 +3542,7 @@ impl AppState {
             local_cover_cache: stores.local_cover_cache,
             radio_queues: stores.radio_queues,
             prefetch,
+            preview_copies: stores.preview_copies,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
             sign_in_throttle: admin_sign_in.throttle,

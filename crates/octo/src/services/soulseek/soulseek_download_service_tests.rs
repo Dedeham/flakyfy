@@ -913,6 +913,7 @@ async fn build_full(
         lidarr_imports: None,
         lidarr_fetcher: None,
         spotiflac: None,
+        preview_copies: None,
     };
     let (service, _) = SoulseekDownloadService::build(core, services, parts);
     Walk {

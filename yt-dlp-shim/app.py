@@ -822,6 +822,100 @@ def _open_upstream(url: str, headers: dict, video_id: str):
         return None
 
 
+# googlevideo sends a range that spans at most 10 MiB at full speed and a wider one at about
+# 33 KB/s, so a wider range is asked for in pieces of this size.
+_UPSTREAM_PIECE = int(os.environ.get("UPSTREAM_PIECE_BYTES", str(8 * 1024 * 1024)))
+# A piece whose connection breaks is asked for again from where it stopped, this many times
+# in a row before the answer ends short.
+_PIECE_RETRIES = 2
+
+
+def _is_pieced(wanted) -> bool:
+    """Whether a range is wider than one piece: an open one, or one spanning more than a piece.
+    A suffix range (no first byte) and an unreadable one go upstream as they are."""
+    if wanted is None or wanted[0] is None:
+        return False
+    start, end = wanted
+    return end is None or end - start + 1 > _UPSTREAM_PIECE
+
+
+def _piece_end(start: int, end: Optional[int]) -> int:
+    """The last byte of the piece that starts at `start`, within the range's own last byte."""
+    last = start + _UPSTREAM_PIECE - 1
+    return last if end is None else min(last, end)
+
+
+def _pieced_answer(video_id, url, upstream_headers, first, wanted, total, synthesized, t_enter):
+    """The answer to a range wider than one piece: the first piece already open, then each next
+    piece asked for as the one before it ends, all sent as one body under the range's own
+    status, length and Content-Range. A caller that sent no Range gets a plain 200."""
+    start = wanted[0]
+    last = total - 1 if wanted[1] is None else min(wanted[1], total - 1)
+    _facts_put(video_id, {"size": total})
+    current = {"url": url}
+
+    def open_piece(pos):
+        headers = dict(upstream_headers, Range=f"bytes={pos}-{_piece_end(pos, last)}")
+        piece = _open_upstream(current["url"], headers, video_id)
+        if piece is not None and piece.status_code in (403, 410):
+            # The signed URL ran out partway through a long song: one fresh URL, then on.
+            piece.close()
+            _url_cache_evict_if(video_id, current["url"])
+            current["url"] = _resolve_url(video_id)
+            piece = _open_upstream(current["url"], headers, video_id) if current["url"] else None
+        if piece is None or piece.status_code != 206:
+            if piece is not None:
+                log.warning("stream %s: the piece from byte %d answered %d", video_id, pos, piece.status_code)
+                piece.close()
+            return None
+        return piece
+
+    @stream_with_context
+    def generator():
+        pos = start
+        piece = first
+        logged = False
+        failures = 0
+        _count("active_streams", 1)
+        try:
+            while piece is not None:
+                before = pos
+                try:
+                    for chunk in piece.iter_content(chunk_size=64 * 1024):
+                        if not chunk:
+                            continue
+                        if not logged:
+                            log.info("stream %s ttfb_ms=%.0f status=206 pieced",
+                                     video_id, (time.monotonic() - t_enter) * 1000.0)
+                            logged = True
+                        chunk = chunk[: last - pos + 1]
+                        pos += len(chunk)
+                        yield chunk
+                        if pos > last:
+                            break
+                except requests.RequestException as e:
+                    log.warning("stream %s: the piece broke at byte %d: %s", video_id, pos, e)
+                finally:
+                    piece.close()
+                failures = 0 if pos > before else failures + 1
+                if pos > last or failures > _PIECE_RETRIES:
+                    break
+                piece = open_piece(pos)
+        finally:
+            _count("active_streams", -1)
+
+    headers = {
+        "Content-Type": first.headers.get("Content-Type", "audio/mp4"),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+        "Content-Length": str(last - start + 1),
+    }
+    if synthesized:
+        return Response(generator(), headers=headers, status=200)
+    headers["Content-Range"] = f"bytes {start}-{last}/{total}"
+    return Response(generator(), headers=headers, status=206)
+
+
 # --- YouTube Music (Octo's radio) -------------------------------------------------
 # Search and radio through ytmusicapi, no sign-in. These are plain HTTP calls to YouTube
 # Music, not yt-dlp processes, so they have their own small gate instead of TieredGate.
@@ -971,10 +1065,20 @@ def stream():
     # 1.1s. Since the caller never asked for a partial response here, we
     # translate upstream's 206 back to a plain 200 below so this stays
     # invisible to clients that did not request a range themselves.
+    #
+    # The full speed holds only for a range that spans at most 10 MiB. A wider
+    # one (the rest of any song over about ten minutes) trickles at about 33 KB/s
+    # after a 2 s wait (measured 2026-10-21), so it is asked for in pieces and the
+    # pieces go back as one answer: see `_pieced_answer`.
     upstream_headers = {}
     incoming_range = request.headers.get("Range")
     synthesized_range = not incoming_range
-    upstream_headers["Range"] = incoming_range if incoming_range else "bytes=0-"
+    wanted = (0, None) if synthesized_range else stream_info.parse_range(incoming_range)
+    pieced = _is_pieced(wanted)
+    if pieced:
+        upstream_headers["Range"] = f"bytes={wanted[0]}-{_piece_end(wanted[0], wanted[1])}"
+    else:
+        upstream_headers["Range"] = incoming_range if incoming_range else "bytes=0-"
     if _UPSTREAM_UA:
         upstream_headers["User-Agent"] = _UPSTREAM_UA
 
@@ -1035,6 +1139,18 @@ def stream():
     # A play from the first byte (not a seek) is when a video's loudness is worth measuring.
     if not incoming_range or incoming_range.replace(" ", "").lower().startswith("bytes=0-"):
         _maybe_measure_loudness(video_id, url)
+
+    content_range = upstream.headers.get("Content-Range")
+    total = stream_info.total_from_content_range(content_range)
+    if (
+        pieced
+        and upstream.status_code == 206
+        and total is not None
+        and stream_info.range_end(content_range) is not None
+    ):
+        return _pieced_answer(
+            video_id, url, upstream_headers, upstream, wanted, total, synthesized_range, t_enter
+        )
 
     @stream_with_context
     def generator():

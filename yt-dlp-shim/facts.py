@@ -97,6 +97,37 @@ def split_run(out: str) -> tuple[list[str], Optional[str], Optional[str]]:
     return rest, format_line, url
 
 
+def parse_range(value: Optional[str]) -> Optional[tuple[Optional[int], Optional[int]]]:
+    """One byte range as (first, last): last is None for an open range ("bytes=100-"), first is
+    None for a suffix range ("bytes=-500"). None for no header, several ranges or anything else."""
+    if not value:
+        return None
+    text = value.replace(" ", "").lower()
+    if not text.startswith("bytes=") or "," in text:
+        return None
+    first, sep, last = text[len("bytes="):].partition("-")
+    if not sep:
+        return None
+    try:
+        start = int(first) if first else None
+        end = int(last) if last else None
+    except ValueError:
+        return None
+    if start is None and end is None:
+        return None
+    if start is not None and end is not None and end < start:
+        return None
+    return start, end
+
+
+def range_end(value: Optional[str]) -> Optional[int]:
+    """The last byte a Content-Range covers ("bytes 0-1/1234" is 1), or None."""
+    if not value:
+        return None
+    match = re.match(r"\s*bytes\s+\d+-(\d+)/", value)
+    return int(match.group(1)) if match else None
+
+
 def total_from_content_range(value: Optional[str]) -> Optional[int]:
     """The full length after the slash of a Content-Range ("bytes 0-1/1234", "bytes */1234")."""
     if not value or "/" not in value:

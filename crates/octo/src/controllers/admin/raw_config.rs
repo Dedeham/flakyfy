@@ -319,7 +319,6 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Subsonic:DownloadAlbumOnSongStar",
     "Metadata:AnimatedArt",
     "Soulseek:YoutubeCrossCheck",
-    "Soulseek:YoutubeMatchThreshold",
     "Soulseek:YoutubeCrossCheckRetries",
 ];
 

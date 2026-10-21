@@ -12,8 +12,10 @@ const MIN_OVERLAP: usize = 40;
 /// absorb a different intro, a leading silence or a trimmed start.
 pub const MAX_SHIFT: usize = 100;
 
-/// Points below the threshold where a difference stops being doubtful and becomes certain.
-const DOUBT_MARGIN: i32 = 10;
+/// At or above this many percent two fingerprints are the same recording; unrelated audio scores
+/// about 50, so a gap of ten points under it is where doubt ends and rejecting is safe.
+const MATCH_PERCENT: f64 = 70.0;
+const DIFFERS_BELOW_PERCENT: f64 = 60.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrossCheck {
@@ -50,12 +52,12 @@ pub fn similarity(a: &[u32], b: &[u32], max_shift: usize) -> Option<f64> {
     best
 }
 
-/// What a similarity means against a threshold given in percent.
-pub fn judge(similarity: f64, threshold_percent: i32) -> CrossCheck {
+/// What a similarity, 0 to 1, means.
+pub fn judge(similarity: f64) -> CrossCheck {
     let percent = similarity * 100.0;
-    if percent >= f64::from(threshold_percent) {
+    if percent >= MATCH_PERCENT {
         CrossCheck::Match
-    } else if percent < f64::from(threshold_percent - DOUBT_MARGIN) {
+    } else if percent < DIFFERS_BELOW_PERCENT {
         CrossCheck::Differs
     } else {
         CrossCheck::Unsure

@@ -655,11 +655,12 @@ at once. `SLSKD_MIN_MATCH_SCORE` (50-99, default 85) is how sure AcoustID must b
 answer may reject anything, so raising it makes Octo *more* permissive, because weaker matches
 are ignored rather than acted on. A track with no AcoustID entry at all is accepted unless
 `SLSKD_YOUTUBE_CROSSCHECK` (on by default) finds it sounds nothing like the official YouTube Music
-copy of the song: then the file is deleted and the next peer is tried. A match is
-`SLSKD_YOUTUBE_MATCH_THRESHOLD` percent alike (50-99, default 70); ten points below that is rejected,
-between is only asked about. After `SLSKD_YOUTUBE_CROSSCHECK_RETRIES` such rejections (default 3)
-Lidarr gets a turn, then the YouTube copy that was compared is downloaded as an MP3. A song
-YouTube has no confident match for is accepted as before.
+copy of the song: then the file is deleted and the next peer is tried. The two are compared over
+their first 30 seconds; 70% alike or more is the same recording, under 60% is rejected, and in
+between the file is only asked about. After `SLSKD_YOUTUBE_CROSSCHECK_RETRIES` such rejections
+(default 3) Soulseek gives up on the song and the next source in your chain (a YouTube step,
+Lidarr) takes over; a YouTube step downloads the video that was compared. A song YouTube has no
+confident match for is accepted as before.
 `SLSKD_TAG_FROM_MUSICBRAINZ` writes the matched recording's MusicBrainz title, artist, album
 and year over the peer's own tags. `NAME_FROM_MATCH` goes one step further and names the file
 from the match as well (artist folder, title, album and track number), so the path and the

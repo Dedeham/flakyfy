@@ -130,7 +130,6 @@ services:
       # A download AcoustID has no entry for is compared with the official YouTube copy; a
       # different-sounding file is thrown away. After the retries the YouTube copy is taken.
       Soulseek__YoutubeCrossCheck: ${SLSKD_YOUTUBE_CROSSCHECK:-true}
-      Soulseek__YoutubeMatchThreshold: ${SLSKD_YOUTUBE_MATCH_THRESHOLD:-70}
       Soulseek__YoutubeCrossCheckRetries: ${SLSKD_YOUTUBE_CROSSCHECK_RETRIES:-3}
       # Hours a heart waits while slskd is up but not logged in to Soulseek (server
       # maintenance), before it uses the next source. 0 means do not wait.

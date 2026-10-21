@@ -53,10 +53,10 @@ fn similarity_a_few_flipped_bits_still_matches() {
 
 #[test]
 fn judge_splits_match_unsure_and_differs() {
-    assert_eq!(judge(0.90, 70), CrossCheck::Match);
-    assert_eq!(judge(0.70, 70), CrossCheck::Match);
-    assert_eq!(judge(0.65, 70), CrossCheck::Unsure);
-    assert_eq!(judge(0.60, 70), CrossCheck::Unsure);
-    assert_eq!(judge(0.59, 70), CrossCheck::Differs);
-    assert_eq!(judge(0.50, 70), CrossCheck::Differs);
+    assert_eq!(judge(0.90), CrossCheck::Match);
+    assert_eq!(judge(0.70), CrossCheck::Match);
+    assert_eq!(judge(0.65), CrossCheck::Unsure);
+    assert_eq!(judge(0.60), CrossCheck::Unsure);
+    assert_eq!(judge(0.59), CrossCheck::Differs);
+    assert_eq!(judge(0.50), CrossCheck::Differs);
 }

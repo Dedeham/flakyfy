@@ -89,16 +89,6 @@ pub use octo_core::soulseek::soulseek_download_service::MAX_PEER_ATTEMPTS;
 #[error("{0}")]
 pub struct InvalidOperationException(pub String);
 
-/// Soulseek kept delivering files that sound nothing like the official YouTube Music copy of the
-/// song, `rejected` of them. Carries the video they were compared with, so the replacement is that
-/// very video. The download dispatcher turns it into a Lidarr try and then the YouTube copy.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{rejected} Soulseek files did not sound like the song's YouTube copy")]
-pub struct CrossCheckExhausted {
-    pub video_id: String,
-    pub rejected: i32,
-}
-
 /// No copy found, or the copy found is gone. Reported as an `io::Error` of kind `NotFound`, which
 /// is how the library-action executor recognizes "no copy here".
 fn file_not_found(message: String) -> anyhow::Error {
@@ -593,38 +583,6 @@ impl SoulseekDownloadService {
         }
         song.verification = Some(Box::new(verdict));
         Ok(path)
-    }
-
-    /// Soulseek's files kept failing the comparison with the song's YouTube copy. Lidarr, when it is
-    /// set up, gets a turn at a better copy; failing that the YouTube copy they were compared with is
-    /// taken, since YouTube Music has the right recording. `exhausted` is the error that said so.
-    async fn replace_with_you_tube_copy(
-        &self,
-        base: &BaseDownloadService,
-        routing: &SharedRouting,
-        download: &mut TrackDownload,
-        exhausted: &anyhow::Error,
-        ct: &CancellationToken,
-    ) -> anyhow::Result<String> {
-        let snapshot = routing.snapshot();
-        let (artist, title) = names(&snapshot);
-        warn!("{exhausted} for '{artist} - {title}'");
-        if self.lidarr_fetcher.is_some() {
-            match self
-                .download_via_lidarr(base, &snapshot, download, false, ct)
-                .await
-            {
-                Ok(path) => return Ok(path),
-                Err(e) if ct.is_cancelled() => return Err(e),
-                Err(e) => warn!("Lidarr had no better copy of '{artist} - {title}' either: {e}"),
-            }
-        }
-        if let Some(found) = exhausted.downcast_ref::<CrossCheckExhausted>() {
-            let external_id = download.song.external_id.clone().unwrap_or_default();
-            self.id_registry.set_you_tube_id(&external_id, &found.video_id);
-        }
-        self.download_via_you_tube(base, routing, download, true, ct)
-            .await
     }
 
     // =========================================================================
@@ -1682,18 +1640,22 @@ impl SoulseekDownloadService {
                                     "the file found is {alike}% alike to the song's YouTube copy"
                                 ));
                                 cross_check_rejected += 1;
-                                // A transcode held back is the right song, so it wins over a
-                                // lossy copy from YouTube; the walk goes on to deliver it.
+                                // The video the file was judged against is the one a YouTube step
+                                // later in the chain should take, unless one is pinned already.
+                                if routing.you_tube_id.as_deref().is_none_or(str::is_empty) {
+                                    self.id_registry.set_you_tube_id(&track_key, &check.video_id);
+                                }
+                                // Enough files that are not the song: stop asking peers and let the
+                                // source chain go on. A transcode held back is the right song, so it
+                                // is delivered by the walk instead.
                                 if cross_check_rejected
                                     >= cross_settings.effective_youtube_cross_check_retries()
                                     && reserve.is_none()
                                     && !caller_gave_up
                                 {
-                                    return Err(CrossCheckExhausted {
-                                        video_id: check.video_id,
-                                        rejected: cross_check_rejected,
-                                    }
-                                    .into());
+                                    return Err(file_not_found(format!(
+                                        "{cross_check_rejected} Soulseek files for '{artist} - {title}' did not sound like its YouTube copy"
+                                    )));
                                 }
                                 if caller_gave_up {
                                     break;
@@ -2416,10 +2378,6 @@ impl DownloadBackend for SoulseekDownloadService {
                     .await
                 {
                     Ok(path) => Ok(path),
-                    Err(e) if !cancellation_token.is_cancelled() && e.is::<CrossCheckExhausted>() => {
-                        self.replace_with_you_tube_copy(base, &routing, download, &e, cancellation_token)
-                            .await
-                    }
                     Err(e) if !cancellation_token.is_cancelled() => {
                         warn!("Soulseek download failed ({e}); falling back to YouTube MP3");
                         if !download.suppress_notify {
@@ -2443,16 +2401,8 @@ impl DownloadBackend for SoulseekDownloadService {
             }
             _ => {
                 let snapshot = routing.snapshot();
-                match self
-                    .download_via_soulseek(base, &snapshot, download, &profile, cancellation_token)
+                self.download_via_soulseek(base, &snapshot, download, &profile, cancellation_token)
                     .await
-                {
-                    Err(e) if !cancellation_token.is_cancelled() && e.is::<CrossCheckExhausted>() => {
-                        self.replace_with_you_tube_copy(base, &routing, download, &e, cancellation_token)
-                            .await
-                    }
-                    other => other,
-                }
             }
         }
     }

@@ -16,6 +16,10 @@ use tracing::{debug, info};
 
 use crate::services::you_tube::you_tube_resolver::YouTubeResolver;
 
+/// How much of each side is fingerprinted. Half a minute tells a song from noise or another song
+/// and keeps the YouTube stream, which is read live, short.
+const CLIP_SECONDS: i32 = 30;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrossCheckOutcome {
     /// The YouTube Music video the file was compared with.
@@ -51,7 +55,7 @@ pub async fn compare(
     settings: &SoulseekSettings,
 ) -> Option<CrossCheckOutcome> {
     let reference = youtube.music_song(artist, title, length).await?;
-    let seconds = settings.effective_fingerprint_seconds();
+    let seconds = settings.effective_fingerprint_seconds().min(CLIP_SECONDS);
     let timeout = settings.effective_fingerprint_timeout_seconds();
     let stream = format!("{}/stream?id={}", youtube.base_url(), reference.video_id);
 
@@ -67,7 +71,7 @@ pub async fn compare(
     };
     let ours = fingerprinter.fingerprint_raw(path, seconds, timeout).await?;
     let similarity = fingerprint_compare::similarity(&ours, &official, MAX_SHIFT)?;
-    let verdict = fingerprint_compare::judge(similarity, settings.effective_youtube_match_threshold());
+    let verdict = fingerprint_compare::judge(similarity);
     info!(
         "'{artist} - {title}' is {:.0}% alike to YouTube video {}: {verdict:?}",
         similarity * 100.0,

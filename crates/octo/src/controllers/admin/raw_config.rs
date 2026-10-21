@@ -322,7 +322,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Monitoring:RetentionDays",
     "Soulseek:YoutubeCrossCheck",
     "Soulseek:YoutubeCrossCheckRetries",
-    "Subsonic:InstantCopyOnHeart",
+    "LibraryActions:YoutubeCheckPerHour",
     "GeneratedPlaylists:Precache",
     "GeneratedPlaylists:PrecacheCount",
     "GeneratedPlaylists:PrecacheIntervalHours",

@@ -563,6 +563,20 @@ quality and this weekly upgrade search Soulseek for up to `SLSKD_UPGRADE_SEARCH_
 (default 90, 30 to 300) instead of the usual `SLSKD_SEARCH_WAIT_SECONDS`, because they look for
 songs the quick search did not find. A change to it applies after a restart.
 
+A Better quality candidate has to sound like the file it replaces before it takes its place. Thirty
+seconds at the start, in the middle and at the end of each are fingerprinted and compared, and only
+when every window matches (70% alike or more) does the candidate replace the file: a remaster or a
+live take often shares its intro and parts ways later. A few seconds of intro on one of them (a
+YouTube copy) are allowed, a length more than 20 seconds apart is another cut of the song and
+refuses at once. A candidate that is another song, or may be another version, is thrown away and
+the next one is tried (its peer is remembered only when it is clearly another sound), and a
+candidate that could not be compared is refused too. The check runs for every peer in the search
+and once more just before the swap, so it covers Lidarr as well; a copy you picked in Find songs is
+the only candidate, so it is compared at the swap only. When no copy matches, the lossy file stays,
+which is the right answer when there is no lossless copy of that recording. It does not apply to
+Wrong song and Wrong version (their original is the wrong one) or to a copy you said to take in any
+quality.
+
 Two things to know before turning ratings on. Clearing a rating afterwards needs the rating
 owner's own credentials, because Subsonic ratings are per user, so **Octo caches a replayable
 Subsonic auth triplet per user in memory** for as long as it runs. And because no client asks
@@ -650,6 +664,17 @@ per song and "Fix all sure ones" for songs whose recording the length or a singl
 Fixes are written in place and can be undone. Stray spaces in titles and albums are taken off by
 the check itself when library actions may change files. Needs the AcoustID key; its place is kept
 in `identity-sweep.json` beside the settings, so a restart carries on where it was.
+
+`LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR` (default 30, 0 is off) is the pace of the one-time YouTube
+check. Press **Check every song against YouTube** (Library actions, Review) and every song in the
+library is compared once with its official YouTube Music copy, over the first half minute of each,
+only while nothing is downloading and only of the person who keeps the library. A song that sounds
+nothing like its copy (under 60% alike) becomes a question in Review; nothing is changed or removed,
+and a song already asked about is not asked again. Songs with no tags, or no confident copy on YouTube Music, are left
+alone, and a YouTube Music that stops answering makes the check rest an hour rather than call every
+song fine (a song that still cannot be compared after two such rests is counted as having no copy,
+so one video that never plays cannot hold the run). Its place is kept in `youtube-check.json` beside the settings, so a restart carries on
+where it was; the button again forgets the answers and starts over.
 
 `LIBRARY_ACTIONS_DUPLICATES` adds a Duplicates playlist per allowed user: recordings the
 library holds more than once, side by side, the copy worth keeping first (lossless before
@@ -886,7 +911,7 @@ Set `WAIT_FOR_LOSSLESS_ON_PLAY=true` if you would rather the first play wait for
 
 Set `DOWNLOAD_ON_PLAY=true` to keep a copy of every song played from outside your library, radio included. The copy comes from the first song source in the heart download priority that Octo fetches itself (Soulseek or YouTube, never Lidarr), and playback still starts from YouTube at once. Only the start of a play counts, not a seek. Hearts always go ahead of these downloads, and at most one played song waits its turn: a song played while another is waiting is skipped, and tried again the next time it is played. Each one shows in the app's download list like a heart, and hearting a song that is already downloading this way makes it a heart. `LIDARR_ALBUM_ON_PLAY=true` hands the album of every played song to Lidarr, once per song until Octo restarts; one Lidarr turns down is tried again on the next play. Every hand-off makes Lidarr search all its indexers, so on radio it pulls in an album per song. Both are off by default and have switches under **Streams & hearts, Playing songs you don't own**.
 
-`INSTANT_COPY_ON_HEART` (on by default) makes a heart arrive at once: the song is fetched as an MP3 from YouTube, the video it was found by, ahead of the other sources in Heart download priority, and Better quality looks for a lossless copy over the following weeks, a few songs a week, so there is no burst of searches. It only takes effect when it will not strand an MP3: YouTube must be among the heart sources for songs, and the weekly upgrade must be on (`LIBRARY_ACTIONS_ENABLED`, Better quality switched on and not a dry run, the person on the allowed list, `LIBRARY_ACTIONS_UPGRADE_PER_WEEK` above 0). Otherwise the heart priority is exactly as you set it. It covers every song heart: a heart in an app, a Family request and a favorite an import creates.
+For a heart that arrives at once, put YouTube first in the heart download priority (dashboard: **Streams & hearts**) and switch the weekly upgrade on (`LIBRARY_ACTIONS_ENABLED`, Better quality on and not a dry run, a person on the allowed list, `LIBRARY_ACTIONS_UPGRADE_PER_WEEK` above 0). The MP3 comes in seconds; the upgrade looks for a lossless copy a few songs a week, on Soulseek or Lidarr only (never YouTube), and replaces the MP3 only with the same recording (see `LIBRARY_ACTIONS_UPGRADE_PER_WEEK` below). Without the weekly upgrade the MP3 stays until you send it through Better quality by hand.
 
 Octo sends plays to Last.fm itself: songs from outside your library, which Navidrome has never heard of, and your library songs too (the dashboard's "Also send library plays", on by default). Octo also sends outside plays to ListenBrainz when a token is set. For Last.fm, paste your API key and its shared secret on the dashboard's Last.fm page (or set `LASTFM_API_KEY` and `LASTFM_API_SECRET`); Save checks both with Last.fm. Then press **Connect** next to a listener and allow access on last.fm while signed in as that person. The dashboard notices by itself when that is done, and for someone else you can copy the link and send it to them. Each listener has their own connection. If Navidrome is also linked to the same Last.fm, or an app scrobbles to Last.fm itself, turn that off (or turn off "Also send library plays") or plays count twice.
 
@@ -961,6 +986,51 @@ Octo hijacks these endpoints; everything else proxies to Navidrome unchanged:
 | `getPlace` | the `octoPlaces` extension, for the apps' Live radio near you: a postal code (`code` and `country`, any case or spacing, `UK` for `GB`; a full UK, Canadian or Dutch code finds the part GeoNames keeps, and a ZIP+4 its five digits), a city (`name`, optional `state` by name or code, and `country`; of the towns with that name, and that state when one is sent, the one with the most postal codes, at the postal code nearest its others) or a coordinate (`latitude` and `longitude` in decimal degrees: the nearest place within 30 km), in that order when several are sent, answered as `place` with `code`, `name`, `state` (when known), `country`, `latitude` and `longitude` (2 decimals). Error 70 for a place Octo does not know, error 10 for missing parameters or coordinates that are not decimal degrees. Answered from GeoNames' postal codes, built into the image; nothing is sent anywhere |
 | `/api/artist/{id}`, `/api/album?artist_id=` | Navidrome's own API, for clients that use it (Feishin): an outside artist's page and its albums |
 | `getOpenSubsonicExtensions` | Navidrome's list plus `octoAcquisitions` 1 and 2, `octoLyrics` (while lyrics lookups are on), `octoLibraryActions` (while library actions are on), `octoTopSongs` (while search discovery is on), `octoImports`, `octoRadioSources` (while radio can answer: radio songs carry `octoSuggestedBy`), `octoPlaces` (while the place data can be read, so an app without it keeps to its own lookup) and `songLyrics` 1 and 2 |
+
+### How Octo keeps a wrong song out
+
+A file reaches the library only after these, in this order. Each later check stands behind the ones
+before it, and every check that cannot decide keeps the file, except where it says otherwise.
+
+| # | Check | Looks at | A wrong song is | Setting |
+|---|---|---|---|---|
+| 1 | Candidate filter | file name, folder and length of what a peer offers | not downloaded | built in |
+| 2 | Length | the downloaded file's length against the song's (8 s) | discarded, peer remembered, next peer | built in |
+| 3 | AcoustID | Chromaprint of the file, looked up by title, artist and ISRC | discarded, peer remembered, next peer | `SLSKD_VERIFY_DOWNLOADS`, `ACOUSTID_API_KEY`, `SLSKD_MIN_MATCH_SCORE` |
+| 4 | YouTube copy | when AcoustID has no entry: the file against the song's YouTube Music copy, 30 s each | at under 60% alike discarded, between 60% and 70% asked about | `SLSKD_YOUTUBE_CROSSCHECK`, `SLSKD_YOUTUBE_CROSSCHECK_RETRIES` |
+| 5 | Spectrum | a lossless file that was made from a lossy one | kept, another peer's genuine copy preferred | `Soulseek:DetectTranscodes` (dashboard, no environment variable) |
+| 6 | Same recording (Better quality) | the candidate against the file it replaces: start, middle, end, 30 s each, and the length | refused, the lossy file stays | built in |
+| 7 | Library check | every song already in the library against its YouTube copy, once | asked about in Review, never changed | `LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR` |
+
+How the comparison works. Chromaprint makes one 32-bit number per eighth of a second. Two numbers
+that are the same sound differ in few bits, and two unrelated sounds in about half. In tests with
+generated audio a lossy copy of the same sound scored 92 to 100% alike and noise or another tune
+40 to 55%; real music varies, which is why the band between 60% and 70% is only asked about. One fingerprint is slid
+against the other by up to about 12 seconds, so a different intro or a leading silence does not
+matter, and the best fit counts. 70% alike or more is the same recording, under 60% is not, and in
+between it is doubtful: such a file is asked about, or, when it is about to replace a trusted file,
+refused. The thresholds are constants. Nothing is uploaded: both sides are fingerprinted here, the
+YouTube copy through the shim's `/stream`, a Range-capable stream of which ffmpeg reads only the
+first half minute (at most; `SLSKD_FINGERPRINT_SECONDS` below 30 shortens it).
+
+What keeps this from going wrong:
+
+- No YouTube Music row that is surely the song means no opinion, never a rejection; a YouTube Music
+  or shim that cannot answer is told apart from "no row" (a later check asks again, an earlier
+  answer is never made of a failure).
+- After `SLSKD_YOUTUBE_CROSSCHECK_RETRIES` rejections Soulseek gives up on the song as when no peer
+  has it, so the source chain you set goes on (a YouTube step downloads the video that was
+  compared). Octo adds no source of its own.
+- Better quality compares against the file it replaces, because that file is the one you trust,
+  and a comparison that cannot be made refuses. A failure there costs one upgrade, never the song.
+- The library check asks and never acts: no file is moved, replaced or deleted by it.
+
+Where it lives: `crates/octo-core/src/fingerprint/fingerprint_compare.rs` (the pure comparison),
+`crates/octo/src/services/fingerprint/` (`you_tube_cross_check.rs`, `same_recording.rs`), the Soulseek
+attempt loop in `services/soulseek/soulseek_download_service.rs`, the swap's last gate
+`Admission::admit` in `services/library/library_action_executor.rs`, and the library check in
+`services/library/library_youtube_check.rs`. Intentional differences from the C# build are in
+`docs/rust-migration/known-diffs.md`.
 
 ### Soulseek download details
 

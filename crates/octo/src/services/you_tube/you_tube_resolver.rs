@@ -14,6 +14,16 @@ use tracing::{debug, warn};
 use super::you_tube_music_client::{YouTubeMusicClient, YtmRow, pick_song};
 use crate::services::framework::InFlight;
 
+/// What a YouTube Music songs search made of one song.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MusicLookup {
+    Found(YouTubeHit),
+    /// YouTube Music answered and no row is the song.
+    NoRow,
+    /// It could not answer: busy, failed, unreachable, or the shim's address is not set.
+    Unavailable,
+}
+
 /// One video the shim found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct YouTubeHit {
@@ -250,13 +260,28 @@ impl YouTubeResolver {
     /// failed or unreachable), or when the shim's address is not set; the caller then asks
     /// yt-dlp. The hit names no stream, since YouTube Music only searches.
     pub async fn music_song(&self, artist: &str, title: &str, length: Option<i32>) -> Option<YouTubeHit> {
-        let rows = self.music_rows(artist, title)?.await?;
+        match self.music_lookup(artist, title, length).await {
+            MusicLookup::Found(hit) => Some(hit),
+            MusicLookup::NoRow | MusicLookup::Unavailable => None,
+        }
+    }
+
+    /// [`Self::music_song`] that also says why there is no hit: YouTube Music answered and no row
+    /// is the song (`NoRow`), or it could not answer at all (`Unavailable`), which a caller that
+    /// remembers its answers must not remember.
+    pub async fn music_lookup(&self, artist: &str, title: &str, length: Option<i32>) -> MusicLookup {
+        let Some(pending) = self.music_rows(artist, title) else {
+            return MusicLookup::Unavailable;
+        };
+        let Some(rows) = pending.await else {
+            return MusicLookup::Unavailable;
+        };
         let query = format!("{artist} {title}");
         let Some(row) = pick_song(artist, title, length, &rows) else {
             debug!("no YouTube Music row is '{query}' (length {length:?})");
-            return None;
+            return MusicLookup::NoRow;
         };
-        Some(YouTubeHit {
+        MusicLookup::Found(YouTubeHit {
             video_id: row.video_id.clone(),
             title: Some(row.title.clone()),
             duration: row.duration_seconds,

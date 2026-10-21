@@ -132,6 +132,7 @@ async fn outcome(file: &Path, reference: &Path) -> Option<CrossCheckOutcome> {
         &SoulseekSettings::default(),
     )
     .await
+    .done()
 }
 
 #[tokio::test]
@@ -205,7 +206,7 @@ async fn compare_without_a_reference_has_no_opinion() {
     )
     .await;
 
-    assert_eq!(found, None);
+    assert_eq!(found, Compared::NoReference);
 }
 
 // The retry budget decides when Soulseek stops asking peers, so a miscount either wastes downloads
@@ -236,4 +237,114 @@ fn retries_setting_stays_between_one_and_ten() {
         };
         assert_eq!(s.effective_youtube_cross_check_retries(), expected, "{set}");
     }
+}
+
+/// A YouTube Music that cannot answer is not "no reference": a caller that remembers its answers
+/// must be able to ask again.
+#[tokio::test]
+async fn compare_while_youtube_music_is_down_is_unavailable_not_final() {
+    if !tools_present() {
+        return;
+    }
+    let download = make("down-dl.wav", NOISE, &[]);
+    let shim = MockServer::start().await;
+    Mock::given(path("/ytm/search"))
+        .respond_with(ResponseTemplate::new(503).set_body_string(r#"{"error":"busy"}"#))
+        .mount(&shim)
+        .await;
+    let youtube = YouTubeResolver::with_base_url(Some(&shim.uri()));
+
+    let found = compare(
+        &AudioFingerprinter::new(),
+        &youtube,
+        &download,
+        "Artist",
+        "Song",
+        Some(40),
+        &SoulseekSettings::default(),
+    )
+    .await;
+
+    assert_eq!(found, Compared::Unavailable);
+}
+
+/// A reference found but a stream that will not play is a failure of the shim, not a verdict.
+#[tokio::test]
+async fn compare_with_a_stream_that_will_not_play_is_unavailable() {
+    if !tools_present() {
+        return;
+    }
+    let download = make("nostream-dl.wav", NOISE, &[]);
+    let shim = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/ytm/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(ROWS))
+        .mount(&shim)
+        .await;
+    Mock::given(path("/stream"))
+        .respond_with(ResponseTemplate::new(502))
+        .mount(&shim)
+        .await;
+    let youtube = YouTubeResolver::with_base_url(Some(&shim.uri()));
+
+    let found = compare(
+        &AudioFingerprinter::new(),
+        &youtube,
+        &download,
+        "Artist",
+        "Song",
+        Some(40),
+        &SoulseekSettings::default(),
+    )
+    .await;
+
+    assert_eq!(found, Compared::Unavailable);
+}
+
+/// A file that cannot be read costs YouTube no request and is a final answer.
+#[tokio::test]
+async fn compare_with_an_unreadable_file_is_a_final_no_reference() {
+    if !tools_present() {
+        return;
+    }
+    let shim = MockServer::start().await;
+    let youtube = YouTubeResolver::with_base_url(Some(&shim.uri()));
+
+    let found = compare(
+        &AudioFingerprinter::new(),
+        &youtube,
+        Path::new("/no/such/file.flac"),
+        "Artist",
+        "Song",
+        Some(40),
+        &SoulseekSettings::default(),
+    )
+    .await;
+
+    assert_eq!(found, Compared::NoReference);
+    assert!(shim.received_requests().await.unwrap_or_default().is_empty());
+}
+
+/// A file that is there but gives no fingerprint (fpcalc missing, busy, or bytes that are not audio)
+/// is not a final "no copy": the caller asks again, and gives up on a file that never works.
+#[tokio::test]
+async fn compare_with_a_file_that_gives_no_fingerprint_is_unavailable() {
+    let garbage = std::env::temp_dir().join(format!("octo-xcheck-{}-garbage.flac", std::process::id()));
+    std::fs::write(&garbage, b"not audio at all").expect("written");
+    let shim = MockServer::start().await;
+    let youtube = YouTubeResolver::with_base_url(Some(&shim.uri()));
+
+    let found = compare(
+        &AudioFingerprinter::new(),
+        &youtube,
+        &garbage,
+        "Artist",
+        "Song",
+        Some(40),
+        &SoulseekSettings::default(),
+    )
+    .await;
+
+    assert_eq!(found, Compared::Unavailable);
+    assert!(shim.received_requests().await.unwrap_or_default().is_empty());
 }

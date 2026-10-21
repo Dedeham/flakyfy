@@ -57,6 +57,7 @@ use crate::services::common::{
     AcquisitionState, BaseDownloadService, DownloadBackend, DownloadCore, DownloadServices,
     OperationCanceled, TrackDownload,
 };
+use crate::services::fingerprint::same_recording::{SameRecording, same_recording};
 use crate::services::fingerprint::{DownloadVerificationService, you_tube_cross_check};
 use crate::services::i_download_service::DirectStreamInfo;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
@@ -1603,6 +1604,7 @@ impl SoulseekDownloadService {
                             &cross_settings,
                         )
                         .await
+                        .done()
                     {
                         let alike = (check.similarity * 100.0).round();
                         match check.verdict {
@@ -1664,6 +1666,53 @@ impl SoulseekDownloadService {
                                 continue;
                             }
                             CrossCheck::Unsure => {}
+                        }
+                    }
+
+                    // Better quality swaps a file the person trusts for this one, so this one has to sound
+                    // like it. Not for a copy someone picked (their choice), and not for Wrong song or
+                    // Wrong version, whose original is the wrong one. A comparison that could not be
+                    // made throws nothing away here; the swap's own gate refuses what it cannot vouch for.
+                    if download.upgrade_search
+                        && picked.is_none()
+                        && let Some(original) = download.replacing_path.as_deref()
+                    {
+                        let same = same_recording(
+                            self.verification.fingerprinter(),
+                            Path::new(&local_path),
+                            Path::new(original),
+                            &cross_settings,
+                        )
+                        .await;
+                        if same.is_another_sound() {
+                            warn!(
+                                "Soulseek attempt {attempt_idx} delivered a file for '{artist} - {title}' that {}; \
+                                 discarding and advancing",
+                                same.refusal()
+                            );
+                            discard_rejected_download(&local_path, attempt_started_utc);
+                            // Remembered only when it is clearly another sound. A different length
+                            // or a doubtful match may be the library's file being the odd one (a
+                            // YouTube copy with a talking intro), and the deny list also keeps this
+                            // peer's file from an ordinary download of the song.
+                            if matches!(same, SameRecording::Differs(_)) {
+                                self.deny_candidate(
+                                    hit,
+                                    routing,
+                                    "does not sound like the file it would replace",
+                                );
+                            }
+                            base.log_step(
+                                &track_key,
+                                acquisition_event_kinds::CHECK,
+                                "Does not sound like the file it would replace",
+                                Some(&sentence(&same.refusal())),
+                            );
+                            last_error = Some(format!("the file found {}", same.refusal()));
+                            if caller_gave_up {
+                                break;
+                            }
+                            continue;
                         }
                     }
 

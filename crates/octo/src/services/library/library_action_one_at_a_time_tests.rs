@@ -122,6 +122,22 @@ impl Fixture {
         soulseek_link: Option<Arc<dyn ISoulseekLink>>,
         sources: Option<Arc<UpgradeSources>>,
     ) -> Arc<LibraryActionExecutor> {
+        self.build(keep_originals, soulseek_link, sources, false)
+    }
+
+    /// An executor that compares a Better quality candidate with the original, as the app's does.
+    /// The others leave the comparison out, since the staged files here are not real audio.
+    fn comparing_executor(&self) -> Arc<LibraryActionExecutor> {
+        self.build(true, None, None, true)
+    }
+
+    fn build(
+        &self,
+        keep_originals: bool,
+        soulseek_link: Option<Arc<dyn ISoulseekLink>>,
+        sources: Option<Arc<UpgradeSources>>,
+        comparing: bool,
+    ) -> Arc<LibraryActionExecutor> {
         let settings = store(AppSettings {
             library_actions: LibraryActionSettings {
                 enabled: true,
@@ -161,6 +177,7 @@ impl Fixture {
                 ids: Some(self.ids.clone()),
                 soulseek_link,
                 sources,
+                fingerprinter: comparing.then(|| Arc::new(octo_media::audio::AudioFingerprinter::new())),
                 ..Default::default()
             },
         );
@@ -934,4 +951,48 @@ async fn a_journal_that_cannot_be_written_stops_the_action_before_the_file_moves
     assert!(Path::new(&f.original).exists());
     assert!(f.queue.is_idle());
     assert_eq!(f.action().state, LibraryActionState::Failed);
+}
+
+// The swap compares the candidate with the original, and refuses what it cannot compare. The staged
+// bytes here are not audio, so no fingerprint can be made of them, which is exactly that case: it
+// proves `Admission::admit` calls the check, whatever fpcalc and ffmpeg are present.
+#[tokio::test]
+async fn better_quality_does_not_swap_what_it_cannot_compare_with_the_original() {
+    let f = Fixture::new().await;
+    let action = spawn_apply(
+        &f.comparing_executor(),
+        LibraryActionRequest {
+            only_source: Some(DownloadSource::Soulseek),
+            ..better_quality()
+        },
+    );
+
+    let download = f.next_download().await;
+    let refused = reveal(&download, &f.lossless_staged())
+        .await
+        .expect_err("refused");
+    assert!(
+        refused.problem.contains("could not be compared"),
+        "{}",
+        refused.problem
+    );
+    f.fail(&download, anyhow::Error::new(refused));
+
+    assert_eq!(outcome_of(action).await.state, LibraryActionState::Failed);
+    assert!(Path::new(&f.original).exists());
+    assert!(f.quarantined().is_empty());
+}
+
+// A copy taken in any quality is the person's own choice, so it is not compared.
+#[tokio::test]
+async fn a_replacement_anyway_is_not_compared_with_the_original() {
+    let f = Fixture::new().await;
+    let action = spawn_apply(&f.comparing_executor(), replaced_anyway(plain_teardrop(270)));
+
+    let download = f.next_download().await;
+    let placed = reveal(&download, &f.lossless_staged()).await;
+
+    assert!(placed.is_ok(), "{placed:?}");
+    f.fail(&download, not_found("done"));
+    let _ = outcome_of(action).await;
 }

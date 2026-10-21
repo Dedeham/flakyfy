@@ -19,6 +19,7 @@ use octo_core::lidarr::lidarr_client::LidarrError;
 use octo_core::lyrics::{LyricsQuery, LyricsResult, LyricsTiming};
 use octo_core::settings::{DownloadSource, LibraryAction, MetadataSettings, SettingsStore};
 use octo_core::soulseek::{RoutingKind, SoulseekRouting};
+use octo_media::audio::AudioFingerprinter;
 use octo_media::audio::spectrum_analyzer::{SpectrumAnalyzer, SpectrumReport};
 use octo_media::tags::{KeptIdentity, KeptIdentityTags};
 use octo_subsonic::SubsonicCredential;
@@ -41,6 +42,7 @@ use super::{NavidromeSongPathResolver, ResolvedSongFile};
 use crate::services::common::download_picks::AnywaySong;
 use crate::services::common::{StarOnArrival, TrackAcquisitionQueue};
 use crate::services::cover_art::{CoverUpgradeWorker, RejectedCovers};
+use crate::services::fingerprint::same_recording::same_recording;
 use crate::services::library::library_tag_edits::{self, song_tag_fields};
 use crate::services::library::replacement_handoff::ArrivedTags;
 use crate::services::local::ILocalLibraryService;
@@ -209,6 +211,8 @@ pub struct LibraryActionExecutorParts {
     pub settings: Arc<SettingsStore>,
     pub notices: Option<Arc<NoticeQueue>>,
     pub spectrum: Option<Arc<SpectrumAnalyzer>>,
+    /// Compares a better-quality candidate with the file it replaces. None: not compared.
+    pub fingerprinter: Option<Arc<AudioFingerprinter>>,
     pub stars: Option<Arc<StarOnArrival>>,
     pub soulseek_link: Option<Arc<dyn ISoulseekLink>>,
     pub sources: Option<Arc<UpgradeSources>>,
@@ -251,6 +255,7 @@ pub struct LibraryActionExecutor {
     settings: Arc<SettingsStore>,
     notices: Option<Arc<NoticeQueue>>,
     spectrum: Option<Arc<SpectrumAnalyzer>>,
+    fingerprinter: Option<Arc<AudioFingerprinter>>,
     stars: Option<Arc<StarOnArrival>>,
     soulseek_link: Option<Arc<dyn ISoulseekLink>>,
     sources: Option<Arc<UpgradeSources>>,
@@ -420,6 +425,7 @@ impl LibraryActionExecutor {
             settings: parts.settings,
             notices: parts.notices,
             spectrum: parts.spectrum,
+            fingerprinter: parts.fingerprinter,
             stars: parts.stars,
             soulseek_link: parts.soulseek_link,
             sources: parts.sources,
@@ -1725,6 +1731,29 @@ impl LibraryActionExecutor {
             .then(|| format!("is {}", report.describe()))
     }
 
+    /// Whether a replacement has to sound like the file it replaces: Better quality does, since its
+    /// original is the song the person trusts. Wrong song and Wrong version replace a file that is
+    /// the wrong one, and a copy the person said to take in any quality (`anyway`) is their own
+    /// choice. A copy that was only picked is still compared here.
+    pub(crate) fn must_sound_alike(action: LibraryAction, any_quality: bool) -> bool {
+        action == LibraryAction::BetterQuality && !any_quality
+    }
+
+    /// Why the candidate may not take the original's place, None when it sounds like it. Without a
+    /// fingerprinter (tests) nothing is compared; in the app one is always set.
+    async fn not_the_same_recording(&self, candidate: &str, original: &str) -> Option<String> {
+        let fingerprinter = self.fingerprinter.as_ref()?;
+        let settings = self.settings.current().soulseek.clone();
+        let same = same_recording(
+            fingerprinter,
+            Path::new(candidate),
+            Path::new(original),
+            &settings,
+        )
+        .await;
+        (!same.allows_replacing()).then(|| same.refusal())
+    }
+
     async fn spectrum_of(&self, path: &str) -> SpectrumReport {
         let settings = self.settings.current().soulseek.clone();
         match &self.spectrum {
@@ -1880,6 +1909,13 @@ impl Admission {
             LibraryActionExecutor::unacceptable(self.action, candidate, &self.original, self.any_quality);
         if problem.is_none() && self.action == LibraryAction::BetterQuality && !self.any_quality {
             problem = LibraryActionExecutor::not_really_lossless(&executor.spectrum_of(candidate).await);
+        }
+        // Last of the checks on the file itself, and the one that keeps a wrong song out: the original
+        // is the one the person trusts, so only the same recording may take its place.
+        if problem.is_none() && LibraryActionExecutor::must_sound_alike(self.action, self.any_quality) {
+            problem = executor
+                .not_the_same_recording(candidate, &self.original.absolute_path)
+                .await;
         }
         if problem.is_some() {
             return Ok(problem);

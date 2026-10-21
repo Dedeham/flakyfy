@@ -2782,6 +2782,68 @@ ready.then(loadReviewSweep);
 // Not while the sign-in screen is up: every refused poll would wait behind it and fire at once after.
 setInterval(() => { if (document.visibilityState === 'visible' && !gatePromise) loadReviewSweep(); }, 30000);
 
+// ---- Review: the one-time YouTube check ----
+const youtubeCheckStates = { Idle: 'Not started', Off: 'Off', Paused: 'Paused', Waiting: 'Waiting', Running: 'Checking' };
+
+async function loadYoutubeCheck() {
+  const status = document.getElementById('youtube-check-status');
+  if (!status) return;
+  try {
+    const response = await api('/api/admin/youtube-check', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const s = await response.json();
+    const parts = [];
+    if (s.running) {
+      parts.push(`${youtubeCheckStates[s.state] || s.state}.`);
+      parts.push(`Compared ${s.position} of ${s.total} songs, ${s.asked} asked about, ${s.open} waiting for an answer.`);
+      if (s.keeper) parts.push(`Asking ${s.keeper}.`);
+    } else if (s.finishedUtc) {
+      parts.push(`Done: compared ${s.done} songs, ${s.asked} asked about, ${s.unsure} alike enough to doubt, ${s.noCopy} with no copy to compare.`);
+    } else {
+      parts.push('Compares each song in your library with its official YouTube Music copy, once.');
+    }
+    if (s.running && s.reason && s.state !== 'Running') parts.push(s.reason);
+    status.textContent = parts.join(' ');
+    const start = document.getElementById('youtube-check-start');
+    const pause = document.getElementById('youtube-check-pause');
+    start.querySelector('span').textContent = s.running || s.finishedUtc ? 'Start over' : 'Check';
+    start.disabled = s.perHour === 0;
+    pause.hidden = !s.running;
+    pause.dataset.paused = s.paused ? 'true' : 'false';
+    pause.querySelector('span').textContent = s.paused ? 'Carry on' : 'Pause';
+  } catch (error) {
+    status.textContent = `Could not read the YouTube check: ${error.message}`;
+  }
+}
+
+async function youtubeCheckPost(button, path, message) {
+  button.disabled = true;
+  try {
+    const response = await api(path, { method: 'POST' });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    note(button, message);
+  } catch (error) {
+    note(button, error.message, 'error');
+  } finally {
+    button.disabled = false;
+    await loadYoutubeCheck();
+  }
+}
+
+document.getElementById('youtube-check-start')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!(await askConfirm('Compare every song with YouTube?', 'Each song is compared with its official YouTube Music copy, a few an hour. A song that sounds nothing like it becomes a question in Review. Nothing is changed or removed. Earlier answers are forgotten.', 'Check'))) return;
+  youtubeCheckPost(button, '/api/admin/youtube-check/start', 'Checking.');
+});
+document.getElementById('youtube-check-pause')?.addEventListener('click', (event) => {
+  const button = event.currentTarget;
+  const resume = button.dataset.paused === 'true';
+  youtubeCheckPost(button, `/api/admin/youtube-check/${resume ? 'resume' : 'pause'}`, resume ? 'Carrying on.' : 'Paused.');
+});
+ready.then(loadYoutubeCheck);
+setInterval(() => { if (document.visibilityState === 'visible' && !gatePromise) loadYoutubeCheck(); }, 30000);
+
 // ---- Tags against the audio: the library tag check ----
 // Its line, found and fixed counts, and a Pause that becomes Start while it is paused.
 // On Library health itself, `here` leaves out where the findings are.

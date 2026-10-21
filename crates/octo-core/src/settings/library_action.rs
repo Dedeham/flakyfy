@@ -271,6 +271,14 @@ pub struct LibraryActionSettings {
     /// Environment variable: LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR
     pub tag_check_per_hour: i32,
 
+    /// How many library songs an hour the one-time YouTube check looks at, once a person starts it
+    /// from the dashboard (Library actions, "Check every song against YouTube"). Each is compared
+    /// with its official YouTube Music copy; one that sounds nothing like it becomes a Review
+    /// question, and nothing is ever changed or removed. 0 is off. Only while nothing is
+    /// downloading.
+    /// Environment variable: LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR
+    pub youtube_check_per_hour: i32,
+
     /// A "Duplicates" playlist per allowed user: recordings the library holds more than once,
     /// side by side, the copy worth keeping first. Octo only points them out; nothing is removed
     /// unless you remove it (#53).
@@ -336,6 +344,7 @@ impl Default for LibraryActionSettings {
             review_sweep_auto_replace: false,
             review_sweep_auto_replace_per_day: 10,
             tag_check_per_hour: 60,
+            youtube_check_per_hour: 30,
             duplicates_enabled: false,
             duplicates_playlist_name: "Duplicates".to_string(),
             duplicates_scan_hours: 24,
@@ -375,6 +384,11 @@ impl LibraryActionSettings {
     /// 0 is off; the same ceiling as the Review sweep, one file every ten seconds.
     pub fn effective_tag_check_per_hour(&self) -> i32 {
         self.tag_check_per_hour.clamp(0, 360)
+    }
+
+    /// 0 is off; the same ceiling as the other sweeps, one song every ten seconds.
+    pub fn effective_youtube_check_per_hour(&self) -> i32 {
+        self.youtube_check_per_hour.clamp(0, 360)
     }
 
     pub fn effective_duplicates_scan_interval(&self) -> Duration {

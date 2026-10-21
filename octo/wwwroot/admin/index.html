@@ -1617,6 +1617,45 @@
             <div class="chart-status charts-detail" id="charts-status" hidden></div>
           </form>
         </div>
+
+        <div class="set-section" id="precache-section">
+          <div class="set-head">
+            <h3 class="set-title">Play instantly</h3>
+            <p class="set-desc">Fetch a few songs of the lists you pick ahead of time, so a shuffle starts at once. Only songs from outside the library are fetched, one at a time and never while someone else's download runs.</p>
+          </div>
+          <form data-section="generated-playlists-precache" class="set-card">
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Fetch ahead</div><div class="set-info-d">Off by default: it downloads without being asked.</div><div class="set-info-more">Fetched songs are ordinary library files. After the days below, one nobody starred, rated or played enough goes to Recently removed. Made for you lists and the charts can be picked; library mixes need no fetching, and imported lists already have the trickle.</div></div>
+              <label class="switch"><input type="checkbox" name="GeneratedPlaylists.Precache" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Songs per list</div><div class="set-info-d">Chosen at random from the ones not here yet. A list can have its own number below.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.PrecacheCount" type="number" min="1" max="50" />
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Look again every <span class="set-opt">hours</span></div><div class="set-info-d">Default 6.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.PrecacheIntervalHours" type="number" min="1" max="168" />
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Keep untouched songs for <span class="set-opt">days</span></div><div class="set-info-d">Default 30. Starred or rated songs are always kept.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.PrecacheKeepDays" type="number" min="1" max="3650" />
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Plays that keep a song</div><div class="set-info-d">Default 2.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.PrecacheMinPlays" type="number" min="1" max="1000" />
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Only say what would go</div><div class="set-info-d">On to begin with. Letting a song go needs the library actions on, with Delete enabled and you on the allowlist.</div></div>
+              <label class="switch"><input type="checkbox" name="GeneratedPlaylists.PrecacheDryRun" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+          </form>
+          <div class="set-card" id="precache-lists-card">
+            <div class="set-row set-row-stack">
+              <div class="set-info"><div class="set-info-t">Lists to fetch ahead</div><div class="set-info-d" id="precache-summary">Loading…</div></div>
+              <div id="precache-lists" role="group" aria-label="Lists to fetch ahead"></div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- ─── SOULSEEK ───────────────────────────────────────── -->

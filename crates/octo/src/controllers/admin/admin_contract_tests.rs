@@ -779,8 +779,10 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, the sweep's
     // replacing two: LibraryActions:ReviewSweepAutoReplace and :ReviewSweepAutoReplacePerDay,
     // then LibraryActions:KeepRatedCopies, Subsonic:DownloadAlbumOnSongStar and
-    // Metadata:AnimatedArt, listed last.
-    assert_eq!(rows.len(), 203);
+    // Metadata:AnimatedArt, then the pre-cache's six: GeneratedPlaylists:Precache,
+    // :PrecacheCount, :PrecacheIntervalHours, :PrecacheKeepDays, :PrecacheMinPlays and
+    // :PrecacheDryRun, listed last.
+    assert_eq!(rows.len(), 209);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()

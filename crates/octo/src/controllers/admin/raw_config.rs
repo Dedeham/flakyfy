@@ -318,6 +318,12 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "LibraryActions:KeepRatedCopies",
     "Subsonic:DownloadAlbumOnSongStar",
     "Metadata:AnimatedArt",
+    "GeneratedPlaylists:Precache",
+    "GeneratedPlaylists:PrecacheCount",
+    "GeneratedPlaylists:PrecacheIntervalHours",
+    "GeneratedPlaylists:PrecacheKeepDays",
+    "GeneratedPlaylists:PrecacheMinPlays",
+    "GeneratedPlaylists:PrecacheDryRun",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

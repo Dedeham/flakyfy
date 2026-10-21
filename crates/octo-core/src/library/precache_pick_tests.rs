@@ -94,7 +94,7 @@ fn expiry_keeps_a_song_played_often_enough() {
 }
 
 #[test]
-fn expiry_keeps_a_song_whose_marks_or_plays_are_unknown() {
+fn expiry_leaves_a_song_whose_marks_or_plays_are_unknown_to_be_looked_at_again() {
     let unknown_marks = Uptake {
         marked: None,
         plays: Some(0),
@@ -105,10 +105,10 @@ fn expiry_keeps_a_song_whose_marks_or_plays_are_unknown() {
     };
     assert!(matches!(
         expiry(day(0), day(90), 30, 2, unknown_marks),
-        Expiry::Keep(_)
+        Expiry::Unknown(_)
     ));
     assert!(matches!(
         expiry(day(0), day(90), 30, 2, unknown_plays),
-        Expiry::Keep(_)
+        Expiry::Unknown(_)
     ));
 }

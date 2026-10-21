@@ -53,13 +53,16 @@ pub struct Uptake {
 pub enum Expiry {
     /// Not old enough to look at yet.
     NotYet,
-    /// Someone took it up (or that cannot be told): it is an ordinary library song from now on.
+    /// Someone took it up: it is an ordinary library song from now on.
     Keep(&'static str),
+    /// Whether anyone did cannot be told right now (a listener's marks or the plays could not be
+    /// read): it stays as it is and is looked at again.
+    Unknown(&'static str),
     /// Nobody did: it goes to the trash.
     Let,
 }
 
-/// Whether a song fetched at `cached_at` is let go at `now`. Anything unknown keeps it: a song
+/// Whether a song fetched at `cached_at` is let go at `now`. Anything unknown spares it: a song
 /// is only ever trashed when every listener's marks were read and none is there.
 pub fn expiry(
     cached_at: DateTime<Utc>,
@@ -73,13 +76,13 @@ pub fn expiry(
     }
     match uptake.marked {
         Some(true) => return Expiry::Keep("starred or rated"),
-        None => return Expiry::Keep("not every listener's marks could be read"),
+        None => return Expiry::Unknown("not every listener's marks could be read"),
         Some(false) => {}
     }
     match uptake.plays {
         Some(plays) if plays >= i64::from(min_plays) => Expiry::Keep("played"),
         Some(_) => Expiry::Let,
-        None => Expiry::Keep("its plays could not be read"),
+        None => Expiry::Unknown("its plays could not be read"),
     }
 }
 

@@ -779,8 +779,9 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, the sweep's
     // replacing two: LibraryActions:ReviewSweepAutoReplace and :ReviewSweepAutoReplacePerDay,
     // then LibraryActions:KeepRatedCopies, Subsonic:DownloadAlbumOnSongStar and
-    // Metadata:AnimatedArt, listed last.
-    assert_eq!(rows.len(), 203);
+    // Metadata:AnimatedArt, then the YouTube comparison's three: Soulseek:YoutubeCrossCheck,
+    // :YoutubeMatchThreshold and :YoutubeCrossCheckRetries, listed last.
+    assert_eq!(rows.len(), 206);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()

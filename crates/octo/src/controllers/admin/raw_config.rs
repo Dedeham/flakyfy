@@ -159,9 +159,6 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Soulseek:FingerprintTimeoutSeconds",
     "Soulseek:AcoustIdTimeoutSeconds",
     "Soulseek:DetectTranscodes",
-    "Soulseek:YoutubeCrossCheck",
-    "Soulseek:YoutubeMatchThreshold",
-    "Soulseek:YoutubeCrossCheckRetries",
     "Soulseek:TranscodeCheckTimeoutSeconds",
     "Soulseek:OutageHoldHours",
     "Soulseek:ParallelDownloads",
@@ -321,6 +318,9 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "LibraryActions:KeepRatedCopies",
     "Subsonic:DownloadAlbumOnSongStar",
     "Metadata:AnimatedArt",
+    "Soulseek:YoutubeCrossCheck",
+    "Soulseek:YoutubeMatchThreshold",
+    "Soulseek:YoutubeCrossCheckRetries",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

@@ -218,7 +218,10 @@ fn palette_from_a_picture() {
 /// shows it (`18-dashboard/ambient-seeded`).
 #[test]
 fn palette_of_the_stub_cover_matches_the_reference() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/rust-migration/fixtures/covers/sample-cover.jpg");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/rust-migration/fixtures/covers/sample-cover.jpg"
+    );
     let bytes = std::fs::read(path).expect("the sample cover");
     let swatches = CoverArtService::swatches_of(&bytes);
     let palette = from_swatches(swatches.as_deref()).expect("a palette");

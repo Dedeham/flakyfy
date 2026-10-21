@@ -31,6 +31,7 @@ pub mod navidrome_song_list;
 pub mod navidrome_song_path_resolver;
 pub mod notice_playlist_worker;
 pub mod notice_queue;
+pub mod precache_store;
 pub mod quality_upgrade_worker;
 pub mod rejections;
 pub mod replacement_handoff;

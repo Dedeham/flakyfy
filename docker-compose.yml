@@ -229,14 +229,6 @@ services:
       GeneratedPlaylists__LikedSongsName: ${LIKED_SONGS_NAME:-Liked Songs}
       GeneratedPlaylists__LikedSongsMax: ${LIKED_SONGS_MAX:-500}
 
-      # ----- Pre-cache: fetch a few songs of the picked lists ahead, so a shuffle starts at once -----
-      GeneratedPlaylists__Precache: ${PRECACHE:-false}
-      GeneratedPlaylists__PrecacheCount: ${PRECACHE_COUNT:-5}
-      GeneratedPlaylists__PrecacheIntervalHours: ${PRECACHE_INTERVAL_HOURS:-6}
-      GeneratedPlaylists__PrecacheKeepDays: ${PRECACHE_KEEP_DAYS:-30}
-      GeneratedPlaylists__PrecacheMinPlays: ${PRECACHE_MIN_PLAYS:-2}
-      GeneratedPlaylists__PrecacheDryRun: ${PRECACHE_DRY_RUN:-true}
-
       # ----- Import: lists from a file, a Spotify link or pasted text, and the trickle -----
       Imports__SongsPerHour: ${IMPORTS_SONGS_PER_HOUR:-20}
       Imports__RefreshHours: ${IMPORTS_REFRESH_HOURS:-6}

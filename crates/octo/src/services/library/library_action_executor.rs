@@ -1733,7 +1733,8 @@ impl LibraryActionExecutor {
 
     /// Whether a replacement has to sound like the file it replaces: Better quality does, since its
     /// original is the song the person trusts. Wrong song and Wrong version replace a file that is
-    /// the wrong one, and a copy someone picked is their own choice.
+    /// the wrong one, and a copy the person said to take in any quality (`anyway`) is their own
+    /// choice. A copy that was only picked is still compared here.
     pub(crate) fn must_sound_alike(action: LibraryAction, any_quality: bool) -> bool {
         action == LibraryAction::BetterQuality && !any_quality
     }

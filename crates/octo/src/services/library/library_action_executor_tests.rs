@@ -708,7 +708,7 @@ async fn the_worker_hands_the_replacement_handoff_to_the_download() {
 fn only_better_quality_without_a_picked_copy_must_sound_alike() {
     use octo_core::settings::LibraryAction as A;
     assert!(LibraryActionExecutor::must_sound_alike(A::BetterQuality, false));
-    // A copy someone picked is their own choice.
+    // A copy taken in any quality is the person's own choice.
     assert!(!LibraryActionExecutor::must_sound_alike(A::BetterQuality, true));
     // The original of these is the wrong one, so sounding like it would be the fault.
     assert!(!LibraryActionExecutor::must_sound_alike(A::WrongSong, false));

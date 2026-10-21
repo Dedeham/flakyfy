@@ -97,7 +97,11 @@ pub(crate) fn window_starts(shorter: i32, clip: i32) -> Vec<i32> {
 }
 
 fn length_of(path: &Path) -> Option<i32> {
-    TagFile::open(path).ok().map(|file| file.duration_seconds())
+    // 0 is a header that does not say, not a file of no length.
+    TagFile::open(path)
+        .ok()
+        .map(|file| file.duration_seconds())
+        .filter(|seconds| *seconds > 0)
 }
 
 /// `candidate` against `original`, in up to three windows. Every window has to match: a remaster or

@@ -57,7 +57,7 @@ use crate::services::common::{
     AcquisitionState, BaseDownloadService, DownloadBackend, DownloadCore, DownloadServices,
     OperationCanceled, TrackDownload,
 };
-use crate::services::fingerprint::same_recording::same_recording;
+use crate::services::fingerprint::same_recording::{SameRecording, same_recording};
 use crate::services::fingerprint::{DownloadVerificationService, you_tube_cross_check};
 use crate::services::i_download_service::DirectStreamInfo;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
@@ -1687,15 +1687,21 @@ impl SoulseekDownloadService {
                         if same.is_another_sound() {
                             warn!(
                                 "Soulseek attempt {attempt_idx} delivered a file for '{artist} - {title}' that {}; \
-                                 discarding, remembering the peer and advancing",
+                                 discarding and advancing",
                                 same.refusal()
                             );
                             discard_rejected_download(&local_path, attempt_started_utc);
-                            self.deny_candidate(
-                                hit,
-                                routing,
-                                "does not sound like the file it would replace",
-                            );
+                            // Remembered only when it is clearly another sound. A different length
+                            // or a doubtful match may be the library's file being the odd one (a
+                            // YouTube copy with a talking intro), and the deny list also keeps this
+                            // peer's file from an ordinary download of the song.
+                            if matches!(same, SameRecording::Differs(_)) {
+                                self.deny_candidate(
+                                    hit,
+                                    routing,
+                                    "does not sound like the file it would replace",
+                                );
+                            }
                             base.log_step(
                                 &track_key,
                                 acquisition_event_kinds::CHECK,

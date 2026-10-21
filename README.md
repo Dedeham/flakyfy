@@ -1090,7 +1090,6 @@ Project layout:
 | `crates/octo-media/` | tags (lofty), audio checks, list covers |
 | `crates/octo-subsonic/` | request parsing, response building |
 | `octo/wwwroot/admin/` | the admin UI (vanilla JS, hand-rolled CSS, no build step) |
-| `parity/` | the harness that compares the Rust server's answers with the C# one's |
 | `yt-dlp-shim/` | Python/Flask sidecar (~200 lines) |
 | `sonic/` | octo-sonic, the Sounds alike and transition profile reader (Rust) |
 

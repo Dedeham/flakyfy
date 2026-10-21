@@ -59,6 +59,9 @@ services:
       Subsonic__WaitForLosslessOnPlay: ${WAIT_FOR_LOSSLESS_ON_PLAY:-false}
       Subsonic__LosslessWaitTimeoutSeconds: ${LOSSLESS_WAIT_TIMEOUT_SECONDS:-0}
       Subsonic__DownloadOnPlay: ${DOWNLOAD_ON_PLAY:-false}
+      # A heart is fetched at once as a YouTube MP3 and upgraded later. Only with YouTube in the
+      # heart sources and the weekly Better quality upgrade on; otherwise the order is unchanged.
+      Subsonic__InstantCopyOnHeart: ${INSTANT_COPY_ON_HEART:-true}
       Subsonic__LidarrAlbumOnPlay: ${LIDARR_ALBUM_ON_PLAY:-false}
       Subsonic__FolderStructure: ${FOLDER_STRUCTURE:-Flat}
       Subsonic__DownloadSource: ${DOWNLOAD_SOURCE:-Soulseek}

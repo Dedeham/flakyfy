@@ -170,6 +170,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 n_num(subsonic.lossless_wait_timeout_seconds),
             ),
             ("DownloadOnPlay", Node::Bool(subsonic.download_on_play)),
+            ("InstantCopyOnHeart", Node::Bool(subsonic.instant_copy_on_heart)),
             ("LidarrAlbumOnPlay", Node::Bool(subsonic.lidarr_album_on_play)),
             (
                 "DownloadAlbumOnSongStar",

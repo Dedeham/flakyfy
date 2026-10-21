@@ -354,6 +354,15 @@ pub struct SubsonicSettings {
     /// again.
     pub download_on_play: bool,
 
+    /// A hearted song is fetched at once as an MP3 from YouTube (the video the song was found by),
+    /// ahead of the other sources in Heart download priority, and Better quality looks for a lossless
+    /// copy over the following weeks. Needs YouTube among the heart sources for songs, and the weekly
+    /// upgrade on (Library actions enabled, Better quality on and not a dry run, the person allowed,
+    /// UpgradePerWeek above 0): without them the MP3 would be the only copy for good, so the
+    /// priority is left as it is. On by default, and only ever has an effect with those in place.
+    /// Environment variable: INSTANT_COPY_ON_HEART
+    pub instant_copy_on_heart: bool,
+
     /// Hand the album of every played external track to Lidarr (default: false).
     /// Environment variable: LIDARR_ALBUM_ON_PLAY
     ///
@@ -418,6 +427,7 @@ impl Default for SubsonicSettings {
             wait_for_lossless_on_play: false,
             lossless_wait_timeout_seconds: 0,
             download_on_play: false,
+            instant_copy_on_heart: true,
             lidarr_album_on_play: false,
             folder_structure: FolderStructure::Flat,
             download_source: DownloadSource::Soulseek,

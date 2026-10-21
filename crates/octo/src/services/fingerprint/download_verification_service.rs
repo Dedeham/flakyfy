@@ -58,7 +58,7 @@ impl DownloadVerificationService {
     /// kinds apart. Each is a call a second apart.
     pub const MAX_FACT_LOOKUPS: usize = 3;
 
-    /// The fingerprinter, for the YouTube cross-check, which compares raw frames locally.
+    /// The fingerprinter, for comparing a Better quality candidate with the file it replaces.
     pub(crate) fn fingerprinter(&self) -> &AudioFingerprinter {
         &self.fingerprinter
     }

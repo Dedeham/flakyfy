@@ -348,3 +348,19 @@ async fn compare_with_a_file_that_gives_no_fingerprint_is_unavailable() {
     assert_eq!(found, Compared::Unavailable);
     assert!(shim.received_requests().await.unwrap_or_default().is_empty());
 }
+
+/// A file that is silent where the song plays is not the song: it is judged, not skipped.
+#[tokio::test]
+async fn compare_a_silent_file_for_a_song_differs() {
+    if !tools_present() {
+        return;
+    }
+    let reference = make("sil-ref.wav", MELODY, &[]);
+    let silence = make("sil-dl.wav", "anullsrc=r=44100:cl=stereo:d=40", &[]);
+
+    let found = outcome(&silence, &reference)
+        .await
+        .expect("a reference and two fingerprints");
+
+    assert_eq!(found.verdict, CrossCheck::Differs, "{}", found.similarity);
+}

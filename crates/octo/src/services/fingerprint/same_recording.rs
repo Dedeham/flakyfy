@@ -145,8 +145,10 @@ pub async fn same_recording(
         let (Some(new), Some(old)) = (new, old) else {
             return SameRecording::CannotTell;
         };
+        // A window with nothing in it on the original's side (silence, a pure tone) cannot vouch for
+        // anything, so the others decide; with none left nothing is vouched for.
         let Some(similarity) = fingerprint_compare::similarity(&new, &old, MAX_SHIFT) else {
-            return SameRecording::CannotTell;
+            continue;
         };
         worst = Some(worst.map_or(similarity, |w| w.min(similarity)));
     }

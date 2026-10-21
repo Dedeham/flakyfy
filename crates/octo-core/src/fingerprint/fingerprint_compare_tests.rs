@@ -60,3 +60,34 @@ fn judge_splits_match_unsure_and_differs() {
     assert_eq!(judge(0.59), CrossCheck::Differs);
     assert_eq!(judge(0.50), CrossCheck::Differs);
 }
+
+// A window of silence or a steady tone fingerprints to a few repeated numbers and looks like any
+// other. Such a window says nothing, and a file that is silent where the reference is not is not it.
+
+#[test]
+fn silence_and_a_steady_tone_are_not_informative_but_music_is() {
+    assert!(!is_informative(&[]));
+    assert!(!is_informative(&[7; 200]));
+    assert!(is_informative(&stream(7, 200)));
+}
+
+#[test]
+fn a_short_pause_is_informative_and_most_of_a_window_silent_is_not() {
+    let mut frames = stream(7, 200);
+    frames[..50].fill(0);
+    assert!(is_informative(&frames), "a quarter silent");
+    frames[..70].fill(0);
+    assert!(!is_informative(&frames), "over a third silent");
+}
+
+#[test]
+fn a_silent_file_against_music_is_as_different_as_it_gets() {
+    assert_eq!(similarity(&[0; 200], &stream(7, 200), MAX_SHIFT), Some(0.0));
+}
+
+#[test]
+fn a_reference_with_nothing_in_it_says_nothing() {
+    assert_eq!(similarity(&stream(7, 200), &[0; 200], MAX_SHIFT), None);
+    assert_eq!(similarity(&[0; 200], &[0; 200], MAX_SHIFT), None);
+    assert_eq!(similarity(&[5; 200], &[9; 200], MAX_SHIFT), None);
+}

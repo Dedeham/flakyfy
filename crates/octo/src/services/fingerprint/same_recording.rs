@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use octo_core::fingerprint::fingerprint_compare::{self, CrossCheck, MAX_SHIFT};
+use octo_core::fingerprint::fingerprint_compare::{self, MAX_SHIFT};
 use octo_core::settings::SoulseekSettings;
 use octo_media::audio::AudioFingerprinter;
 use octo_media::tags::TagFile;
@@ -23,7 +23,7 @@ pub enum SameRecording {
     Same(f64),
     /// Clearly something else.
     Differs(f64),
-    /// Alike enough to doubt: another version, a remaster, a live take.
+    /// Alike enough to doubt: another version, a remaster, a live take, a copy at another speed.
     Unsure(f64),
     /// The lengths are too far apart for an intro: another cut of the song. The difference in
     /// seconds, positive when the candidate is the longer.
@@ -32,12 +32,23 @@ pub enum SameRecording {
     CannotTell,
 }
 
+/// How alike, in percent, a candidate has to be to take a trusted file's place. Stricter than the
+/// YouTube comparison's 70, because a wrong swap costs more than a missed upgrade. Measured on real
+/// recordings: the same recording in any encoding (MP3 128k, mono 64k, resampled, with a 5 s intro)
+/// scored 94 to 100%; a copy sped up 3% scored 81 to 84%, 6% scored 72 to 83%, 10% 63 to 73%; other
+/// pianists' performances of the same piece scored 58 to 64%; speech against piano 53%. A sped-up
+/// or slowed copy is another master, not the file the person has.
+pub const SAME_PERCENT: f64 = 85.0;
+
 impl SameRecording {
     pub fn from_similarity(similarity: f64) -> Self {
-        match fingerprint_compare::judge(similarity) {
-            CrossCheck::Match => Self::Same(similarity),
-            CrossCheck::Differs => Self::Differs(similarity),
-            CrossCheck::Unsure => Self::Unsure(similarity),
+        let percent = similarity * 100.0;
+        if percent >= SAME_PERCENT {
+            Self::Same(similarity)
+        } else if percent < fingerprint_compare::DIFFERS_BELOW_PERCENT {
+            Self::Differs(similarity)
+        } else {
+            Self::Unsure(similarity)
         }
     }
 

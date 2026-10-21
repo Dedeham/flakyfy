@@ -43,7 +43,10 @@ async fn judged(candidate: &Path, original: &Path) -> SameRecording {
 #[test]
 fn only_a_clear_match_allows_replacing() {
     assert!(SameRecording::from_similarity(0.97).allows_replacing());
-    assert!(SameRecording::from_similarity(0.70).allows_replacing());
+    assert!(SameRecording::from_similarity(0.85).allows_replacing());
+    // The same recording at another speed (3% faster scored 81 to 84) is another master.
+    assert!(!SameRecording::from_similarity(0.84).allows_replacing());
+    assert!(!SameRecording::from_similarity(0.70).allows_replacing());
     assert!(!SameRecording::from_similarity(0.65).allows_replacing());
     assert!(!SameRecording::from_similarity(0.40).allows_replacing());
     assert!(!SameRecording::CannotTell.allows_replacing());

@@ -15,7 +15,7 @@ pub const MAX_SHIFT: usize = 100;
 /// At or above this many percent two fingerprints are the same recording; unrelated audio scores
 /// about 50, so a gap of ten points under it is where doubt ends and rejecting is safe.
 const MATCH_PERCENT: f64 = 70.0;
-const DIFFERS_BELOW_PERCENT: f64 = 60.0;
+pub const DIFFERS_BELOW_PERCENT: f64 = 60.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrossCheck {

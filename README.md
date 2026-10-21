@@ -565,7 +565,7 @@ songs the quick search did not find. A change to it applies after a restart.
 
 A Better quality candidate has to sound like the file it replaces before it takes its place. Thirty
 seconds at the start, in the middle and at the end of each are fingerprinted and compared, and only
-when every window matches (70% alike or more) does the candidate replace the file: a remaster or a
+when every window matches (85% alike or more) does the candidate replace the file: a remaster or a
 live take often shares its intro and parts ways later. A few seconds of intro on one of them (a
 YouTube copy) are allowed, a length more than 20 seconds apart is another cut of the song and
 refuses at once. A candidate that is another song, or may be another version, is thrown away and
@@ -1003,13 +1003,30 @@ before it, and every check that cannot decide keeps the file, except where it sa
 | 7 | Library check | every song already in the library against its YouTube copy, once | asked about in Review, never changed | `LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR` |
 
 How the comparison works. Chromaprint makes one 32-bit number per eighth of a second. Two numbers
-that are the same sound differ in few bits, and two unrelated sounds in about half. In tests with
-generated audio a lossy copy of the same sound scored 92 to 100% alike and noise or another tune
-40 to 55%; real music varies, which is why the band between 60% and 70% is only asked about. One fingerprint is slid
-against the other by up to about 12 seconds, so a different intro or a leading silence does not
-matter, and the best fit counts. 70% alike or more is the same recording, under 60% is not, and in
-between it is doubtful: such a file is asked about, or, when it is about to replace a trusted file,
-refused. The thresholds are constants. Nothing is uploaded: both sides are fingerprinted here, the
+that are the same sound differ in few bits, and two unrelated sounds in about half. One
+fingerprint is slid against the other by up to about 12 seconds, so a different intro or a leading
+silence does not matter, and the best fit counts. For the YouTube comparison 70% alike or more is
+the same recording and under 60% is not; in between it is doubtful and the file is asked about.
+Better quality is stricter, since a wrong swap costs more than a missed upgrade: 85% or more
+replaces, under 60% is another sound, and anything between is refused.
+
+Measured on real, freely licensed recordings of Beethoven's Für Elise by four pianists and one
+arrangement (Wikimedia Commons), compared as a lossless file against the library's MP3:
+
+| Candidate against the library file | Alike | Better quality |
+|---|---|---|
+| the same recording: MP3 128k, mono 22 kHz 64k, 48 kHz resample | 94 to 100% | replaces |
+| the same recording, original with 5 s of added intro | 94 to 95% | replaces |
+| the same recording 3% faster | 81 to 84% | refused |
+| 6% faster | 72 to 83% | refused |
+| 10% faster or slower | 63 to 73% | refused |
+| 15% faster with higher pitch | 56 to 57% | refused |
+| another pianist's performance of the same piece | 58 to 64% | refused |
+| speech against piano | 53% | refused |
+| 22 s or more shorter or longer | not compared | refused at once |
+
+The distance between the same recording (at least 94%) and the closest other thing (a copy at
+another speed, 84%; another performance, 64%) is what the threshold sits in. The thresholds are constants. Nothing is uploaded: both sides are fingerprinted here, the
 YouTube copy through the shim's `/stream`, a Range-capable stream of which ffmpeg reads only the
 first half minute (at most; `SLSKD_FINGERPRINT_SECONDS` below 30 shortens it).
 

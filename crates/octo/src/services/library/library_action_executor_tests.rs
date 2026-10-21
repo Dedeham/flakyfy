@@ -698,3 +698,97 @@ async fn the_worker_hands_the_replacement_handoff_to_the_download() {
 
     assert_eq!(path.expect("the download's path"), "/music/a.flac");
 }
+
+// ---- Better quality keeps a wrong song out ----------------------------------------------------
+//
+// The lossless candidate has to sound like the file it replaces. Real audio, so these skip where
+// ffmpeg or fpcalc is missing.
+
+#[test]
+fn only_better_quality_without_a_picked_copy_must_sound_alike() {
+    use octo_core::settings::LibraryAction as A;
+    assert!(LibraryActionExecutor::must_sound_alike(A::BetterQuality, false));
+    // A copy someone picked is their own choice.
+    assert!(!LibraryActionExecutor::must_sound_alike(A::BetterQuality, true));
+    // The original of these is the wrong one, so sounding like it would be the fault.
+    assert!(!LibraryActionExecutor::must_sound_alike(A::WrongSong, false));
+    assert!(!LibraryActionExecutor::must_sound_alike(A::WrongVersion, false));
+}
+
+const ALIKE_MELODY: &str = "aevalsrc='0.4*sin(2*PI*t*(220+55*floor(mod(t*3,8)))) + 0.2*sin(2*PI*t*(330+40*floor(mod(t*2,7))))':d=40:s=44100";
+const ALIKE_NOISE: &str = "anoisesrc=d=40:c=pink:a=0.3";
+
+fn alike_tools_present() -> bool {
+    ["ffmpeg", "fpcalc"].iter().all(|tool| {
+        std::process::Command::new(tool)
+            .arg("-version")
+            .output()
+            .is_ok_and(|out| out.status.success())
+    })
+}
+
+fn alike_file(name: &str, source: &str, extra: &[&str]) -> String {
+    let target = std::env::temp_dir().join(format!("octo-alike-{}-{name}", std::process::id()));
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", source])
+        .args(extra)
+        .arg(&target)
+        .status()
+        .expect("ffmpeg runs");
+    assert!(status.success(), "ffmpeg made {name}");
+    target.to_string_lossy().into_owned()
+}
+
+fn alike_executor(fingerprinter: bool) -> Arc<LibraryActionExecutor> {
+    executor(
+        &store(AppSettings::default()),
+        Extras {
+            fingerprinter: fingerprinter.then(|| Arc::new(octo_media::audio::AudioFingerprinter::new())),
+            ..Default::default()
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_candidate_that_sounds_different_is_refused_and_the_same_recording_is_not() {
+    if !alike_tools_present() {
+        return;
+    }
+    let executor = alike_executor(true);
+    let original = alike_file("orig.mp3", ALIKE_MELODY, &["-c:a", "libmp3lame", "-b:a", "128k"]);
+    let same = alike_file("same.flac", ALIKE_MELODY, &["-c:a", "flac"]);
+    let noise = alike_file("noise.flac", ALIKE_NOISE, &["-c:a", "flac"]);
+
+    assert_eq!(executor.not_the_same_recording(&same, &original).await, None);
+    let refused = executor
+        .not_the_same_recording(&noise, &original)
+        .await
+        .expect("noise is not the song");
+    assert!(
+        refused.contains("does not sound like the song it would replace"),
+        "{refused}"
+    );
+}
+
+#[tokio::test]
+async fn a_candidate_that_cannot_be_compared_is_refused() {
+    if !alike_tools_present() {
+        return;
+    }
+    let executor = alike_executor(true);
+    let original = alike_file("kept.mp3", ALIKE_MELODY, &["-c:a", "libmp3lame", "-b:a", "128k"]);
+
+    let refused = executor
+        .not_the_same_recording("/no/such/file.flac", &original)
+        .await
+        .expect("nothing to compare is no reason to replace");
+
+    assert!(refused.contains("could not be compared"), "{refused}");
+}
+
+#[tokio::test]
+async fn without_a_fingerprinter_nothing_is_compared() {
+    // The executors of the tests above this line have none; the app always sets one.
+    let executor = alike_executor(false);
+    assert_eq!(executor.not_the_same_recording("/a.flac", "/b.mp3").await, None);
+}

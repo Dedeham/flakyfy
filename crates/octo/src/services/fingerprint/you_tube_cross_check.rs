@@ -18,7 +18,7 @@ use crate::services::you_tube::you_tube_resolver::YouTubeResolver;
 
 /// How much of each side is fingerprinted. Half a minute tells a song from noise or another song
 /// and keeps the YouTube stream, which is read live, short.
-const CLIP_SECONDS: i32 = 30;
+pub(crate) const CLIP_SECONDS: i32 = 30;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrossCheckOutcome {

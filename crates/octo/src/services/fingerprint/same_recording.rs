@@ -1,0 +1,95 @@
+//! Whether a downloaded file is the same recording as the library file it would replace.
+//!
+//! Better quality swaps a lossy file for a lossless one. The lossy file is the one the person
+//! trusts (often the YouTube copy of a heart), so the lossless candidate has to sound like it before
+//! it takes its place. Name, length and AcoustID can all agree on a wrong file; the audio cannot.
+//! Both are fingerprinted over their first half minute and compared by bit error rate.
+//!
+//! Only a clear match may replace. Anything else, including a comparison that could not be made,
+//! leaves the original where it is: a failure here costs one upgrade, never the right song.
+
+use std::path::Path;
+
+use octo_core::fingerprint::fingerprint_compare::{self, CrossCheck, MAX_SHIFT};
+use octo_core::settings::SoulseekSettings;
+use octo_media::audio::AudioFingerprinter;
+
+use super::you_tube_cross_check::CLIP_SECONDS;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SameRecording {
+    /// The same recording, 0 to 1 alike.
+    Same(f64),
+    /// Clearly something else.
+    Differs(f64),
+    /// Alike enough to doubt: another version, a remaster, a live take.
+    Unsure(f64),
+    /// A fingerprint could not be made of one of the files.
+    CannotTell,
+}
+
+impl SameRecording {
+    pub fn from_similarity(similarity: f64) -> Self {
+        match fingerprint_compare::judge(similarity) {
+            CrossCheck::Match => Self::Same(similarity),
+            CrossCheck::Differs => Self::Differs(similarity),
+            CrossCheck::Unsure => Self::Unsure(similarity),
+        }
+    }
+
+    /// Only a clear match may take the original's place.
+    pub fn allows_replacing(self) -> bool {
+        matches!(self, Self::Same(_))
+    }
+
+    /// Whether the audio itself says it is another song or version. A comparison that could not be
+    /// made says nothing, so a candidate is not thrown away for it.
+    pub fn is_another_sound(self) -> bool {
+        matches!(self, Self::Differs(_) | Self::Unsure(_))
+    }
+
+    /// Why the original stays, for the journal and the log.
+    pub fn refusal(self) -> String {
+        let percent = |similarity: f64| (similarity * 100.0).round();
+        match self {
+            Self::Same(_) => "is the same recording".to_string(),
+            Self::Differs(s) => format!(
+                "does not sound like the song it would replace ({}% alike)",
+                percent(s)
+            ),
+            Self::Unsure(s) => format!(
+                "may be another version of the song it would replace ({}% alike), so the original stays",
+                percent(s)
+            ),
+            Self::CannotTell => {
+                "could not be compared with the song it would replace, so the original stays".to_string()
+            }
+        }
+    }
+}
+
+/// `candidate` against `original`, the first half minute of each.
+pub async fn same_recording(
+    fingerprinter: &AudioFingerprinter,
+    candidate: &Path,
+    original: &Path,
+    settings: &SoulseekSettings,
+) -> SameRecording {
+    let seconds = settings.effective_fingerprint_seconds().min(CLIP_SECONDS);
+    let timeout = settings.effective_fingerprint_timeout_seconds();
+    let (new, old) = tokio::join!(
+        fingerprinter.fingerprint_raw(candidate, seconds, timeout),
+        fingerprinter.fingerprint_raw(original, seconds, timeout),
+    );
+    let (Some(new), Some(old)) = (new, old) else {
+        return SameRecording::CannotTell;
+    };
+    match fingerprint_compare::similarity(&new, &old, MAX_SHIFT) {
+        Some(similarity) => SameRecording::from_similarity(similarity),
+        None => SameRecording::CannotTell,
+    }
+}
+
+#[cfg(test)]
+#[path = "same_recording_tests.rs"]
+mod tests;

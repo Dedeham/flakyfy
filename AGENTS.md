@@ -41,7 +41,14 @@ account; the Rust-only Family feature seals member passwords with ChaCha20-Poly1
 
 ## Commands
 
-Run what CI runs (`.github/workflows/ci.yml`) before you push:
+**The full CI runs on GitHub only.** Do not run the whole suite locally: building the `octo` tests
+(its ~4000-line `app.rs`) exhausts memory on a dev machine and is OOM-killed (exit 137). Push the branch,
+open the PR and let `.github/workflows/ci.yml` run these; read the result with `gh pr checks` and
+`gh run view --log-failed`, and fix from there. Locally run only `cargo fmt --all --check`, cheap targeted
+tests (`cargo test -p octo-core <name>`, `-p octo-media <name>`, shellcheck, pytest) and, to catch most
+mistakes before a push, a compile-only pass that fits in memory:
+`CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 cargo clippy --workspace --tests -- -D warnings`
+(about 5 minutes). Never build or run `-p octo` tests locally. What CI runs, for reference:
 
 ```bash
 # Rust server (root)

@@ -1824,6 +1824,28 @@
             </div>
             <div class="set-row">
               <div class="set-info">
+                <div class="set-info-t">Check unknown songs against YouTube</div>
+                <div class="set-info-d">When AcoustID has never heard a download, compare it with the official YouTube copy. On by default.</div>
+                <div class="set-info-more">Both are fingerprinted here, nothing is uploaded. A file that sounds like something else (noise, the wrong song) is thrown away and the next peer tried. After the retries below Lidarr gets a turn, then the YouTube copy is downloaded instead. Songs YouTube has no confident match for are left alone. Needs download verification on.</div>
+              </div>
+              <label class="switch"><input type="checkbox" name="Soulseek.YoutubeCrossCheck" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">How alike to YouTube (%)</div>
+                <div class="set-info-d">The same recording scores 80 and up; unrelated audio about 50. Default 70.</div>
+              </div>
+              <input class="set-input" name="Soulseek.YoutubeMatchThreshold" type="number" min="50" max="99" />
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Rejections before taking the YouTube copy</div>
+                <div class="set-info-d">Files thrown out by the YouTube check before Octo stops asking peers. Default 3.</div>
+              </div>
+              <input class="set-input" name="Soulseek.YoutubeCrossCheckRetries" type="number" min="1" max="10" />
+            </div>
+            <div class="set-row">
+              <div class="set-info">
                 <div class="set-info-t">Rejected peers</div>
                 <div class="set-info-d">Files a download proved were the wrong song. Each is forgotten after 30 days.</div>
                 <div class="set-info-more">Clear them if a song has stopped downloading and you think this list is why.</div>

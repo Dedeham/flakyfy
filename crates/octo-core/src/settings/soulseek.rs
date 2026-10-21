@@ -174,6 +174,26 @@ pub struct SoulseekSettings {
     /// Also used by the better-quality library action and the duplicate scan.
     pub detect_transcodes: bool,
 
+    /// When AcoustID has no entry for a Soulseek download, compare it against the official YouTube
+    /// Music copy of the song by fingerprinting both locally. A file that sounds like something else
+    /// (a noise file, the wrong song) is discarded and the next peer tried; after
+    /// YoutubeCrossCheckRetries such rejections Lidarr is given a turn, then the YouTube copy that
+    /// was compared is downloaded instead. Does nothing unless VerifyDownloads is on, and a song
+    /// YouTube has no confident match for is left as it is.
+    /// Environment variable: SLSKD_YOUTUBE_CROSSCHECK
+    pub youtube_cross_check: bool,
+
+    /// How alike, in percent, a download and its YouTube copy must be to count as the same
+    /// recording. Clearly below it (ten points) rejects the file; in between it is only asked about.
+    /// Clamped to 50-99.
+    /// Environment variable: SLSKD_YOUTUBE_MATCH_THRESHOLD
+    pub youtube_match_threshold: i32,
+
+    /// How many files may be rejected by the YouTube comparison before Octo stops asking peers and
+    /// takes the YouTube copy. Clamped to 1-10.
+    /// Environment variable: SLSKD_YOUTUBE_CROSSCHECK_RETRIES
+    pub youtube_cross_check_retries: i32,
+
     /// How long the transcode check may decode for, every window included. A FLAC takes well
     /// under a second, so twenty is a hang rather than a slow disk.
     pub transcode_check_timeout_seconds: i32,
@@ -240,6 +260,9 @@ impl Default for SoulseekSettings {
             fingerprint_timeout_seconds: 30,
             acoust_id_timeout_seconds: 10,
             detect_transcodes: true,
+            youtube_cross_check: true,
+            youtube_match_threshold: 70,
+            youtube_cross_check_retries: 3,
             transcode_check_timeout_seconds: 20,
             outage_hold_hours: 6,
             parallel_downloads: 3,
@@ -299,6 +322,16 @@ impl SoulseekSettings {
     /// 100 is a score no real fingerprint reaches, which would silently disable the feature.
     pub fn effective_min_match_score(&self) -> i32 {
         self.min_match_score.clamp(50, 99)
+    }
+
+    /// Below 50 two fingerprints are alike by chance (unrelated audio scores about 50); 100 is a
+    /// score two different encodes never reach.
+    pub fn effective_youtube_match_threshold(&self) -> i32 {
+        self.youtube_match_threshold.clamp(50, 99)
+    }
+
+    pub fn effective_youtube_cross_check_retries(&self) -> i32 {
+        self.youtube_cross_check_retries.clamp(1, 10)
     }
 
     /// The same threshold as AcoustID reports it, in 0..1.

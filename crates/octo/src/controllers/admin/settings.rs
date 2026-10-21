@@ -279,6 +279,12 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 n_num(soulseek.acoust_id_timeout_seconds),
             ),
             ("DetectTranscodes", Node::Bool(soulseek.detect_transcodes)),
+            ("YoutubeCrossCheck", Node::Bool(soulseek.youtube_cross_check)),
+            ("YoutubeMatchThreshold", n_num(soulseek.youtube_match_threshold)),
+            (
+                "YoutubeCrossCheckRetries",
+                n_num(soulseek.youtube_cross_check_retries),
+            ),
             (
                 "TranscodeCheckTimeoutSeconds",
                 n_num(soulseek.transcode_check_timeout_seconds),

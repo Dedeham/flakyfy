@@ -33,6 +33,7 @@ pub mod notice_playlist_worker;
 pub mod notice_queue;
 pub mod playlist_precache_worker;
 pub mod precache_store;
+pub mod precache_world;
 pub mod quality_upgrade_worker;
 pub mod rejections;
 pub mod replacement_handoff;

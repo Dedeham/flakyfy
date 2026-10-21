@@ -5636,7 +5636,8 @@
         "^B:\\ 74307fd87c43913afd050d594bc222b7c11c8fcb5d937f3928855416c505c537\\ \\(481036\\ bytes,\\ text\\)$"
       ],
       "reason": "A re-pin of the dashboard files (index.html, admin.js and admin.css) for the 2026-10-20 round, on top of release 2026.10.15: the SpotiFLAC page (as pinned by the proposed dashboard-files-spotiflac); Import's Stream without downloading switch for each list; the Get upcoming songs ahead card under Hearts & downloads (its settings, status line and Clear button); the Listening page in the Overview group (its loader and the dashboard's lights handed to it and back) with its Record listening, Keep plays for and Clear history controls; and the reworded privacy line under Dynamic stations. One answer is explained by one entry, so this entry pins the combined files; it supersedes dashboard-files-2026-10-15 and replaces the proposed dashboard-files-spotiflac.",
-      "knownDiff": "Dashboard files, 2026-10-20 round"
+      "knownDiff": "Dashboard files, 2026-10-20 round",
+      "reviewed": "Brandon 2026-10-21 (release go)"
     },
     {
       "id": "settings-keys-2026-10-20",
@@ -6131,7 +6132,8 @@
         "^\\$\\.persisted\\.Subsonic\\.CoverBadge:\\ only\\ in\\ B\\ \\(true\\)$"
       ],
       "reason": "The settings answers as release 2026.10.15 left them (settings-keys-2026-10-15), plus the cover badge switch: Subsonic:CoverBadge (true by default, the octopus on outside covers in other apps) in every settings answer and in what a save persists, its row in config-sources (one more key, the rows after it one place later), and the settings file a little longer for it. The Prefetch and Listening sections are not listed at their defaults, so they add nothing here. Supersedes settings-keys-2026-10-15.",
-      "knownDiff": "Settings keys, 2026-10-20 round"
+      "knownDiff": "Settings keys, 2026-10-20 round",
+      "reviewed": "Brandon 2026-10-21 (release go)"
     },
     {
       "id": "dashboard-icons-2026-10-20",
@@ -6163,7 +6165,8 @@
         "^B:\\ \\['bytes\\ 0-63/61347'\\]$"
       ],
       "reason": "The icon sprite as dashboard-icons-import-badges pinned it, plus i-headphones (Phosphor, regular), the Listening page's icon in the Overview group. Every symbol icons.svg had is unchanged. Supersedes dashboard-icons-import-badges.",
-      "knownDiff": "Dashboard icons, 2026-10-20 round"
+      "knownDiff": "Dashboard icons, 2026-10-20 round",
+      "reviewed": "Brandon 2026-10-21 (release go)"
     },
     {
       "id": "preview-check-learns-size",
@@ -6178,7 +6181,8 @@
         "^\\$\\.subsonic-response\\.searchResult3\\.song\\[0\\]\\.size:\\ only\\ in\\ B\\ \\(\\d+\\)$"
       ],
       "reason": "A download AcoustID has never heard is compared with the song's YouTube preview, so the preview is fetched once, and with it Octo learns the outside song's true size; the next search lists that size the way outside-song-true-size lists a size once known. C# never fetched the preview there.",
-      "knownDiff": "Preview check learns the size"
+      "knownDiff": "Preview check learns the size",
+      "reviewed": "Brandon 2026-10-21 (release go)"
     },
     {
       "id": "outside-stream-head",

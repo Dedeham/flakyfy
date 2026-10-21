@@ -60,7 +60,7 @@ fn wanted_needs_both_switches() {
     assert!(!wanted(&v, &settings(true, false)));
 }
 
-// The comparison itself, on real audio: a shim that serves the "official" copy, and files made by
+// The comparison itself, on real audio (forty seconds: YouTube Music rows under thirty are not songs): a shim that serves the "official" copy, and files made by
 // ffmpeg. Skipped where ffmpeg or fpcalc is missing, like the other audio tests.
 
 use std::process::Command;
@@ -68,12 +68,12 @@ use std::process::Command;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const MELODY: &str = "aevalsrc='0.4*sin(2*PI*t*(220+55*floor(mod(t*3,8)))) + 0.2*sin(2*PI*t*(330+40*floor(mod(t*2,7))))':d=20:s=44100";
-const OTHER_MELODY: &str = "aevalsrc='0.4*sin(2*PI*t*(300+70*floor(mod(t*5,9)))) + 0.2*sin(2*PI*t*(500+30*floor(mod(t*3,5))))':d=20:s=44100";
-const NOISE: &str = "anoisesrc=d=20:c=pink:a=0.3";
+const MELODY: &str = "aevalsrc='0.4*sin(2*PI*t*(220+55*floor(mod(t*3,8)))) + 0.2*sin(2*PI*t*(330+40*floor(mod(t*2,7))))':d=40:s=44100";
+const OTHER_MELODY: &str = "aevalsrc='0.4*sin(2*PI*t*(300+70*floor(mod(t*5,9)))) + 0.2*sin(2*PI*t*(500+30*floor(mod(t*3,5))))':d=40:s=44100";
+const NOISE: &str = "anoisesrc=d=40:c=pink:a=0.3";
 
 const ROWS: &str = r#"{"tracks":[
-    {"videoId":"atv1","title":"Song","artists":["Artist"],"durationSeconds":20,"videoType":"MUSIC_VIDEO_TYPE_ATV"}
+    {"videoId":"atv1","title":"Song","artists":["Artist"],"durationSeconds":40,"videoType":"MUSIC_VIDEO_TYPE_ATV"}
 ]}"#;
 
 fn tools_present() -> bool {
@@ -128,7 +128,7 @@ async fn outcome(file: &Path, reference: &Path) -> Option<CrossCheckOutcome> {
         file,
         "Artist",
         "Song",
-        Some(20),
+        Some(40),
         &SoulseekSettings::default(),
     )
     .await
@@ -200,7 +200,7 @@ async fn compare_without_a_reference_has_no_opinion() {
         &download,
         "Artist",
         "Song",
-        Some(20),
+        Some(40),
         &SoulseekSettings::default(),
     )
     .await;

@@ -147,7 +147,8 @@ pub struct GeneratedPlaylistSettings {
     /// Environment variable: PRECACHE
     pub precache: bool,
 
-    /// How many songs a picked list gets fetched, unless the list has its own number.
+    /// How many songs of a picked list are kept ready at a time, unless the list has its own
+    /// number. A round fetches only what is missing from that.
     /// Environment variable: PRECACHE_COUNT
     pub precache_count: i32,
 

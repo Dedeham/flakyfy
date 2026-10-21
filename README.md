@@ -803,9 +803,9 @@ They are on by default, whether or not the mixes are. The dashboard's Mixes page
 
 **Pre-cache.** `PRECACHE=true` fetches a few songs of the lists you pick on the Mixes page ahead
 of time (Made for you and the charts; their songs from outside the library), so a shuffle starts
-at once instead of waiting for a search. Each round, `PRECACHE_INTERVAL_HOURS` (6) apart, takes
-`PRECACHE_COUNT` (5, or the list's own number) at random from the ones not here yet, one at a
-time and only while no one else's download runs. Fetched songs are ordinary library files; one
+at once instead of waiting for a search. Each round, `PRECACHE_INTERVAL_HOURS` (6) apart, tops a
+list up to `PRECACHE_COUNT` (5, or the list's own number) ready songs, taken at random from the
+ones not here yet, one at a time and only while no one else's download runs. Fetched songs are ordinary library files; one
 that is still unstarred, unrated and played fewer than `PRECACHE_MIN_PLAYS` (2) times after
 `PRECACHE_KEEP_DAYS` (30) goes to the Recently removed trash. `PRECACHE_DRY_RUN` (on to begin with)
 only says which would go, and moving one needs the library actions on with Delete enabled and the

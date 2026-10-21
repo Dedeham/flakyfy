@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::TryStreamExt;
 use octo_core::common::dotnet;
+use octo_core::fingerprint::fingerprint_compare::CrossCheck;
 use octo_core::fingerprint::recording_identity::RecordingKind;
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::models::domain::{Album, Song};
@@ -56,7 +57,7 @@ use crate::services::common::{
     AcquisitionState, BaseDownloadService, DownloadBackend, DownloadCore, DownloadServices,
     OperationCanceled, TrackDownload,
 };
-use crate::services::fingerprint::DownloadVerificationService;
+use crate::services::fingerprint::{DownloadVerificationService, you_tube_cross_check};
 use crate::services::i_download_service::DirectStreamInfo;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::library::upgrade_queue::AudioSummary;
@@ -87,6 +88,16 @@ pub use octo_core::soulseek::soulseek_download_service::MAX_PEER_ATTEMPTS;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct InvalidOperationException(pub String);
+
+/// Soulseek kept delivering files that sound nothing like the official YouTube Music copy of the
+/// song, `rejected` of them. Carries the video they were compared with, so the replacement is that
+/// very video. The download dispatcher turns it into a Lidarr try and then the YouTube copy.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{rejected} Soulseek files did not sound like the song's YouTube copy")]
+pub struct CrossCheckExhausted {
+    pub video_id: String,
+    pub rejected: i32,
+}
 
 /// No copy found, or the copy found is gone. Reported as an `io::Error` of kind `NotFound`, which
 /// is how the library-action executor recognizes "no copy here".
@@ -582,6 +593,38 @@ impl SoulseekDownloadService {
         }
         song.verification = Some(Box::new(verdict));
         Ok(path)
+    }
+
+    /// Soulseek's files kept failing the comparison with the song's YouTube copy. Lidarr, when it is
+    /// set up, gets a turn at a better copy; failing that the YouTube copy they were compared with is
+    /// taken, since YouTube Music has the right recording. `exhausted` is the error that said so.
+    async fn replace_with_you_tube_copy(
+        &self,
+        base: &BaseDownloadService,
+        routing: &SharedRouting,
+        download: &mut TrackDownload,
+        exhausted: &anyhow::Error,
+        ct: &CancellationToken,
+    ) -> anyhow::Result<String> {
+        let snapshot = routing.snapshot();
+        let (artist, title) = names(&snapshot);
+        warn!("{exhausted} for '{artist} - {title}'");
+        if self.lidarr_fetcher.is_some() {
+            match self
+                .download_via_lidarr(base, &snapshot, download, false, ct)
+                .await
+            {
+                Ok(path) => return Ok(path),
+                Err(e) if ct.is_cancelled() => return Err(e),
+                Err(e) => warn!("Lidarr had no better copy of '{artist} - {title}' either: {e}"),
+            }
+        }
+        if let Some(found) = exhausted.downcast_ref::<CrossCheckExhausted>() {
+            let external_id = download.song.external_id.clone().unwrap_or_default();
+            self.id_registry.set_you_tube_id(&external_id, &found.video_id);
+        }
+        self.download_via_you_tube(base, routing, download, true, ct)
+            .await
     }
 
     // =========================================================================
@@ -1197,6 +1240,9 @@ impl SoulseekDownloadService {
         // delivers, never a reason to fail the song or fall back to YouTube.
         let mut reserve: Option<TranscodedReserve> = None;
 
+        // Files thrown out for not sounding like the song's YouTube copy (see `you_tube_cross_check`).
+        let mut cross_check_rejected = 0;
+
         let isrc = download.song.isrc.clone().or(routing.isrc.clone());
         let takes = self.verification.takes_for_routing(routing);
 
@@ -1583,6 +1629,79 @@ impl SoulseekDownloadService {
                         }
                         last_error = Some(identified);
                         continue;
+                    }
+
+                    // AcoustID could not say. The official YouTube copy can: a file that sounds like
+                    // something else is not the song, whatever AcoustID has or has not heard.
+                    let cross_settings = base.current_soulseek_settings();
+                    if you_tube_cross_check::wanted(&verdict, &cross_settings)
+                        && let Some(check) = you_tube_cross_check::compare(
+                            self.verification.fingerprinter(),
+                            &self.youtube,
+                            Path::new(&local_path),
+                            &artist,
+                            &title,
+                            routing.duration,
+                            &cross_settings,
+                        )
+                        .await
+                    {
+                        let alike = (check.similarity * 100.0).round();
+                        match check.verdict {
+                            CrossCheck::Match => {
+                                // Not Confirmed: that would claim AcoustID's word and submit a
+                                // fingerprint it never matched. It only stops being a question.
+                                verdict.reason = InconclusiveReason::None;
+                                verdict.evidence =
+                                    Some(format!("it is {alike}% alike to its official YouTube Music copy"));
+                                base.log_step(
+                                    &track_key,
+                                    acquisition_event_kinds::CHECK,
+                                    "Matches the YouTube copy",
+                                    Some(&format!("{alike}% alike")),
+                                );
+                            }
+                            CrossCheck::Differs => {
+                                warn!(
+                                    "Soulseek attempt {attempt_idx} delivered a file for '{artist} - {title}' that is \
+                                     {alike}% alike to its YouTube copy; discarding, remembering the peer and advancing"
+                                );
+                                discard_rejected_download(&local_path, attempt_started_utc);
+                                self.deny_candidate(
+                                    hit,
+                                    routing,
+                                    "does not sound like the song's official YouTube copy",
+                                );
+                                base.log_step(
+                                    &track_key,
+                                    acquisition_event_kinds::CHECK,
+                                    &format!("Does not sound like the YouTube copy ({alike}% alike)"),
+                                    Some("Not the song asked for; thrown away"),
+                                );
+                                last_error = Some(format!(
+                                    "the file found is {alike}% alike to the song's YouTube copy"
+                                ));
+                                cross_check_rejected += 1;
+                                // A transcode held back is the right song, so it wins over a
+                                // lossy copy from YouTube; the walk goes on to deliver it.
+                                if cross_check_rejected
+                                    >= cross_settings.effective_youtube_cross_check_retries()
+                                    && reserve.is_none()
+                                    && !caller_gave_up
+                                {
+                                    return Err(CrossCheckExhausted {
+                                        video_id: check.video_id,
+                                        rejected: cross_check_rejected,
+                                    }
+                                    .into());
+                                }
+                                if caller_gave_up {
+                                    break;
+                                }
+                                continue;
+                            }
+                            CrossCheck::Unsure => {}
+                        }
                     }
 
                     // Last, and the only check that never rejects: the right song made from an MP3 is
@@ -2297,6 +2416,10 @@ impl DownloadBackend for SoulseekDownloadService {
                     .await
                 {
                     Ok(path) => Ok(path),
+                    Err(e) if !cancellation_token.is_cancelled() && e.is::<CrossCheckExhausted>() => {
+                        self.replace_with_you_tube_copy(base, &routing, download, &e, cancellation_token)
+                            .await
+                    }
                     Err(e) if !cancellation_token.is_cancelled() => {
                         warn!("Soulseek download failed ({e}); falling back to YouTube MP3");
                         if !download.suppress_notify {
@@ -2320,8 +2443,16 @@ impl DownloadBackend for SoulseekDownloadService {
             }
             _ => {
                 let snapshot = routing.snapshot();
-                self.download_via_soulseek(base, &snapshot, download, &profile, cancellation_token)
+                match self
+                    .download_via_soulseek(base, &snapshot, download, &profile, cancellation_token)
                     .await
+                {
+                    Err(e) if !cancellation_token.is_cancelled() && e.is::<CrossCheckExhausted>() => {
+                        self.replace_with_you_tube_copy(base, &routing, download, &e, cancellation_token)
+                            .await
+                    }
+                    other => other,
+                }
             }
         }
     }

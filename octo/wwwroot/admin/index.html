@@ -508,6 +508,14 @@
             </div>
             <div class="set-row">
               <div class="set-info">
+                <div class="set-info-t">Hearts arrive at once</div>
+                <div class="set-info-d">A hearted song is fetched right away as an MP3 from YouTube, and Better quality finds a lossless copy later. On by default.</div>
+                <div class="set-info-more">Takes the video the song was found by, ahead of the other sources in Heart download priority. It only applies while YouTube is a heart source for songs and the weekly Better quality upgrade is on (Library actions enabled, Better quality switched on and not a dry run, a person on the allowed list, songs a week above 0). Otherwise the priority stays as you set it, so a song is never left as an MP3 for good.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="f-instant-copy-on-heart" name="Subsonic.InstantCopyOnHeart" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
                 <div class="set-info-t"><svg class="icon brand" aria-hidden="true"><use href="#b-lidarr"/></svg>Send played albums to Lidarr</div>
                 <div class="set-info-d">Hands the album of each song played from outside your library to Lidarr, once per song.</div>
                 <div class="set-info-more">Every hand-off makes Lidarr search all its indexers, so radio pulls in an album per song.</div>
@@ -1825,6 +1833,21 @@
                 <div class="set-info-more">Checks the spectrum of every download that claims to be lossless. A likely fake is passed over for another lossless copy when a peer has one, and kept, noted as transcoded, when none does. Works without verification or an AcoustID key. A recording that is simply quiet up high is never called fake.</div>
               </div>
               <label class="switch"><input type="checkbox" name="Soulseek.DetectTranscodes" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Check unknown songs against YouTube</div>
+                <div class="set-info-d">When AcoustID has never heard a download, compare it with the official YouTube copy. On by default.</div>
+                <div class="set-info-more">Both are fingerprinted here, nothing is uploaded. A file that sounds like something else (noise, the wrong song) is thrown away and the next peer tried. After the retries below Soulseek gives up on the song and the next source in your chain takes over. Songs YouTube has no confident match for are left alone. Needs download verification on.</div>
+              </div>
+              <label class="switch"><input type="checkbox" name="Soulseek.YoutubeCrossCheck" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Rejections before Soulseek gives up</div>
+                <div class="set-info-d">Files thrown out by the YouTube check before Octo stops asking peers and the next source takes over. Default 3.</div>
+              </div>
+              <input class="set-input" name="Soulseek.YoutubeCrossCheckRetries" type="number" min="1" max="10" />
             </div>
             <div class="set-row">
               <div class="set-info">

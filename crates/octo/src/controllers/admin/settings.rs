@@ -170,6 +170,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 n_num(subsonic.lossless_wait_timeout_seconds),
             ),
             ("DownloadOnPlay", Node::Bool(subsonic.download_on_play)),
+            ("InstantCopyOnHeart", Node::Bool(subsonic.instant_copy_on_heart)),
             ("LidarrAlbumOnPlay", Node::Bool(subsonic.lidarr_album_on_play)),
             (
                 "DownloadAlbumOnSongStar",
@@ -279,6 +280,11 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 n_num(soulseek.acoust_id_timeout_seconds),
             ),
             ("DetectTranscodes", Node::Bool(soulseek.detect_transcodes)),
+            ("YoutubeCrossCheck", Node::Bool(soulseek.youtube_cross_check)),
+            (
+                "YoutubeCrossCheckRetries",
+                n_num(soulseek.youtube_cross_check_retries),
+            ),
             (
                 "TranscodeCheckTimeoutSeconds",
                 n_num(soulseek.transcode_check_timeout_seconds),

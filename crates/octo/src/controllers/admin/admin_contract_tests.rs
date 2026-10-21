@@ -781,8 +781,8 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // then LibraryActions:KeepRatedCopies, Subsonic:DownloadAlbumOnSongStar and
     // Metadata:AnimatedArt, then the Monitoring page's two (Monitoring:Enabled and :RetentionDays),
     // then the YouTube comparison's two: Soulseek:YoutubeCrossCheck and :YoutubeCrossCheckRetries,
-    // then Subsonic:InstantCopyOnHeart, listed last.
-    assert_eq!(rows.len(), 208);
+    // listed last.
+    assert_eq!(rows.len(), 207);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()

@@ -322,7 +322,6 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Monitoring:RetentionDays",
     "Soulseek:YoutubeCrossCheck",
     "Soulseek:YoutubeCrossCheckRetries",
-    "Subsonic:InstantCopyOnHeart",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

@@ -508,14 +508,6 @@
             </div>
             <div class="set-row">
               <div class="set-info">
-                <div class="set-info-t">Hearts arrive at once</div>
-                <div class="set-info-d">A hearted song is fetched right away as an MP3 from YouTube, and Better quality finds a lossless copy later. On by default.</div>
-                <div class="set-info-more">Takes the video the song was found by, ahead of the other sources in Heart download priority. It only applies while YouTube is a heart source for songs and the weekly Better quality upgrade is on (Library actions enabled, Better quality switched on and not a dry run, a person on the allowed list, songs a week above 0). Otherwise the priority stays as you set it, so a song is never left as an MP3 for good.</div>
-              </div>
-              <label class="switch"><input type="checkbox" id="f-instant-copy-on-heart" name="Subsonic.InstantCopyOnHeart" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
-            </div>
-            <div class="set-row">
-              <div class="set-info">
                 <div class="set-info-t"><svg class="icon brand" aria-hidden="true"><use href="#b-lidarr"/></svg>Send played albums to Lidarr</div>
                 <div class="set-info-d">Hands the album of each song played from outside your library to Lidarr, once per song.</div>
                 <div class="set-info-more">Every hand-off makes Lidarr search all its indexers, so radio pulls in an album per song.</div>
@@ -574,7 +566,7 @@
               <div class="set-info">
                 <div class="set-info-t" id="heart-source-order-label">Heart download priority</div>
                 <div class="set-info-d">Octo tries each source that is on, top to bottom, and stops at the first that works.</div>
-                <div class="set-info-more">Drag a source, or use the arrow keys on its handle, to change the order. Only Soulseek is on to begin with.</div>
+                <div class="set-info-more">Drag a source, or use the arrow keys on its handle, to change the order. Only Soulseek is on to begin with. For a heart that arrives at once, put YouTube first and set Better quality's songs a week above 0: the MP3 comes in seconds, and the weekly upgrade replaces it with a lossless copy of the same recording when one is found.</div>
               </div>
               <div class="source-priority-list" id="heart-source-order"
                    aria-labelledby="heart-source-order-label" aria-describedby="heart-source-order-help"></div>

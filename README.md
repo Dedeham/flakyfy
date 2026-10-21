@@ -296,6 +296,22 @@ music folder with no setup, and stays out of your own library; see
 [Where members' music lives](docs/family.md#where-members-music-lives). Music on rclone, SMB
 or NFS storage: see [Cloud and network storage](docs/family.md#cloud-and-network-storage).
 
+## Monitoring
+
+The dashboard's Monitoring page shows who listens and for how long, which genres they listen
+to most, and on which platform (iOS, Android, Windows, ...) and in which app. It is off until
+you turn it on under Monitoring settings on that page (`MONITORING_ENABLED`, default `false`).
+
+- It adds up the length of every play a music app reports as finished, per person and day. A
+  song skipped early adds nothing, so the hours are a floor. Song names are not kept.
+- Songs from outside your library have no genre and count as Unknown.
+- The log is `listening.json` in the config folder. Days older than `MONITORING_RETENTION_DAYS`
+  (default `365`) are dropped, and the page can forget everything at once.
+- The platform and app come from the app's name and User-Agent. An app Octo does not know shows
+  under its own name, with the platform Unknown.
+
+Only the Rust build has it; the page hides itself on a server without it.
+
 ## Notifications
 
 Optional push notifications for the download lifecycle, because Subsonic has no way to
@@ -653,7 +669,14 @@ filename are remembered in `/app/config/rejected-peers.json`, so that exact file
 downloaded again; entries lapse after 30 days and the Soulseek admin page can forget them all
 at once. `SLSKD_MIN_MATCH_SCORE` (50-99, default 85) is how sure AcoustID must be before its
 answer may reject anything, so raising it makes Octo *more* permissive, because weaker matches
-are ignored rather than acted on. A track with no AcoustID entry at all is always accepted.
+are ignored rather than acted on. A track with no AcoustID entry at all is accepted unless
+`SLSKD_YOUTUBE_CROSSCHECK` (on by default) finds it sounds nothing like the official YouTube Music
+copy of the song: then the file is deleted and the next peer is tried. The two are compared over
+their first 30 seconds; 70% alike or more is the same recording, under 60% is rejected, and in
+between the file is only asked about. After `SLSKD_YOUTUBE_CROSSCHECK_RETRIES` such rejections
+(default 3) Soulseek gives up on the song and the next source in your chain (a YouTube step,
+Lidarr) takes over; a YouTube step downloads the video that was compared. A song YouTube has no
+confident match for is accepted as before.
 `SLSKD_TAG_FROM_MUSICBRAINZ` writes the matched recording's MusicBrainz title, artist, album
 and year over the peer's own tags. `NAME_FROM_MATCH` goes one step further and names the file
 from the match as well (artist folder, title, album and track number), so the path and the
@@ -862,6 +885,8 @@ Set `WAIT_FOR_LOSSLESS_ON_PLAY=true` if you would rather the first play wait for
 `WAIT_FOR_SEARCH_DURATIONS` (on by default) has a search wait for the YouTube lengths of the top rows from outside your library before it answers, so the length shown is the length of the video that plays. `SEARCH_DURATION_WAIT_MS` (1000 by default, up to 10000) caps that wait: rows whose length arrives in time show it, and the others show Deezer's length while Octo finds the YouTube one in the background. Turned off, a search never waits. Either way, apps that look the song up again when it starts playing, and the next search for the same words within 10 minutes, show the YouTube length. Both changes take effect without a restart. `SEARCH_LASTFM_WAIT_MS` (1000 by default, up to 10000, 0 waits however long it takes) is how long a search waits for Last.fm: past it, the songs from outside your library come from Deezer's own search for the words instead, and Last.fm's answer, once it arrives, is used by the next search for the same words.
 
 Set `DOWNLOAD_ON_PLAY=true` to keep a copy of every song played from outside your library, radio included. The copy comes from the first song source in the heart download priority that Octo fetches itself (Soulseek or YouTube, never Lidarr), and playback still starts from YouTube at once. Only the start of a play counts, not a seek. Hearts always go ahead of these downloads, and at most one played song waits its turn: a song played while another is waiting is skipped, and tried again the next time it is played. Each one shows in the app's download list like a heart, and hearting a song that is already downloading this way makes it a heart. `LIDARR_ALBUM_ON_PLAY=true` hands the album of every played song to Lidarr, once per song until Octo restarts; one Lidarr turns down is tried again on the next play. Every hand-off makes Lidarr search all its indexers, so on radio it pulls in an album per song. Both are off by default and have switches under **Streams & hearts, Playing songs you don't own**.
+
+`INSTANT_COPY_ON_HEART` (on by default) makes a heart arrive at once: the song is fetched as an MP3 from YouTube, the video it was found by, ahead of the other sources in Heart download priority, and Better quality looks for a lossless copy over the following weeks, a few songs a week, so there is no burst of searches. It only takes effect when it will not strand an MP3: YouTube must be among the heart sources for songs, and the weekly upgrade must be on (`LIBRARY_ACTIONS_ENABLED`, Better quality switched on and not a dry run, the person on the allowed list, `LIBRARY_ACTIONS_UPGRADE_PER_WEEK` above 0). Otherwise the heart priority is exactly as you set it. It covers every song heart: a heart in an app, a Family request and a favorite an import creates.
 
 Octo sends plays to Last.fm itself: songs from outside your library, which Navidrome has never heard of, and your library songs too (the dashboard's "Also send library plays", on by default). Octo also sends outside plays to ListenBrainz when a token is set. For Last.fm, paste your API key and its shared secret on the dashboard's Last.fm page (or set `LASTFM_API_KEY` and `LASTFM_API_SECRET`); Save checks both with Last.fm. Then press **Connect** next to a listener and allow access on last.fm while signed in as that person. The dashboard notices by itself when that is done, and for someone else you can copy the link and send it to them. Each listener has their own connection. If Navidrome is also linked to the same Last.fm, or an app scrobbles to Last.fm itself, turn that off (or turn off "Also send library plays") or plays count twice.
 

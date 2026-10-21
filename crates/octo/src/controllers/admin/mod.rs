@@ -28,6 +28,7 @@ pub mod json_body;
 pub mod lastfm;
 pub mod library_actions;
 pub mod lyrics_admin;
+pub mod monitoring;
 pub mod plumbing;
 pub mod precache;
 pub mod radio_admin;
@@ -150,7 +151,10 @@ pub fn library_and_job_routes() -> RouteSet {
 
 /// The activity view behind the progress toasts, and the Afterglow light.
 pub fn activity_routes() -> RouteSet {
-    RouteSet::new().merge(activity::routes()).merge(ambient::routes())
+    RouteSet::new()
+        .merge(activity::routes())
+        .merge(ambient::routes())
+        .merge(monitoring::routes())
 }
 
 #[cfg(test)]
@@ -160,6 +164,10 @@ mod endpoint_tests;
 #[cfg(test)]
 #[path = "test_app.rs"]
 pub(crate) mod test_app;
+
+#[cfg(test)]
+#[path = "monitoring_tests.rs"]
+mod monitoring_tests;
 
 #[cfg(test)]
 #[path = "admin_contract_tests.rs"]

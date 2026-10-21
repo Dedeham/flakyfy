@@ -125,6 +125,10 @@
             <svg class="icon" aria-hidden="true"><use href="#i-check-circle"/></svg>
             <span>Library health</span>
           </button>
+          <button class="sidebar-nav-item" data-tab="monitoring" id="monitoring-nav" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg>
+            <span>Monitoring</span>
+          </button>
         </div>
 
         <div class="sidebar-nav-section">
@@ -501,6 +505,14 @@
                 <div class="set-info-more">Hearts always go first. One played song waits its turn at most; a song played while another waits is skipped and tried again the next time it plays.</div>
               </div>
               <label class="switch"><input type="checkbox" id="f-download-on-play" name="Subsonic.DownloadOnPlay" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Hearts arrive at once</div>
+                <div class="set-info-d">A hearted song is fetched right away as an MP3 from YouTube, and Better quality finds a lossless copy later. On by default.</div>
+                <div class="set-info-more">Takes the video the song was found by, ahead of the other sources in Heart download priority. It only applies while YouTube is a heart source for songs and the weekly Better quality upgrade is on (Library actions enabled, Better quality switched on and not a dry run, a person on the allowed list, songs a week above 0). Otherwise the priority stays as you set it, so a song is never left as an MP3 for good.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="f-instant-copy-on-heart" name="Subsonic.InstantCopyOnHeart" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
               <div class="set-info">
@@ -1863,6 +1875,21 @@
             </div>
             <div class="set-row">
               <div class="set-info">
+                <div class="set-info-t">Check unknown songs against YouTube</div>
+                <div class="set-info-d">When AcoustID has never heard a download, compare it with the official YouTube copy. On by default.</div>
+                <div class="set-info-more">Both are fingerprinted here, nothing is uploaded. A file that sounds like something else (noise, the wrong song) is thrown away and the next peer tried. After the retries below Soulseek gives up on the song and the next source in your chain takes over. Songs YouTube has no confident match for are left alone. Needs download verification on.</div>
+              </div>
+              <label class="switch"><input type="checkbox" name="Soulseek.YoutubeCrossCheck" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Rejections before Soulseek gives up</div>
+                <div class="set-info-d">Files thrown out by the YouTube check before Octo stops asking peers and the next source takes over. Default 3.</div>
+              </div>
+              <input class="set-input" name="Soulseek.YoutubeCrossCheckRetries" type="number" min="1" max="10" />
+            </div>
+            <div class="set-row">
+              <div class="set-info">
                 <div class="set-info-t">Rejected peers</div>
                 <div class="set-info-d">Files a download proved were the wrong song. Each is forgotten after 30 days.</div>
                 <div class="set-info-more">Clear them if a song has stopped downloading and you think this list is why.</div>
@@ -2420,6 +2447,61 @@
             </details>
           </div>
         </div>
+      </section>
+
+      <!-- ─── MONITORING: who listens, for how long, to what, and on what ─── -->
+      <section data-pane="monitoring" id="monitoring-pane" hidden>
+        <header class="page-header">
+          <div>
+            <h1>Monitoring</h1>
+            <p id="monitoring-overview">Who listens, for how many hours, to which genres, and on which devices and apps. Only finished plays count, and no song names are kept.</p>
+          </div>
+          <div class="mon-tools">
+            <select class="set-input" id="monitoring-range" aria-label="Time range">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="365">Last year</option>
+              <option value="0">Everything kept</option>
+            </select>
+            <button class="btn btn-ghost btn-icon" type="button" id="monitoring-refresh" aria-label="Refresh" title="Refresh">
+              <svg class="icon" aria-hidden="true"><use href="#i-arrows-clockwise"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="notice notice-warn" id="monitoring-off" hidden>Monitoring is off, so nothing is being counted. Turn it on under Monitoring settings below; plays are counted from then on.</div>
+
+        <div id="monitoring-body">
+          <div class="state state-loading"><svg class="icon" aria-hidden="true"><use href="#i-circle-notch"/></svg><span>Reading the listening log…</span></div>
+        </div>
+
+        <details class="set-section imp-settings" id="monitoring-settings">
+          <summary class="imp-settings-summary"><svg class="icon" aria-hidden="true"><use href="#i-gear-six"/></svg><span>Monitoring settings</span><span class="imp-settings-sub">Turn counting on, and how long it is kept</span></summary>
+          <form data-section="monitoring" class="set-card" id="monitoring-form">
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Count listening</div>
+                <div class="set-info-d">Adds up the length of every finished play per person and day, with its genre, platform and app.</div>
+                <div class="set-info-more">Hours are the lengths of songs played to the end; a song skipped early adds nothing. Outside songs have no genre and count as Unknown. The log is a file in the config folder, <code>listening.json</code>.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="f-monitoring-enabled" name="Monitoring.Enabled" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Keep for</div>
+                <div class="set-info-d">Days. Older days are dropped.</div>
+              </div>
+              <input class="set-input imp-num" name="Monitoring.RetentionDays" type="number" min="1" max="3650" step="1" />
+            </div>
+            <div class="set-row">
+              <div class="set-info">
+                <div class="set-info-t">Forget all listening</div>
+                <div class="set-info-d">Deletes the whole log. This cannot be undone.</div>
+              </div>
+              <button class="btn btn-destructive" type="button" id="monitoring-clear">Forget</button>
+            </div>
+          </form>
+        </details>
       </section>
 
       <!-- ─── LIBRARY HEALTH: the Octo app's checks and fixes, for every admin ─── -->

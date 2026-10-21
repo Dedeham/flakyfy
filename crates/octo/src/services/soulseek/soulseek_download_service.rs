@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::TryStreamExt;
 use octo_core::common::dotnet;
+use octo_core::fingerprint::fingerprint_compare::CrossCheck;
 use octo_core::fingerprint::recording_identity::RecordingKind;
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::models::domain::{Album, Song};
@@ -56,7 +57,7 @@ use crate::services::common::{
     AcquisitionState, BaseDownloadService, DownloadBackend, DownloadCore, DownloadServices,
     OperationCanceled, TrackDownload,
 };
-use crate::services::fingerprint::DownloadVerificationService;
+use crate::services::fingerprint::{DownloadVerificationService, you_tube_cross_check};
 use crate::services::i_download_service::DirectStreamInfo;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::library::upgrade_queue::AudioSummary;
@@ -1197,6 +1198,9 @@ impl SoulseekDownloadService {
         // delivers, never a reason to fail the song or fall back to YouTube.
         let mut reserve: Option<TranscodedReserve> = None;
 
+        // Files thrown out for not sounding like the song's YouTube copy (see `you_tube_cross_check`).
+        let mut cross_check_rejected = 0;
+
         let isrc = download.song.isrc.clone().or(routing.isrc.clone());
         let takes = self.verification.takes_for_routing(routing);
 
@@ -1583,6 +1587,84 @@ impl SoulseekDownloadService {
                         }
                         last_error = Some(identified);
                         continue;
+                    }
+
+                    // AcoustID could not say. The official YouTube copy can: a file that sounds like
+                    // something else is not the song, whatever AcoustID has or has not heard.
+                    let cross_settings = base.current_soulseek_settings();
+                    if you_tube_cross_check::wanted(&verdict, &cross_settings)
+                        && let Some(check) = you_tube_cross_check::compare(
+                            self.verification.fingerprinter(),
+                            &self.youtube,
+                            Path::new(&local_path),
+                            &artist,
+                            &title,
+                            routing.duration,
+                            &cross_settings,
+                        )
+                        .await
+                    {
+                        let alike = (check.similarity * 100.0).round();
+                        match check.verdict {
+                            CrossCheck::Match => {
+                                // Not Confirmed: that would claim AcoustID's word and submit a
+                                // fingerprint it never matched. It only stops being a question.
+                                verdict.reason = InconclusiveReason::None;
+                                verdict.evidence =
+                                    Some(format!("it is {alike}% alike to its official YouTube Music copy"));
+                                base.log_step(
+                                    &track_key,
+                                    acquisition_event_kinds::CHECK,
+                                    "Matches the YouTube copy",
+                                    Some(&format!("{alike}% alike")),
+                                );
+                            }
+                            CrossCheck::Differs => {
+                                warn!(
+                                    "Soulseek attempt {attempt_idx} delivered a file for '{artist} - {title}' that is \
+                                     {alike}% alike to its YouTube copy; discarding, remembering the peer and advancing"
+                                );
+                                discard_rejected_download(&local_path, attempt_started_utc);
+                                self.deny_candidate(
+                                    hit,
+                                    routing,
+                                    "does not sound like the song's official YouTube copy",
+                                );
+                                base.log_step(
+                                    &track_key,
+                                    acquisition_event_kinds::CHECK,
+                                    &format!("Does not sound like the YouTube copy ({alike}% alike)"),
+                                    Some("Not the song asked for; thrown away"),
+                                );
+                                last_error = Some(format!(
+                                    "the file found is {alike}% alike to the song's YouTube copy"
+                                ));
+                                cross_check_rejected += 1;
+                                // The video the file was judged against is the one a YouTube step
+                                // later in the chain should take, unless one is pinned already.
+                                if routing.you_tube_id.as_deref().is_none_or(str::is_empty) {
+                                    self.id_registry.set_you_tube_id(&track_key, &check.video_id);
+                                }
+                                // Enough files that are not the song: stop asking peers and let the
+                                // source chain go on. A transcode held back is the right song, so it
+                                // is delivered by the walk instead.
+                                if you_tube_cross_check::gives_up(
+                                    cross_check_rejected,
+                                    cross_settings.effective_youtube_cross_check_retries(),
+                                    reserve.is_some(),
+                                    caller_gave_up,
+                                ) {
+                                    return Err(file_not_found(format!(
+                                        "{cross_check_rejected} Soulseek files for '{artist} - {title}' did not sound like its YouTube copy"
+                                    )));
+                                }
+                                if caller_gave_up {
+                                    break;
+                                }
+                                continue;
+                            }
+                            CrossCheck::Unsure => {}
+                        }
                     }
 
                     // Last, and the only check that never rejects: the right song made from an MP3 is

@@ -19,7 +19,7 @@ use super::{
 use crate::services::family::{FamilyPool, LibraryScope, LibraryWriteGate, WriteDecision};
 use crate::services::i_download_service::IDownloadService;
 use crate::services::i_music_metadata_service::IMusicMetadataService;
-use crate::services::library::{HeartOwnership, OwnedCopy};
+use crate::services::library::{HeartOwnership, LibraryOwnership, OwnedCopy};
 use crate::services::lidarr::ILidarrHeartAcquisitionService;
 use crate::services::soulseek::soulseek_link::SoulseekLinkState;
 use crate::services::soulseek::{ExternalIdRegistry, ISoulseekLink};
@@ -709,6 +709,7 @@ impl HeartAcquisitionCoordinator {
             .into_iter()
             .filter(|step| *target == AcquisitionTarget::Shared || *step != HeartDownloadSource::Lidarr)
             .collect();
+        let steps = youtube_first(steps, self.instant_copy_wanted(requested_by));
         for (index, &step) in steps.iter().enumerate() {
             let is_last = index == steps.len() - 1;
             // One entry for the whole chain. The first direct source is still waiting for the
@@ -912,6 +913,16 @@ impl HeartAcquisitionCoordinator {
             .filter(|step| !(soulseek_off && step.source == HeartDownloadSource::Soulseek))
             .map(|step| step.source)
             .collect()
+    }
+
+    /// Whether a heart is fetched as a YouTube MP3 first. The weekly upgrade has to be able to
+    /// replace that copy, so the same gates as Better quality's own: the action on, not a dry run,
+    /// this person allowed, and a weekly allowance above 0.
+    fn instant_copy_wanted(&self, requested_by: Option<&str>) -> bool {
+        let settings = self.settings.current();
+        settings.subsonic.instant_copy_on_heart
+            && settings.library_actions.effective_upgrade_per_week() > 0
+            && LibraryOwnership::upgrade_allowed(&settings.library_actions, requested_by)
     }
 
     fn play_source(&self) -> Option<DownloadSource> {
@@ -1159,6 +1170,21 @@ impl HeartAcquisitionCoordinator {
 
 fn owned3(a: &str, b: &str, c: Option<&str>) -> (String, String, Option<String>) {
     (a.to_string(), b.to_string(), c.map(str::to_string))
+}
+
+/// The song steps with YouTube moved to the front when `wanted` and it is one of them. A chain
+/// without YouTube is left alone: the instant copy is never a reason to add a source.
+pub(crate) fn youtube_first(mut steps: Vec<HeartDownloadSource>, wanted: bool) -> Vec<HeartDownloadSource> {
+    if wanted
+        && let Some(at) = steps
+            .iter()
+            .position(|step| *step == HeartDownloadSource::YouTube)
+        && at > 0
+    {
+        let youtube = steps.remove(at);
+        steps.insert(0, youtube);
+    }
+    steps
 }
 
 fn source_name(source: HeartDownloadSource) -> &'static str {

@@ -59,6 +59,9 @@ services:
       Subsonic__WaitForLosslessOnPlay: ${WAIT_FOR_LOSSLESS_ON_PLAY:-false}
       Subsonic__LosslessWaitTimeoutSeconds: ${LOSSLESS_WAIT_TIMEOUT_SECONDS:-0}
       Subsonic__DownloadOnPlay: ${DOWNLOAD_ON_PLAY:-false}
+      # A heart is fetched at once as a YouTube MP3 and upgraded later. Only with YouTube in the
+      # heart sources and the weekly Better quality upgrade on; otherwise the order is unchanged.
+      Subsonic__InstantCopyOnHeart: ${INSTANT_COPY_ON_HEART:-true}
       Subsonic__LidarrAlbumOnPlay: ${LIDARR_ALBUM_ON_PLAY:-false}
       Subsonic__FolderStructure: ${FOLDER_STRUCTURE:-Flat}
       Subsonic__DownloadSource: ${DOWNLOAD_SOURCE:-Soulseek}
@@ -127,6 +130,10 @@ services:
       Soulseek__FingerprintSeconds: ${SLSKD_FINGERPRINT_SECONDS:-120}
       Soulseek__FingerprintTimeoutSeconds: ${SLSKD_FINGERPRINT_TIMEOUT_SECONDS:-30}
       Soulseek__AcoustIdTimeoutSeconds: ${SLSKD_ACOUSTID_TIMEOUT_SECONDS:-10}
+      # A download AcoustID has no entry for is compared with the official YouTube copy; a
+      # different-sounding file is thrown away. After the retries the YouTube copy is taken.
+      Soulseek__YoutubeCrossCheck: ${SLSKD_YOUTUBE_CROSSCHECK:-true}
+      Soulseek__YoutubeCrossCheckRetries: ${SLSKD_YOUTUBE_CROSSCHECK_RETRIES:-3}
       # Hours a heart waits while slskd is up but not logged in to Soulseek (server
       # maintenance), before it uses the next source. 0 means do not wait.
       Soulseek__OutageHoldHours: ${SLSKD_OUTAGE_HOLD_HOURS:-6}
@@ -348,6 +355,12 @@ services:
       # folder, so it needs no volume of its own and stays out of your library. Off until
       # you turn it on here or on the dashboard.
       Family__Enabled: ${FAMILY_ENABLED:-false}
+      # ----- Monitoring -----
+      # Counts the length of every finished play per person and day, with its genre,
+      # platform and app, for the dashboard's Monitoring page. Song names are not kept.
+      # Off until you turn it on here or on the dashboard.
+      Monitoring__Enabled: ${MONITORING_ENABLED:-false}
+      Monitoring__RetentionDays: ${MONITORING_RETENTION_DAYS:-365}
       # ----- Logging -----
       # The two lines for every request and those for every call Octo makes to another
       # service are left out (Warning), so the log holds Octo's own lines and costs less

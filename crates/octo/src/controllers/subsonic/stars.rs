@@ -13,6 +13,7 @@ use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::last_fm::last_fm_scrobble_service::LastFmTrack;
 use octo_core::models::domain::Song;
 use octo_core::models::radio::LastFmRadioPlay;
+use octo_core::monitoring::Play;
 use octo_core::settings::{HeartDownloadStep, LibraryAction, LibraryRatingScope};
 use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
 use octo_subsonic::SubsonicCredential;
@@ -1366,7 +1367,8 @@ async fn learn_from_scrobbles(
     let learning = last_fm_settings.enable_radio && last_fm_settings.enable_personalized_stations;
     let submitting = state.listen_brainz.is_enabled_for(&username);
     let scrobbling = state.last_fm_scrobbles.is_enabled_for(&username);
-    if !learning && !submitting && !scrobbling {
+    let monitoring = state.listening.enabled();
+    if !learning && !submitting && !scrobbling && !monitoring {
         return Ok(());
     }
     let resolver = resolver(state, call);
@@ -1425,6 +1427,23 @@ async fn learn_from_scrobbles(
             .and_then(try_parse_long)
             .and_then(from_unix_time_milliseconds)
             .unwrap_or_else(Utc::now);
+        if monitoring {
+            let user_agent = call
+                .incoming
+                .headers
+                .get(header::USER_AGENT)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let play = Play::new(
+                &username,
+                song.duration,
+                song.genre.as_deref(),
+                call.param_opt("c").unwrap_or(""),
+                user_agent,
+            );
+            // A client clock ahead of ours never files a play under a day still to come.
+            state.listening.record(&play, played_at.min(Utc::now()));
+        }
         if learning {
             recorded |= state.last_fm_radio_state.record_play(
                 &username,

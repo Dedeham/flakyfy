@@ -133,6 +133,7 @@ use crate::services::metadata::{
     DeezerRateLimiter,
 };
 use crate::services::metadata::{GenreBackfillJournal, GenreBackfillStore, GenreBackfillWorker};
+use crate::services::monitoring::ListeningStore;
 use crate::services::notifications::{DiscordSink, INotificationSink, NotificationService, NtfySink};
 use crate::services::radio::{
     IRadioSource, LastFmRadioSource, ListenBrainzRadioSource, RadioOutcomeStore, RadioSourceSet,
@@ -493,6 +494,9 @@ pub struct AppInner {
     /// `ReviewSweepStore`: the library sweep's cursor, `review-sweep.json`. Its 5-second flush
     /// is the "ReviewSweepStore" worker.
     pub review_sweep_store: Arc<ReviewSweepStore>,
+    /// `ListeningStore`: the Monitoring page's listening log, `listening.json`. Its 30-second
+    /// flush is the "ListeningStore" worker.
+    pub listening: Arc<ListeningStore>,
     /// `LibraryReviewSweepWorker`: the "LibraryReviewSweepWorker" worker.
     pub library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
     /// `PlaylistPrecacheWorker`: fetches a few songs of the picked lists ahead, and lets untouched
@@ -1245,6 +1249,7 @@ struct Stores {
     notice_queue: Arc<NoticeQueue>,
     review_sweep_store: Arc<ReviewSweepStore>,
     identity_sweep_store: Arc<IdentitySweepStore>,
+    listening: Arc<ListeningStore>,
     lidarr_pending: Arc<LidarrPendingAlbums>,
     family_vault: Arc<FamilyVault>,
     family_store: Arc<FamilyStore>,
@@ -1340,6 +1345,10 @@ impl Stores {
             lidarr_pending: Arc::new(LidarrPendingAlbums::new(Some(
                 config_dir.join("lidarr-pending.json"),
             ))),
+            listening: Arc::new(ListeningStore::new(
+                Some(config_dir.join("listening.json")),
+                settings.clone(),
+            )),
             family_vault: Arc::new(FamilyVault::open(config_dir)),
             family_store: Arc::new(FamilyStore::new(Some(config_dir.join("family.json")))),
             family_requests: Arc::new(RequestStore::new(Some(config_dir.join("family-requests.json")))),
@@ -1377,6 +1386,15 @@ impl Stores {
         let identities = self.identity_sweep_store.clone();
         workers.register("IdentitySweepStore", move |token| {
             identities.clone().run_flusher(token)
+        });
+        let listening = self.listening.clone();
+        workers.register("ListeningStore", move |token| {
+            let listening = listening.clone();
+            crate::services::state_file::flush_every(
+                Duration::from_secs(30),
+                token,
+                Arc::new(move || listening.flush_if_dirty()),
+            )
         });
     }
 }
@@ -3167,6 +3185,7 @@ impl AppState {
             quality_upgrade_worker: library_jobs.quality_upgrade_worker,
             duplicate_scan_worker: library_jobs.duplicate_scan_worker,
             review_sweep_store: stores.review_sweep_store,
+            listening: stores.listening,
             identity_sweep_store: stores.identity_sweep_store,
             library_identity_sweep,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
@@ -3588,6 +3607,7 @@ impl AppState {
             quality_upgrade_worker: library_jobs.quality_upgrade_worker,
             duplicate_scan_worker: library_jobs.duplicate_scan_worker,
             review_sweep_store: stores.review_sweep_store,
+            listening: stores.listening,
             identity_sweep_store: stores.identity_sweep_store,
             library_identity_sweep,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
@@ -3799,6 +3819,7 @@ mod tests {
             "LastFmRadioRefreshWorker",
             "SonicAnalysisWorker",
             "RadioOutcomeStore",
+            "ListeningStore",
         ] {
             assert!(names.iter().any(|n| n == name), "{name} in {names:?}");
         }
@@ -3817,6 +3838,12 @@ mod tests {
         assert!(state.generated_playlists.find("alice", "og1").is_none());
         // Radio's other state files sit beside the radio state, and every source has a weight.
         assert!(state.radio_outcomes.path().ends_with("radio-outcomes.json"));
+        assert!(
+            state
+                .listening
+                .path()
+                .is_some_and(|p| p.ends_with("listening.json"))
+        );
         assert!(state.sonic_store.path().ends_with("sonic-features.json"));
         assert_eq!(state.sonic_worker.status().state, "Waiting");
         assert_eq!(state.radio_sources.weights(None, false).len(), 5);

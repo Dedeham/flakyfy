@@ -1007,6 +1007,72 @@ async fn a_whole_folder_is_one_search_and_one_batch_and_every_song_lands() {
     assert_eq!(placed_flacs(&root), 4);
 }
 
+/// Two hearts of one album at once (two of its songs, or one heart sent twice) walk it once. Two
+/// walks side by side each queued their own batch for the same songs, and the second batch took
+/// the first's place in the songs' queue, so no song waited on the first batch and nothing cancelled
+/// it: its files landed in a job folder nobody looked in.
+#[tokio::test]
+async fn two_walks_of_one_album_at_once_queue_one_batch() {
+    let root = Root::new("octo-albumwalk-");
+    let walk = build(&root, true, |songs| {
+        Arc::new(move |text: &str| {
+            if text == "Drake Nothing Was the Same" {
+                let files: Vec<(String, i32)> = songs
+                    .iter()
+                    .map(|s| (remote(r"Music\Drake\NWTS", s), duration_of(s)))
+                    .collect();
+                vec![response("albumpeer", &files)]
+            } else {
+                Vec::new()
+            }
+        })
+    })
+    .await;
+    for song in &walk.songs {
+        walk.slskd
+            .length(&remote(r"Music\Drake\NWTS", song), duration_of(song));
+    }
+
+    let (first, second) = tokio::join!(walk_album(&walk), walk_album(&walk));
+
+    assert!(first && second);
+    assert_eq!(walk.slskd.searches(), names(&["Drake Nothing Was the Same"]));
+    assert_eq!(walk.slskd.batches().len(), 1, "{:?}", walk.slskd.batches());
+    assert_eq!(placed_flacs(&root), 4);
+}
+
+/// The album is let go once its walk ends, so a later heart walks it again.
+#[tokio::test]
+async fn a_walk_after_the_last_one_ended_runs_again() {
+    let root = Root::new("octo-albumwalk-");
+    let walk = build(&root, true, |songs| {
+        Arc::new(move |text: &str| {
+            if text == "Drake Nothing Was the Same" {
+                let files: Vec<(String, i32)> = songs
+                    .iter()
+                    .map(|s| (remote(r"Music\Drake\NWTS", s), duration_of(s)))
+                    .collect();
+                vec![response("albumpeer", &files)]
+            } else {
+                Vec::new()
+            }
+        })
+    })
+    .await;
+    for song in &walk.songs {
+        walk.slskd
+            .length(&remote(r"Music\Drake\NWTS", song), duration_of(song));
+    }
+
+    assert!(walk_album(&walk).await);
+    walk_album(&walk).await;
+
+    assert_eq!(
+        walk.slskd.searches(),
+        names(&["Drake Nothing Was the Same", "Drake Nothing Was the Same"])
+    );
+}
+
 #[tokio::test]
 async fn a_song_the_folder_lacks_is_searched_on_its_own() {
     let root = Root::new("octo-albumwalk-");

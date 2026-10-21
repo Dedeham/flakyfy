@@ -64,7 +64,7 @@ use octo_core::tagging::{AlbumTagContext, ReleaseIdentifier};
 use octo_media::audio::{ILoudnessMeter, Loudness};
 use octo_media::tags::TagWriterExtras;
 use parking_lot::Mutex;
-use tokio::sync::{Semaphore, SemaphorePermit};
+use tokio::sync::{Semaphore, SemaphorePermit, watch};
 use tokio_util::io::ReaderStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -327,6 +327,19 @@ fn is_flac_path(path: &str) -> bool {
     dotnet::eq_ignore_case(get_extension(path), ".flac")
 }
 
+/// An album's place in [`BaseDownloadService::album_walks`], given up when its walk ends, however
+/// it ends.
+struct AlbumWalkEntry<'a> {
+    walks: &'a Mutex<HashMap<String, watch::Receiver<Option<bool>>>>,
+    album_external_id: &'a str,
+}
+
+impl Drop for AlbumWalkEntry<'_> {
+    fn drop(&mut self) {
+        self.walks.lock().remove(self.album_external_id);
+    }
+}
+
 /// Abstract base class for download services, as a struct: common download logic, tracking,
 /// and metadata writing. The backend implements provider-specific download and authentication.
 pub struct BaseDownloadService {
@@ -351,6 +364,10 @@ pub struct BaseDownloadService {
     /// The albums being fetched song by song outside a walk, newest last: their tracks are
     /// filed and tagged as one walk's would be.
     held_albums: Mutex<Vec<Arc<AlbumTagContext<Loudness>>>>,
+    /// The albums being walked, by external id, each with its walk's answer once it ends. A walk
+    /// asked for while one of the same album runs waits for that one: two walks side by side would
+    /// each queue a batch for the same songs, and the second would orphan the first.
+    album_walks: Mutex<HashMap<String, watch::Receiver<Option<bool>>>>,
     /// One permit: one download at a time inside the lock.
     download_lock: Semaphore,
 
@@ -402,6 +419,7 @@ impl BaseDownloadService {
             cache_path,
             active_downloads: Mutex::new(HashMap::new()),
             held_albums: Mutex::new(Vec::new()),
+            album_walks: Mutex::new(HashMap::new()),
             download_lock: Semaphore::new(1),
             identifier: OnceLock::new(),
             #[cfg(test)]
@@ -1501,7 +1519,58 @@ impl BaseDownloadService {
         .boxed()
     }
 
+    /// One walk of an album at a time. A request that comes while one runs answers what that walk
+    /// answers, and starts no walk of its own.
     async fn walk_album(
+        &self,
+        album_external_id: &str,
+        exclude_track_external_id: &str,
+        source_override: Option<DownloadSource>,
+        suppress_summary: bool,
+        cancellation_token: &CancellationToken,
+        requested_by: Option<Vec<String>>,
+    ) -> anyhow::Result<bool> {
+        let running = {
+            let mut walks = self.album_walks.lock();
+            match walks.get(album_external_id) {
+                Some(running) => Err(running.clone()),
+                None => {
+                    let (answer, running) = watch::channel(None);
+                    walks.insert(album_external_id.to_string(), running);
+                    Ok(answer)
+                }
+            }
+        };
+        let answer = match running {
+            Ok(answer) => answer,
+            Err(mut running) => {
+                info!("Album {album_external_id} is being walked already; this request waits for that walk");
+                // A walk that ended without an answer (it panicked) or a caller that left answers false.
+                return Ok(tokio::select! {
+                    _ = cancellation_token.cancelled() => false,
+                    ended = running.wait_for(Option::is_some) => ended.ok().and_then(|ended| *ended).unwrap_or(false),
+                });
+            }
+        };
+        let _walking = AlbumWalkEntry {
+            walks: &self.album_walks,
+            album_external_id,
+        };
+        let walked = self
+            .walk_album_once(
+                album_external_id,
+                exclude_track_external_id,
+                source_override,
+                suppress_summary,
+                cancellation_token,
+                requested_by,
+            )
+            .await;
+        answer.send_replace(Some(walked.as_ref().is_ok_and(|all| *all)));
+        walked
+    }
+
+    async fn walk_album_once(
         &self,
         album_external_id: &str,
         exclude_track_external_id: &str,

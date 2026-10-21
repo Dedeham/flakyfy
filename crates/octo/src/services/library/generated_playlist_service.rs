@@ -381,6 +381,17 @@ impl GeneratedPlaylistService {
         self.current(username, &settings, Utc::now())
     }
 
+    /// The listeners who have lists made, in lower case.
+    pub fn listeners(&self) -> Vec<String> {
+        self.state.lock().users.keys().cloned().collect()
+    }
+
+    /// A listener's lists as of now, never making one.
+    pub fn lists_for(&self, username: &str) -> Vec<GeneratedPlaylist> {
+        let settings = self.settings.current().generated_playlists.clone();
+        self.current(username, &settings, Utc::now())
+    }
+
     /// A mix by id, for this listener, as of now. None for anyone else's id.
     pub fn find(&self, username: &str, id: &str) -> Option<GeneratedPlaylist> {
         let settings = self.settings.current().generated_playlists.clone();

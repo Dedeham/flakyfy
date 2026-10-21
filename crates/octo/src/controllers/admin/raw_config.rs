@@ -323,6 +323,12 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Soulseek:YoutubeCrossCheck",
     "Soulseek:YoutubeCrossCheckRetries",
     "LibraryActions:YoutubeCheckPerHour",
+    "GeneratedPlaylists:Precache",
+    "GeneratedPlaylists:PrecacheCount",
+    "GeneratedPlaylists:PrecacheIntervalHours",
+    "GeneratedPlaylists:PrecacheKeepDays",
+    "GeneratedPlaylists:PrecacheMinPlays",
+    "GeneratedPlaylists:PrecacheDryRun",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

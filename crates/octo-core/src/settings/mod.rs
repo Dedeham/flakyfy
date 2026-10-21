@@ -15,6 +15,7 @@ pub mod library_action;
 pub mod lidarr;
 pub mod listen_brainz;
 pub mod metadata;
+pub mod monitoring;
 pub mod notification;
 pub mod radio_source;
 pub mod restart_tracker;
@@ -46,6 +47,7 @@ pub use library_action::{
 pub use lidarr::{LidarrCompletionMode, LidarrSettings};
 pub use listen_brainz::ListenBrainzSettings;
 pub use metadata::{AnimatedArtMode, LyricsSaveTo, MetadataSettings};
+pub use monitoring::MonitoringSettings;
 pub use notification::NotificationSettings;
 pub use radio_source::RadioSourceSettings;
 pub use restart_tracker::RestartTracker;
@@ -81,11 +83,12 @@ pub struct AppSettings {
     pub admin: AdminSettings,
     pub imports: ImportSettings,
     pub family: FamilySettings,
+    pub monitoring: MonitoringSettings,
 }
 
 impl AppSettings {
     /// The configuration section names, in registration order.
-    pub const SECTIONS: [&'static str; 16] = [
+    pub const SECTIONS: [&'static str; 17] = [
         "Genre",
         "LibraryActions",
         "GeneratedPlaylists",
@@ -102,6 +105,7 @@ impl AppSettings {
         "Admin",
         "Imports",
         "Family",
+        "Monitoring",
     ];
 
     /// Binds every section from the merged configuration. A value that does not convert
@@ -126,6 +130,7 @@ impl AppSettings {
             admin: bind_section(tree, "Admin", &mut warnings),
             imports: bind_section(tree, "Imports", &mut warnings),
             family: bind_section(tree, "Family", &mut warnings),
+            monitoring: bind_section(tree, "Monitoring", &mut warnings),
         };
         // Navidrome's address is read without the spaces and trailing slashes it may have been
         // typed with, so every upstream URL Octo builds from it has one slash (a trailing slash

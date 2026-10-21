@@ -151,6 +151,8 @@ pub struct TrackDownload {
     pub muted: bool,
     /// Only FLAC files are candidates; the base still refuses one made from lossy audio.
     pub flac_only: bool,
+    /// A download ahead of a play, which leaves an album walk's queued files to the walk.
+    pub ahead: bool,
 }
 
 /// The source-specific parts of the download pipeline. Every call is handed the base, so a
@@ -968,6 +970,7 @@ impl BaseDownloadService {
                 external_provider: external_provider.to_string(),
                 status: DownloadStatus::InProgress,
                 started_at: Utc::now(),
+                ahead: options.prefetch,
                 ..Default::default()
             },
         );
@@ -1036,6 +1039,7 @@ impl BaseDownloadService {
                     fetched_from: None,
                     muted: false,
                     flac_only,
+                    ahead: options.prefetch,
                 };
                 let transferred = self
                     .backend
@@ -1864,7 +1868,9 @@ impl BaseDownloadService {
             // Check if download is already in progress or recently completed.
             let song_id = format!("ext-{provider}-{track_id}");
             if let Some(active) = self.active_download(&song_id) {
-                if active.status == DownloadStatus::InProgress {
+                // A download ahead lands its file outside the library: the download below waits
+                // for it and keeps its file.
+                if active.status == DownloadStatus::InProgress && !active.ahead {
                     debug!("Track {track_id} download already in progress, skipping");
                     return Ok(());
                 }

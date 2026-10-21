@@ -1257,8 +1257,9 @@ impl SoulseekDownloadService {
             .as_ref()
             .is_some_and(|picked| soulseek_candidates::judge(picked, song_judged).1 >= 2);
         // An album walk may have queued this song's file already, from one peer's folder of the
-        // album. That file is tried first, without a search; the search runs only if it fails.
-        let prepared = if picked.is_none() {
+        // album. That file is tried first, without a search; the search runs only if it fails. A
+        // download ahead leaves it to the walk, which keeps the song in the library.
+        let prepared = if picked.is_none() && !download.ahead {
             self.prepared.lock().remove(&track_key)
         } else {
             None

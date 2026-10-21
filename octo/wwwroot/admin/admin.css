@@ -722,7 +722,15 @@ input[type="number"].set-input { max-width: 160px; }
 .kr-card { margin-top: var(--s-l); }
 .kr-card.off .kr-lists { opacity: 0.55; }
 .kr-person { min-width: 9rem; }
-.kr-lists { display: flex; flex-direction: column; gap: var(--s-2xs); padding: var(--s-m) var(--s-l); }
+/* A narrow card puts the person picker under its words, so the title keeps one line. */
+@container (max-width: 480px) {
+  .kr-card > .set-row:first-child { flex-direction: column; align-items: stretch; gap: var(--s-l); }
+  .kr-card > .set-row:first-child .set-ctrl, .kr-person { width: 100%; }
+}
+/* Rows inset so their check and tag line up with the card's text and controls. */
+.kr-lists { display: flex; flex-direction: column; gap: var(--s-2xs); padding: var(--s-m); }
+/* The family page's cards pad their rows less, so their lists inset less to match. */
+.fam-rows .kr-lists { padding-inline: var(--s-xs); }
 .kr-list {
   display: flex;
   align-items: center;

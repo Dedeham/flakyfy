@@ -75,6 +75,19 @@ pub fn copy_after(status: u16, range: Option<&str>) -> bool {
     matches!(status, 200 | 206) && range.is_some_and(asks_for_pieces)
 }
 
+/// What asking for a copy came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Copying {
+    /// The copy is complete.
+    Ready,
+    /// A fill is running for it, started now or before.
+    Started,
+    /// Every fill it may use is taken: ask again later.
+    Busy,
+    /// No copy can be made: not a video id, or the disk is nearly full.
+    Refused,
+}
+
 /// A preview's whole stream, as a fill reads it.
 pub struct WholePreview {
     pub content_type: String,
@@ -239,15 +252,18 @@ impl PreviewCopies {
     /// `expected_total` is the size the play's own answer gave; a stream of another size makes no
     /// copy. False when no fill could start.
     pub fn start(self: &Arc<Self>, video_id: &str, expected_total: Option<u64>) -> bool {
-        self.begin(video_id, expected_total, None)
+        matches!(
+            self.begin(video_id, expected_total, None),
+            Copying::Ready | Copying::Started
+        )
     }
 
     /// Makes sure this video has a copy held until `until`, for a playlist kept ready: an existing
-    /// copy is held, else a fill starts. False when no fill could start now.
-    pub fn start_kept(self: &Arc<Self>, video_id: &str, until: DateTime<Utc>) -> bool {
+    /// copy is held, else a fill starts.
+    pub fn start_kept(self: &Arc<Self>, video_id: &str, until: DateTime<Utc>) -> Copying {
         if self.is_ready(video_id) {
             self.keep(video_id, until);
-            return true;
+            return Copying::Ready;
         }
         self.begin(video_id, None, Some(until))
     }
@@ -257,30 +273,30 @@ impl PreviewCopies {
         video_id: &str,
         expected: Option<u64>,
         kept_until: Option<DateTime<Utc>>,
-    ) -> bool {
+    ) -> Copying {
         if !is_video_id(video_id) {
-            return false;
+            return Copying::Refused;
         }
         if free_bytes(&self.folder).is_some_and(|free| free < (self.min_free)()) {
-            return false;
+            return Copying::Refused;
         }
         let (tx, rx) = watch::channel(Progress::default());
         {
             let mut state = self.state.lock();
             if state.index.contains_key(video_id) {
-                return true;
+                return Copying::Ready;
             }
             if let Some(fill) = state.fills.get_mut(video_id) {
                 if kept_until > fill.kept_until {
                     fill.kept_until = kept_until;
                 }
-                return true;
+                return Copying::Started;
             }
             let kept_running = state.fills.values().filter(|f| f.kept_until.is_some()).count();
             if state.fills.len() >= FILLS_AT_ONCE
                 || (kept_until.is_some() && kept_running >= KEPT_FILLS_AT_ONCE)
             {
-                return false;
+                return Copying::Busy;
             }
             state.fills.insert(
                 video_id.to_string(),
@@ -293,7 +309,7 @@ impl PreviewCopies {
         let copies = Arc::clone(self);
         let id = video_id.to_string();
         tokio::spawn(async move { copies.fill(id, expected, tx).await });
-        true
+        Copying::Started
     }
 
     async fn fill(self: Arc<Self>, id: String, expected: Option<u64>, tx: watch::Sender<Progress>) {

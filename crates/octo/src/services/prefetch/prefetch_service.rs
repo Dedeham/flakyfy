@@ -86,6 +86,8 @@ enum Reason {
     Upcoming,
     /// It is kept ready in a mix, after everything that plays soon.
     Mix,
+    /// It is in a playlist kept ready, after the mixes.
+    Kept,
 }
 
 /// How a song is fetched.
@@ -381,7 +383,7 @@ impl PrefetchService {
                     if !job.is_for(user) {
                         job.listeners.push(user.to_string());
                     }
-                    if job.reason == Reason::Mix {
+                    if job.reason > Reason::Upcoming {
                         job.reason = Reason::Upcoming;
                     }
                     continue;
@@ -404,6 +406,68 @@ impl PrefetchService {
             }
         }
         self.wake.notify_one();
+    }
+
+    /// Queues the songs of the playlists kept ready, after everything else: `songs` is each
+    /// listener's outside song ids. Songs queued for playlists kept ready before and not asked for
+    /// now leave the queue. A listener whose plays keep no copies gets none.
+    pub async fn keep_ready(&self, songs: Vec<(String, Vec<String>)>) {
+        let kind = if self.parts.settings.current().subsonic.download_on_play {
+            Kind::AsPlay
+        } else {
+            Kind::Ahead
+        };
+        let mut fresh = Vec::new();
+        for (user, ids) in songs {
+            if !self.may_keep_copies(&user, None) {
+                continue;
+            }
+            for id in ids {
+                let (true, Some(provider), Some(external_id)) = self.parts.library.parse_song_id(&id) else {
+                    continue;
+                };
+                if self.wanted(&provider, &external_id).await {
+                    fresh.push(Job {
+                        provider,
+                        external_id,
+                        client_id: id,
+                        listeners: vec![user.clone()],
+                        reason: Reason::Kept,
+                        kind,
+                    });
+                }
+            }
+        }
+        {
+            let mut state = self.state.lock();
+            state.queued.retain(|job| job.reason != Reason::Kept);
+            for job in fresh {
+                let key = job.key();
+                if !state.running.contains_key(&key) && !state.queued.iter().any(|j| j.key() == key) {
+                    state.queued.push_back(job);
+                }
+            }
+        }
+        self.wake.notify_one();
+    }
+
+    /// Whether an outside song has its FLAC here: fetched ahead, or in the library.
+    pub async fn flac_ready(&self, id: &str) -> bool {
+        let (true, Some(provider), Some(external_id)) = self.parts.library.parse_song_id(id) else {
+            return false;
+        };
+        self.parts.store.is_ready(&provider, &external_id)
+            || self
+                .parts
+                .library
+                .get_local_path_for_external_song(&provider, &external_id)
+                .await
+                .is_some_and(|path| std::path::Path::new(&path).is_file())
+    }
+
+    /// The bytes the songs fetched ahead take.
+    pub fn flac_bytes(&self) -> u64 {
+        self.parts.store.sizes().1
     }
 
     /// Whether a song is worth fetching ahead: not ready, not being downloaded, not resting

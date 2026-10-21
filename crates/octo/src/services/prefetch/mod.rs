@@ -2,15 +2,20 @@
 //! folder of their own before they play, served to the players that can take them, and kept by a
 //! heart without a second download. Beside them, whole copies of outside songs' previews.
 
+pub mod keep_ready;
 pub mod play_source;
 pub mod prefetch_service;
 pub mod preview_copies;
 pub mod queue_window;
 pub mod store;
 
+pub use keep_ready::{
+    AppKeepReadySources, KeepFlac, KeepReadyChoice, KeepReadyService, KeepReadySources, KeepReadyStore,
+    KeepReadyView, ListSongs, ListView, Picks, UnknownList,
+};
 pub use play_source::{PlaySources, Source, from_start};
 pub use prefetch_service::{JobView, ONE_AT_A_TIME, PrefetchParts, PrefetchService, PrefetchStatus};
-pub use preview_copies::{PreviewCopies, PreviewSource, WholePreview, asks_for_pieces, is_video_id};
+pub use preview_copies::{Copying, PreviewCopies, PreviewSource, WholePreview, asks_for_pieces, is_video_id};
 pub use queue_window::{SavedQueue, window};
 pub use store::{
     AheadSidecar, FOLDER_MARKER, FolderFn, PrefetchStore, PrefetchedFiles, ReadySong, Taken,
@@ -24,3 +29,7 @@ mod prefetch_service_tests;
 #[cfg(test)]
 #[path = "preview_copies_tests.rs"]
 mod preview_copies_tests;
+
+#[cfg(test)]
+#[path = "keep_ready_tests.rs"]
+mod keep_ready_tests;

@@ -13,7 +13,7 @@ use octo_core::common::Clock;
 use parking_lot::Mutex;
 
 use super::preview_copies::{
-    PreviewCopies, PreviewSource, WholePreview, asks_for_pieces, copy_after, is_video_id,
+    Copying, PreviewCopies, PreviewSource, WholePreview, asks_for_pieces, copy_after, is_video_id,
 };
 use crate::services::i_download_service::DirectStreamInfo;
 
@@ -358,11 +358,11 @@ async fn kept_copies_stop_starting_once_they_fill_their_room() {
     let copies = copies(&dir, Arc::new(FakeSource::new(data(1_000))), clock, u64::MAX);
 
     assert!(copies.kept_room(1_500));
-    assert!(copies.start_kept("aaaaaaaaaaa", at(60)));
+    assert_eq!(copies.start_kept("aaaaaaaaaaa", at(60)), Copying::Started);
     wait_ready(&copies, "aaaaaaaaaaa").await;
     assert_eq!(copies.kept_bytes(), 1_000);
     assert!(copies.kept_room(1_500));
-    assert!(copies.start_kept("bbbbbbbbbbb", at(60)));
+    assert_eq!(copies.start_kept("bbbbbbbbbbb", at(60)), Copying::Started);
     wait_ready(&copies, "bbbbbbbbbbb").await;
     assert!(!copies.kept_room(1_500));
 }

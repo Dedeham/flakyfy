@@ -133,7 +133,8 @@ use crate::services::metadata::{
 use crate::services::metadata::{GenreBackfillJournal, GenreBackfillStore, GenreBackfillWorker};
 use crate::services::notifications::{DiscordSink, INotificationSink, NotificationService, NtfySink};
 use crate::services::prefetch::{
-    PrefetchParts, PrefetchService, PrefetchStore, PrefetchedFiles, PreviewCopies,
+    AppKeepReadySources, KeepReadyService, KeepReadyStore, PrefetchParts, PrefetchService, PrefetchStore,
+    PrefetchedFiles, PreviewCopies,
 };
 use crate::services::radio::{
     IRadioSource, LastFmRadioSource, ListenBrainzRadioSource, RadioOutcomeStore, RadioSourceSet,
@@ -316,6 +317,9 @@ pub struct AppInner {
     pub prefetch: Arc<PrefetchService>,
     /// `PreviewCopies`: whole copies of outside songs' previews, `<config>/preview-copies`.
     pub preview_copies: Arc<PreviewCopies>,
+    /// `KeepReadyService`: each listener's playlists kept ready, `keep-ready.json`; its loop is the
+    /// "KeepReady" worker.
+    pub keep_ready: Arc<KeepReadyService>,
     /// `DirectoryBrowser`: the dashboard's folder picker.
     pub directory_browser: Arc<DirectoryBrowser>,
     /// `BrowseSessionStore`: dashboard sign-ins, `browse-sessions.json`.
@@ -717,6 +721,40 @@ fn prefetch_service(
         soulseek: Some(soulseek_link),
         clock: Clock::system(),
     })
+}
+
+/// Playlists kept ready, over the lists, the plays and getting songs ahead.
+#[allow(clippy::too_many_arguments)]
+fn keep_ready_service(
+    settings: &Arc<SettingsStore>,
+    config_dir: &Path,
+    stores: &Stores,
+    imports: &Arc<crate::services::imports::ImportService>,
+    mixes: &Arc<GeneratedPlaylistService>,
+    charts: &Arc<ChartPlaylistService>,
+    metadata: &Arc<dyn IMusicMetadataService>,
+    library: &Arc<dyn ILocalLibraryService>,
+    prefetch: &Arc<PrefetchService>,
+) -> Arc<KeepReadyService> {
+    let sources = AppKeepReadySources {
+        settings: settings.clone(),
+        imports: imports.clone(),
+        registry: stores.external_id_registry.clone(),
+        mixes: mixes.clone(),
+        charts: charts.clone(),
+        family_playlists: stores.family_playlists.clone(),
+        listening: stores.listening.clone(),
+        metadata: metadata.clone(),
+        library: library.clone(),
+    };
+    KeepReadyService::new(
+        settings.clone(),
+        Arc::new(KeepReadyStore::new(Some(config_dir.join("keep-ready.json")))),
+        Arc::new(sources),
+        prefetch.clone(),
+        stores.preview_copies.clone(),
+        Clock::system(),
+    )
 }
 
 /// The tagging and verification services, which the download base
@@ -3082,6 +3120,21 @@ impl AppState {
             &stores.family_vault,
             &family_navidrome.1,
         );
+        let keep_ready = keep_ready_service(
+            &settings,
+            &config_dir,
+            &stores,
+            &imports.service,
+            &radio.generated_playlists,
+            &charts.playlists,
+            &metadata_service,
+            &navidrome.local_library,
+            &prefetch,
+        );
+        {
+            let keep_ready = keep_ready.clone();
+            workers.register("KeepReady", move |stopping| keep_ready.clone().run(stopping));
+        }
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -3119,6 +3172,7 @@ impl AppState {
             radio_queues: stores.radio_queues,
             prefetch,
             preview_copies: stores.preview_copies,
+            keep_ready,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
             sign_in_throttle: admin_sign_in.throttle,
@@ -3508,6 +3562,17 @@ impl AppState {
             &stores.family_vault,
             &family_navidrome.1,
         );
+        let keep_ready = keep_ready_service(
+            &settings,
+            &config_dir,
+            &stores,
+            &imports.service,
+            &radio.generated_playlists,
+            &charts.playlists,
+            &metadata_service,
+            &navidrome.local_library,
+            &prefetch,
+        );
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -3543,6 +3608,7 @@ impl AppState {
             radio_queues: stores.radio_queues,
             prefetch,
             preview_copies: stores.preview_copies,
+            keep_ready,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
             sign_in_throttle: admin_sign_in.throttle,

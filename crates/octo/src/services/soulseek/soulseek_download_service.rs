@@ -1604,6 +1604,7 @@ impl SoulseekDownloadService {
                             &cross_settings,
                         )
                         .await
+                        .done()
                     {
                         let alike = (check.similarity * 100.0).round();
                         match check.verdict {

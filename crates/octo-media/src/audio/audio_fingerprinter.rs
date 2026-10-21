@@ -254,6 +254,94 @@ impl AudioFingerprinter {
         result
     }
 
+    /// The raw Chromaprint frames of the first `length_seconds` of the file, for comparing two
+    /// recordings locally instead of asking AcoustID. None is "no opinion", like every failure here.
+    pub async fn fingerprint_raw(
+        &self,
+        path: &Path,
+        length_seconds: i32,
+        timeout_seconds: i32,
+    ) -> Option<Vec<u32>> {
+        if self.binary_missing.load(Ordering::Relaxed) {
+            return None;
+        }
+        let length = length_seconds.to_string();
+        let path_text = path.to_string_lossy();
+        let mut child = tool::spawn("fpcalc", &["-json", "-raw", "-length", &length, &path_text]).ok()?;
+        let timeout = Duration::from_secs(timeout_seconds.max(0).unsigned_abs() as u64);
+        let run = match tokio::time::timeout(timeout, tool::collect(&mut child, true)).await {
+            Ok(Ok(run)) => run,
+            _ => {
+                tool::kill(&mut child);
+                return None;
+            }
+        };
+        Self::parse_fpcalc_raw(&String::from_utf8_lossy(&run.stdout))
+    }
+
+    /// `fingerprint_raw` of `length_seconds` starting `start_seconds` into the file, so two long
+    /// files can be compared in the middle and at the end, not only at the start where a remaster or
+    /// a live take still sounds the same. ffmpeg cuts the window into a temporary WAV, removed
+    /// afterwards. None is "no opinion", like every failure here.
+    pub async fn fingerprint_raw_window(
+        &self,
+        path: &Path,
+        start_seconds: i32,
+        length_seconds: i32,
+        timeout_seconds: i32,
+    ) -> Option<Vec<u32>> {
+        if start_seconds <= 0 {
+            return self.fingerprint_raw(path, length_seconds, timeout_seconds).await;
+        }
+        let wav = std::env::temp_dir().join(format!(
+            "octo-window-{}-{}.wav",
+            std::process::id(),
+            SPEED_RUN.fetch_add(1, Ordering::Relaxed)
+        ));
+        let start = start_seconds.to_string();
+        let length = length_seconds.max(1).to_string();
+        let source = path.to_string_lossy();
+        let target = wav.to_string_lossy();
+        let arguments = [
+            "-v", "error", "-nostdin", "-y", "-ss", &start, "-t", &length, "-i", &source, "-vn", "-f", "wav",
+            &target,
+        ];
+        let timeout = Duration::from_secs(timeout_seconds.max(0).unsigned_abs() as u64);
+        let made = match tool::spawn("ffmpeg", &arguments) {
+            Ok(mut child) => match tokio::time::timeout(timeout, tool::collect(&mut child, false)).await {
+                Ok(Ok(run)) => run.exit_code == 0,
+                Ok(Err(_)) | Err(_) => {
+                    tool::kill(&mut child);
+                    false
+                }
+            },
+            Err(error) => {
+                warn!("ffmpeg could not start for a fingerprint window: {error}");
+                false
+            }
+        };
+        let frames = if made {
+            self.fingerprint_raw(&wav, length_seconds, timeout_seconds).await
+        } else {
+            None
+        };
+        let _ = std::fs::remove_file(&wav);
+        frames
+    }
+
+    /// fpcalc -json -raw writes {"duration": 253.1, "fingerprint": [1234, 5678, ...]}. Chromaprint
+    /// frames are unsigned 32-bit; a signed print of one is read back by its bits.
+    pub(crate) fn parse_fpcalc_raw(stdout: &str) -> Option<Vec<u32>> {
+        let root: serde_json::Value = serde_json::from_str(stdout).ok()?;
+        let frames: Option<Vec<u32>> = root
+            .get("fingerprint")?
+            .as_array()?
+            .iter()
+            .map(|frame| frame.as_i64().map(|n| n as u32))
+            .collect();
+        frames.filter(|frames| !frames.is_empty())
+    }
+
     /// fpcalc -json writes one object to stdout: {"duration": 253.14, "fingerprint": "AQADt..."}.
     /// Simpler than the transcoder's stderr scraping, which is why -json is used.
     ///
@@ -303,6 +391,25 @@ mod tests {
     //! rejection deletes a file and writes a deny-list entry.
 
     use super::*;
+
+    #[test]
+    fn parse_fpcalc_raw_reads_frames_signed_or_not() {
+        let frames =
+            AudioFingerprinter::parse_fpcalc_raw(r#"{"duration": 12.0, "fingerprint": [1, 4294967295, -1]}"#)
+                .expect("raw shape");
+        assert_eq!(frames, vec![1, u32::MAX, u32::MAX]);
+    }
+
+    #[test]
+    fn parse_fpcalc_raw_compressed_or_empty_is_none() {
+        for text in [
+            r#"{"duration": 12.0, "fingerprint": "AQAD"}"#,
+            r#"{"duration": 12.0, "fingerprint": []}"#,
+            "not json",
+        ] {
+            assert_eq!(AudioFingerprinter::parse_fpcalc_raw(text), None, "{text}");
+        }
+    }
 
     #[test]
     fn parse_fpcalc_json_real_output_reads_fingerprint_and_duration() {

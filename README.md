@@ -1023,15 +1023,24 @@ arrangement (Wikimedia Commons), compared as a lossless file against the library
 | 15% faster with higher pitch | 56 to 57% | refused |
 | another pianist's performance of the same piece | 58 to 64% | refused |
 | speech against piano | 53% | refused |
+| 28 different tracks from 28 albums (jazz, trip-hop, classical, noise, spoken word, children's songs, grindcore and more), all 378 pairs | median 52%, highest 59.5% | refused |
+| the same 28 tracks as MP3 128k, and with 5 s added intro (56 cases) | 92 to 100% (mean 97%) | replaces |
 | 22 s or more shorter or longer | not compared | refused at once |
 
-The distance between the same recording (at least 94%) and the closest other thing (a copy at
-another speed, 84%; another performance, 64%) is what the threshold sits in. The thresholds are constants. Nothing is uploaded: both sides are fingerprinted here, the
+The distance between the same recording (at least 92%) and the closest other thing (a copy at
+another speed, 84%; another performance, 64%; a different track, 59.5%) is what the threshold sits
+in. The thresholds are constants. Nothing is uploaded: both sides are fingerprinted here, the
 YouTube copy through the shim's `/stream`, a Range-capable stream of which ffmpeg reads only the
 first half minute (at most; `SLSKD_FINGERPRINT_SECONDS` below 30 shortens it).
 
 What keeps this from going wrong:
 
+- A window of silence, a pure tone or a steady hum says nothing: it fingerprints to a few repeated
+  numbers, and two such windows scored 94 to 100% alike whatever they were (silence against a
+  440 Hz tone 94%, 440 Hz against 880 Hz 100%). A window needs at least 70% different numbers to be
+  compared (real music: at least 84%, median 99%). A file that is silent where the reference has
+  sound counts as 0% alike; a reference with nothing in it cannot judge, and a Better quality
+  candidate with no usable window is refused.
 - No YouTube Music row that is surely the song means no opinion, never a rejection; a YouTube Music
   or shim that cannot answer is told apart from "no row" (a later check asks again, an earlier
   answer is never made of a failure).

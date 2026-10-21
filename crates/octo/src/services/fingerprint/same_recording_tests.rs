@@ -183,3 +183,38 @@ async fn the_same_start_with_another_ending_never_replaces() {
     // Refused for the sound of its later windows, not for its length: the start alone would match.
     assert!(matches!(found, SameRecording::Differs(_)), "{found:?}");
 }
+
+#[tokio::test]
+async fn a_steady_tone_cannot_vouch_for_another_steady_tone() {
+    if !tools_present() {
+        return;
+    }
+    // Both fingerprint to one repeated number, which used to score 100%.
+    let low = make(
+        "tone-low.mp3",
+        "sine=f=440:d=40",
+        &["-c:a", "libmp3lame", "-b:a", "128k"],
+    );
+    let high = make("tone-high.flac", "sine=f=880:d=40", &["-c:a", "flac"]);
+
+    let found = judged(&high, &low).await;
+
+    assert_eq!(found, SameRecording::CannotTell);
+}
+
+#[tokio::test]
+async fn a_silent_candidate_never_replaces_a_song() {
+    if !tools_present() {
+        return;
+    }
+    let song = make("song.mp3", MELODY, &["-c:a", "libmp3lame", "-b:a", "128k"]);
+    let silence = make(
+        "silence.flac",
+        "anullsrc=r=44100:cl=stereo:d=40",
+        &["-c:a", "flac"],
+    );
+
+    let found = judged(&silence, &song).await;
+
+    assert!(matches!(found, SameRecording::Differs(_)), "{found:?}");
+}

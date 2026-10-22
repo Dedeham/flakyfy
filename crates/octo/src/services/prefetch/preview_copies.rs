@@ -32,8 +32,9 @@ const UNUSED_FOR: Duration = Duration::hours(24);
 pub const CAP_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// A fill with no new bytes for this long is given up.
 const FILL_STALL: StdDuration = StdDuration::from_secs(30);
-/// A request waiting on a filling copy with no new bytes for this long ends its body.
-const SERVE_STALL: StdDuration = StdDuration::from_secs(15);
+/// A request waiting on a filling copy with no new bytes for this long ends its body; longer than
+/// a fill waits, so a fill that is still going never cuts a reader off.
+const SERVE_STALL: StdDuration = StdDuration::from_secs(35);
 /// How many fills run at once.
 const FILLS_AT_ONCE: usize = 4;
 /// How many of those may be for playlists kept ready, so the rest are always there for plays.
@@ -60,6 +61,10 @@ pub fn asks_for_pieces(range: &str) -> bool {
     let Some(spec) = range.trim().strip_prefix("bytes=") else {
         return false;
     };
+    // Several ranges in one request go to the live answer.
+    if spec.contains(',') {
+        return false;
+    }
     let (from, to) = spec.split_once('-').unwrap_or((spec, ""));
     match from.trim().parse::<u64>() {
         Ok(0) => to.trim().parse::<u64>().is_ok_and(|end| end < PROBE_BYTES),
@@ -171,6 +176,8 @@ pub struct PreviewCopies {
     min_free: Box<dyn Fn() -> u64 + Send + Sync>,
     cap: u64,
     state: Mutex<State>,
+    /// Held from reading the index to writing it, so a save never overwrites a newer one.
+    save_lock: Mutex<()>,
 }
 
 impl PreviewCopies {
@@ -198,13 +205,15 @@ impl PreviewCopies {
             min_free: Box::new(min_free),
             cap,
             state: Mutex::new(State::default()),
+            save_lock: Mutex::new(()),
         };
         copies.load();
         Arc::new(copies)
     }
 
-    /// Reads the index, keeping the copies whose file is there at its size; any other copy or
-    /// unfinished fill in the folder goes.
+    /// Reads the index, keeping the copies whose file is there at its size. A copy the index
+    /// does not list (an index that could not be read lists none) is listed again from its file;
+    /// unfinished fills, and files no video id names, go.
     fn load(&self) {
         let _ = std::fs::create_dir_all(&self.folder);
         let mut index: HashMap<String, Entry> = std::fs::read(self.folder.join(INDEX))
@@ -214,16 +223,31 @@ impl PreviewCopies {
         index.retain(|id, entry| {
             is_video_id(id) && std::fs::metadata(self.copy_path(id)).is_ok_and(|m| m.len() == entry.size)
         });
+        let now = self.clock.now();
         if let Ok(dir) = std::fs::read_dir(&self.folder) {
             for item in dir.flatten() {
                 let path = item.path();
                 let kind = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let known = path
+                let stem = path
                     .file_stem()
                     .and_then(|s| s.to_str())
-                    .is_some_and(|stem| index.contains_key(stem));
-                if kind == "part" || (kind == "preview" && !known) {
+                    .unwrap_or("")
+                    .to_string();
+                if kind == "part" || (kind == "preview" && !is_video_id(&stem)) {
                     let _ = std::fs::remove_file(&path);
+                } else if kind == "preview" && !index.contains_key(&stem) {
+                    let Ok(meta) = std::fs::metadata(&path) else {
+                        continue;
+                    };
+                    index.insert(
+                        stem,
+                        Entry {
+                            size: meta.len(),
+                            content_type: sniff_type(&path).to_string(),
+                            last_use: now,
+                            kept_until: None,
+                        },
+                    );
                 }
             }
         }
@@ -238,14 +262,23 @@ impl PreviewCopies {
         self.folder.join(format!("{id}.part"))
     }
 
-    fn save(&self, index: &HashMap<String, Entry>) {
-        let Ok(json) = serde_json::to_vec_pretty(index) else {
+    /// Writes the index as it is now. Blocking file work: async callers use `save`.
+    fn persist(&self) {
+        let _one = self.save_lock.lock();
+        let index = self.state.lock().index.clone();
+        let Ok(json) = serde_json::to_vec_pretty(&index) else {
             return;
         };
         let temp = self.folder.join(format!("{INDEX}.tmp"));
         if std::fs::write(&temp, json).is_ok() {
             let _ = std::fs::rename(&temp, self.folder.join(INDEX));
         }
+    }
+
+    /// Writes the index as it is now, off the async threads.
+    pub async fn save(self: &Arc<Self>) {
+        let copies = Arc::clone(self);
+        let _ = tokio::task::spawn_blocking(move || copies.persist()).await;
     }
 
     /// Starts one fill of this video's preview for a play, unless a copy is there or filling.
@@ -316,45 +349,42 @@ impl PreviewCopies {
         let began = Instant::now();
         let part = self.part_path(&id);
         let outcome = self.write_part(&id, expected, &part, &tx).await;
-        let outcome = outcome.and_then(|done| {
-            std::fs::rename(&part, self.copy_path(&id))
+        let outcome = match outcome {
+            Ok(done) => tokio::fs::rename(&part, self.copy_path(&id))
+                .await
                 .map(|()| done)
-                .map_err(|e| format!("the copy could not be kept: {e}"))
-        });
+                .map_err(|e| format!("the copy could not be kept: {e}")),
+            Err(why) => Err(why),
+        };
         let now = self.clock.now();
-        let snapshot = {
+        {
             let mut state = self.state.lock();
             let kept_until = state.fills.get(&id).and_then(|f| f.kept_until);
-            let snapshot = match &outcome {
-                Ok((size, content_type)) => {
-                    state.index.insert(
-                        id.clone(),
-                        Entry {
-                            size: *size,
-                            content_type: content_type.clone(),
-                            last_use: now,
-                            kept_until,
-                        },
-                    );
-                    Some(state.index.clone())
-                }
-                Err(_) => None,
-            };
+            if let Ok((size, content_type)) = &outcome {
+                state.index.insert(
+                    id.clone(),
+                    Entry {
+                        size: *size,
+                        content_type: content_type.clone(),
+                        last_use: now,
+                        kept_until,
+                    },
+                );
+            }
             state.fills.remove(&id);
-            snapshot
-        };
+        }
         match outcome {
-            Ok((size, _)) => info!(
-                "Preview copy of {id} ready ({size} bytes, {} ms)",
-                began.elapsed().as_millis()
-            ),
+            Ok((size, _)) => {
+                info!(
+                    "Preview copy of {id} ready ({size} bytes, {} ms)",
+                    began.elapsed().as_millis()
+                );
+                self.save().await;
+            }
             Err(why) => {
-                let _ = std::fs::remove_file(&part);
+                let _ = tokio::fs::remove_file(&part).await;
                 warn!("Preview copy of {id} given up: {why}");
             }
-        }
-        if let Some(index) = snapshot {
-            self.save(&index);
         }
         tx.send_modify(|p| p.ended = true);
     }
@@ -419,7 +449,7 @@ impl PreviewCopies {
         range: Option<&str>,
         confirmed_size: Option<u64>,
     ) -> Option<DirectStreamInfo> {
-        if !is_video_id(video_id) {
+        if !is_video_id(video_id) || range.is_some_and(|r| r.contains(',')) {
             return None;
         }
         let now = self.clock.now();
@@ -447,7 +477,16 @@ impl PreviewCopies {
         let (Some(total), Some(content_type)) = (seen.total, seen.content_type) else {
             return None;
         };
-        if seen.ended || confirmed_size.is_some_and(|size| size != total) {
+        if seen.ended {
+            // Over since it was looked up: complete if the index has it now.
+            let entry = self.state.lock().index.get(video_id).cloned()?;
+            if confirmed_size.is_some_and(|size| size != entry.size) {
+                return None;
+            }
+            let file = tokio::fs::File::open(self.copy_path(video_id)).await.ok()?;
+            return answer(file, entry.size, entry.content_type, range, None).await;
+        }
+        if confirmed_size.is_some_and(|size| size != total) {
             return None;
         }
         let file = match tokio::fs::File::open(self.part_path(video_id)).await {
@@ -458,20 +497,15 @@ impl PreviewCopies {
         answer(file, total, content_type, range, Some(progress)).await
     }
 
-    /// Holds this video's copy until `until`, for a playlist kept ready.
+    /// Holds this video's copy until `until`, for a playlist kept ready. Kept in memory: the
+    /// caller saves once it has held all it holds (`save`).
     pub fn keep(&self, video_id: &str, until: DateTime<Utc>) {
-        let snapshot = {
-            let mut state = self.state.lock();
-            let Some(entry) = state.index.get_mut(video_id) else {
-                return;
-            };
-            if entry.kept_until.is_some_and(|kept| kept >= until) {
-                return;
-            }
+        let mut state = self.state.lock();
+        if let Some(entry) = state.index.get_mut(video_id)
+            && entry.kept_until.is_none_or(|kept| kept < until)
+        {
             entry.kept_until = Some(until);
-            state.index.clone()
-        };
-        self.save(&snapshot);
+        }
     }
 
     /// Whether this video's copy is complete.
@@ -507,10 +541,10 @@ impl PreviewCopies {
 
     /// A copy no playlist holds goes when unused for a day, then the ones used longest ago while
     /// they take more than the cap. A copy a playlist holds stays until its hold ends. A file still
-    /// being read when it goes is read on to its end.
+    /// being read when it goes is read on to its end. Blocking file work.
     pub fn sweep(&self) {
         let now = self.clock.now();
-        let (gone, snapshot) = {
+        let gone = {
             let mut state = self.state.lock();
             for entry in state.index.values_mut() {
                 if entry.kept_until.is_some_and(|until| until <= now) {
@@ -542,13 +576,24 @@ impl PreviewCopies {
                 used -= size;
                 gone.push(id);
             }
-            (gone, state.index.clone())
+            gone
         };
         for id in &gone {
             let _ = std::fs::remove_file(self.copy_path(id));
         }
-        self.save(&snapshot);
+        self.persist();
     }
+}
+
+/// The type of a copy whose index entry was lost: WebM starts with its EBML mark, anything else is
+/// the m4a YouTube serves first.
+fn sniff_type(path: &Path) -> &'static str {
+    use std::io::Read;
+    let mut head = [0u8; 4];
+    let webm = std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok_and(|()| head == [0x1A, 0x45, 0xDF, 0xA3]);
+    if webm { "audio/webm" } else { "audio/mp4" }
 }
 
 /// The answer for `range` of a copy `total` bytes long, read from `file`. With `growing`, the

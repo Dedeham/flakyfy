@@ -3014,6 +3014,11 @@ async function loadYoutubeCheck() {
     pause.hidden = !s.running;
     pause.dataset.paused = s.paused ? 'true' : 'false';
     pause.querySelector('span').textContent = s.paused ? 'Carry on' : 'Pause';
+    const results = document.getElementById('youtube-results');
+    if (results) {
+      results.hidden = !(s.listedWrong + s.listedUnclear);
+      if (!results.hidden) loadYoutubeResults();
+    }
   } catch (error) {
     status.textContent = `Could not read the YouTube check: ${error.message}`;
   }
@@ -3046,6 +3051,109 @@ document.getElementById('youtube-check-pause')?.addEventListener('click', (event
 });
 ready.then(loadYoutubeCheck);
 setInterval(() => { if (document.visibilityState === 'visible' && !gatePromise) loadYoutubeCheck(); }, 30000);
+
+// ---- Review: the YouTube check's list of songs to look at ----
+// Worst first, with how far each is from its preview, and Replace / Keep / Dismiss for the picked.
+let youtubeFilter = 'wrong';
+let youtubeShown = 50;
+const youtubePicked = new Set();
+let youtubePage = { songs: [], matching: 0, wrong: 0, unclear: 0 };
+
+async function loadYoutubeResults() {
+  const box = document.getElementById('youtube-results');
+  if (!box || box.hidden) return;
+  try {
+    const response = await api(`/api/admin/youtube-check/songs?filter=${youtubeFilter}&limit=${youtubeShown}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    youtubePage = await response.json();
+    for (const id of [...youtubePicked]) if (!youtubePage.songs.some(song => song.id === id)) youtubePicked.delete(id);
+    renderYoutubeResults();
+  } catch (error) {
+    document.getElementById('youtube-results-summary').textContent = `Could not read the list: ${error.message}`;
+  }
+}
+
+function renderYoutubeResults() {
+  const { songs, matching, wrong, unclear } = youtubePage;
+  const filters = [['wrong', 'Clearly wrong', wrong], ['unclear', 'Unclear', unclear], ['all', 'All', wrong + unclear]]
+    .map(([id, label, count]) => `<button class="btn btn-ghost btn-sm version-filter" type="button" data-youtube-filter="${id}" aria-pressed="${id === youtubeFilter}"><span>${label}</span><span class="version-filter-count">${count.toLocaleString()}</span></button>`).join('');
+  document.getElementById('youtube-results-filters').innerHTML = filters;
+  document.getElementById('youtube-results-summary').textContent = wrong + unclear
+    ? `${wrong.toLocaleString()} sounded like another song, ${unclear.toLocaleString()} could not be told. Worst first.`
+    : 'Nothing to look at.';
+  const picked = youtubePicked.size;
+  const allPicked = songs.length > 0 && songs.every(song => youtubePicked.has(song.id));
+  document.getElementById('youtube-results-bar').innerHTML = songs.length ? `<div class="version-bar" role="group" aria-label="Picked songs">
+      <label class="lossy-check"><input type="checkbox" id="youtube-pick-all"${allPicked ? ' checked' : ''} /><span>Select all shown (${songs.length.toLocaleString()})</span></label>
+      <button class="btn btn-ghost btn-sm" type="button" data-youtube-bulk="pick-wrong">Pick the clearly wrong</button>
+      <span class="version-picked" aria-live="polite">${picked ? `${picked.toLocaleString()} picked` : 'None picked'}</span>
+      <div class="health-actions">
+        <button class="btn btn-ghost btn-sm" type="button" data-youtube-bulk="replace"${picked ? '' : ' disabled'}>Replace</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-youtube-bulk="keep"${picked ? '' : ' disabled'}>Keep</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-youtube-bulk="dismiss"${picked ? '' : ' disabled'}>Dismiss</button>
+      </div>
+    </div>` : '';
+  document.getElementById('youtube-results-list').innerHTML = songs.map(song => {
+    const wrongSong = song.heard === 'wrong';
+    const badge = `<span class="dl-badge ${wrongSong ? 'failed' : 'warn'}">${wrongSong ? 'Sounds like another song' : 'Unclear'}</span>`;
+    const verified = song.trusted ? '' : ' <span class="dl-dash">·</span> preview not verified';
+    const listen = song.referenceUrl ? ` <span class="dl-dash">·</span> <a href="${esc(song.referenceUrl)}" target="_blank" rel="noopener noreferrer">Open reference</a>` : '';
+    return `<div class="dl-item health-item">
+      <div class="dl-main">
+        <div class="dl-title">${esc(song.title)}</div>
+        <div class="dl-by">${esc(song.artist)}</div>
+        <div class="dl-sub"><strong>${esc(song.percentDiffer)} % differs</strong> from the preview${verified}${listen}</div>
+      </div>
+      <div class="dl-side">${badge}<label class="lossy-check"><input type="checkbox" class="pick" data-youtube-pick="${esc(song.id)}"${youtubePicked.has(song.id) ? ' checked' : ''} aria-label="Pick ${esc(song.title)}" /><span>Pick</span></label></div>
+    </div>`;
+  }).join('');
+  document.getElementById('youtube-results-more').innerHTML = matching > songs.length
+    ? `<button class="btn btn-ghost btn-sm" type="button" data-youtube-bulk="more">Show more (${(matching - songs.length).toLocaleString()} left)</button>` : '';
+}
+
+async function youtubeResultsAct(kind, button) {
+  const ids = [...youtubePicked];
+  if (!ids.length) return;
+  if (kind === 'replace' && !(await askConfirm(
+    `Replace ${ids.length.toLocaleString()} ${ids.length === 1 ? 'song' : 'songs'}?`,
+    'Octo looks for the right version of each one, one after the other. The old file goes to Recently removed. A song anyone starred or rated is left out.',
+    'Replace', true))) return;
+  button.disabled = true;
+  const result = await healthCall(`/api/admin/youtube-check/songs/${kind}`, { ids });
+  if (!result.ok) {
+    note(button, result.data.error || `HTTP ${result.status}`, 'error');
+  } else {
+    note(button, result.data.words || 'Done.');
+    for (const skipped of result.data.skipped || []) {
+      const left = youtubePage.songs.find(song => song.id === skipped.id);
+      if (left) console.info(`Left out: ${left.artist} - ${left.title}: ${skipped.why}`);
+    }
+    // A replacement goes on in the background: the song leaves the list when it is done.
+    if (kind !== 'replace') ids.forEach(id => youtubePicked.delete(id));
+    else youtubePicked.clear();
+  }
+  button.disabled = false;
+  await loadYoutubeCheck();
+}
+
+document.getElementById('youtube-results')?.addEventListener('click', (event) => {
+  const filter = event.target.closest('[data-youtube-filter]');
+  if (filter) { youtubeFilter = filter.dataset.youtubeFilter; youtubeShown = 50; youtubePicked.clear(); loadYoutubeResults(); return; }
+  const bulk = event.target.closest('[data-youtube-bulk]');
+  if (!bulk) return;
+  const kind = bulk.dataset.youtubeBulk;
+  if (kind === 'more') { youtubeShown += 50; loadYoutubeResults(); }
+  else if (kind === 'pick-wrong') { youtubePage.songs.filter(song => song.heard === 'wrong').forEach(song => youtubePicked.add(song.id)); renderYoutubeResults(); }
+  else youtubeResultsAct(kind, bulk);
+});
+document.getElementById('youtube-results')?.addEventListener('change', (event) => {
+  const one = event.target.closest('[data-youtube-pick]');
+  if (one) { event.target.checked ? youtubePicked.add(one.dataset.youtubePick) : youtubePicked.delete(one.dataset.youtubePick); renderYoutubeResults(); return; }
+  if (event.target.id === 'youtube-pick-all') {
+    youtubePage.songs.forEach(song => event.target.checked ? youtubePicked.add(song.id) : youtubePicked.delete(song.id));
+    renderYoutubeResults();
+  }
+});
 
 // ---- Tags against the audio: the library tag check ----
 // Its line, found and fixed counts, and a Pause that becomes Start while it is paused.

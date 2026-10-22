@@ -2704,6 +2704,17 @@
               <button class="btn btn-ghost" type="button" id="youtube-check-pause" hidden><span>Pause</span></button>
               <button class="btn btn-ghost" type="button" id="youtube-check-start"><span>Check</span></button>
             </div>
+            <div class="set-row stack" id="youtube-results" hidden>
+              <div class="set-info">
+                <div class="set-info-t">Songs to look at</div>
+                <div class="set-info-d" id="youtube-results-summary">The songs that sounded like another song, worst first.</div>
+                <div class="set-info-more">The percentage is how much of the song's sound differs from the YouTube preview it was held against: the right song measured under about 20 %, another song over about 38 %. "Preview not verified" means the video did not have the song's title, artist and length, so it may be the preview that is wrong. Open the reference to hear it. Replace looks for the right file through Wrong song and puts the old one in Recently removed; a song anyone starred or rated is left out. Keep and Dismiss change no file.</div>
+              </div>
+              <div class="version-filters" id="youtube-results-filters" role="group" aria-label="Show"></div>
+              <div id="youtube-results-bar"></div>
+              <div class="dl-list health-songs" id="youtube-results-list"></div>
+              <div id="youtube-results-more"></div>
+            </div>
             <details class="set-more">
               <summary>Playlist name and size</summary>
               <div class="set-row stack">

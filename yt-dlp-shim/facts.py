@@ -11,9 +11,10 @@ import re
 from typing import Optional
 from urllib.parse import parse_qs, urlsplit
 
-# One --print template for every run that selects the format: format id, size, container and
-# average bit rate in kbps, separated by bars. yt-dlp prints NA for a field it does not know.
-FORMAT_PRINT = "%(format_id)s|%(filesize)s|%(ext)s|%(abr)s"
+# One --print template for every run that selects the format: format id, size, container,
+# average bit rate in kbps and the time the URL may first be fetched, separated by bars. yt-dlp
+# prints NA for a field it does not know.
+FORMAT_PRINT = "%(format_id)s|%(filesize)s|%(ext)s|%(abr)s|%(available_at)s"
 
 # A YouTube video id: eleven letters, digits, dashes or underscores.
 _VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
@@ -50,16 +51,29 @@ def _kbps(value) -> Optional[int]:
 
 def is_format_line(line: str) -> bool:
     """Whether a line of yt-dlp output is the FORMAT_PRINT line."""
-    return line.count("|") == 3 and not line.startswith("http") and not line.startswith("{")
+    return line.count("|") in (3, 4) and not line.startswith("http") and not line.startswith("{")
 
 
 def parse_format_line(line: str) -> dict:
     """The FORMAT_PRINT line as {itag, size, ext, abr}; a field yt-dlp did not know is None."""
     parts = (line or "").strip().split("|")
-    if len(parts) != 4:
+    if len(parts) not in (4, 5):
         return {"itag": None, "size": None, "ext": None, "abr": None}
-    itag, size, ext, abr = parts
+    itag, size, ext, abr = parts[:4]
     return {"itag": _text(itag), "size": _size(size), "ext": _text(ext), "abr": _kbps(abr)}
+
+
+def available_at(line: Optional[str]) -> Optional[float]:
+    """The Unix time the FORMAT_PRINT line says its URL may first be fetched. googlevideo refuses
+    the URL with a 403 before then. None when the line does not say."""
+    parts = (line or "").strip().split("|")
+    if len(parts) != 5:
+        return None
+    try:
+        at = float(parts[4].strip())
+    except ValueError:
+        return None
+    return at if at > 0 else None
 
 
 def facts_from_url(url: Optional[str]) -> dict:

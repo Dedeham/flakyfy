@@ -75,6 +75,16 @@ _AUDIO_FORMAT = os.environ.get(
     "140/bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
 )
 
+# The YouTube player client asked for stream URLs. yt-dlp's own clients hand out URLs that
+# googlevideo refuses until 4 to 14 s after the resolve (their `available_at`); the visionos
+# client's are ready as the resolve ends. Empty uses yt-dlp's own choice. When this client gives
+# no URL but yt-dlp's own does, the client is left out for _PLAYER_CLIENT_REST_SEC.
+_PLAYER_CLIENT = os.environ.get("YTDLP_PLAYER_CLIENT", "visionos").strip()
+_PLAYER_CLIENT_REST_SEC = int(os.environ.get("YTDLP_PLAYER_CLIENT_REST_SEC", "1800"))
+# The longest a fetch waits for its URL's `available_at`. A URL further off than this is
+# fetched at the limit and left to the 403 path.
+_URL_READY_WAIT_MAX_SEC = float(os.environ.get("URL_READY_WAIT_MAX_SEC", "20"))
+
 # User-Agent sent to googlevideo when proxying bytes. Empty (the default) keeps
 # requests' own python-requests/x.y, i.e. existing behaviour. Signed URLs from
 # some player clients are refused for a mismatched UA, so this exists to test
@@ -171,6 +181,66 @@ def _url_cache_put(video_id: str, url: str):
         _URL_CACHE.move_to_end(video_id)
         while len(_URL_CACHE) > _URL_CACHE_MAX:
             _URL_CACHE.popitem(last=False)
+
+# When each resolved URL may first be fetched, from the run that printed it.
+_URL_READY_LOCK = threading.Lock()
+_URL_READY: "OrderedDict[str, float]" = OrderedDict()
+
+
+def _url_ready_put(url: str, at: Optional[float]):
+    if not url or at is None:
+        return
+    with _URL_READY_LOCK:
+        _URL_READY[url] = at
+        _URL_READY.move_to_end(url)
+        while len(_URL_READY) > _URL_CACHE_MAX:
+            _URL_READY.popitem(last=False)
+
+
+def _wait_until_ready(url: str, video_id: str):
+    """Sleep until the URL's `available_at`, at most _URL_READY_WAIT_MAX_SEC."""
+    with _URL_READY_LOCK:
+        at = _URL_READY.get(url)
+    if at is None:
+        return
+    wait = min(at - time.time(), _URL_READY_WAIT_MAX_SEC)
+    if wait > 0:
+        log.info("stream %s: waiting %.1fs for the URL to be ready", video_id, wait)
+        time.sleep(wait)
+
+
+def _keep_url(video_id: str, format_line: Optional[str], url: str):
+    """Cache a resolved URL with its format's facts and the time it may first be fetched."""
+    _url_cache_put(video_id, url)
+    _url_ready_put(url, stream_info.available_at(format_line))
+    _facts_put(video_id, stream_info.stream_facts(format_line, url))
+
+
+# Until when the player client is left out after it gave no URL where yt-dlp's own client did.
+_PLAYER_CLIENT_RESTING_UNTIL = 0.0
+
+
+def _client_args() -> list[str]:
+    """The --extractor-args that pick the player client, or none while it rests."""
+    if not _PLAYER_CLIENT or time.time() < _PLAYER_CLIENT_RESTING_UNTIL:
+        return []
+    return ["--extractor-args", f"youtube:player_client={_PLAYER_CLIENT}"]
+
+
+def _run_with_client(args: list[str], label: str, bg: bool, timeout: int = 15) -> Optional[str]:
+    """A format-selecting run with the player client, then with yt-dlp's own client when that
+    gives no URL. A video both clients fail on costs two runs and leaves the client in use."""
+    global _PLAYER_CLIENT_RESTING_UNTIL
+    client = _client_args()
+    out = _run([*client, *args], timeout=timeout, label=label, bg=bg)
+    if not client or (out and stream_info.split_run(out)[2]):
+        return out
+    fallback = _run(args, timeout=timeout, label=f"{label}-default", bg=bg)
+    if fallback and stream_info.split_run(fallback)[2]:
+        log.warning("player client %s gave no URL where yt-dlp's own did; leaving it out for %ds",
+                    _PLAYER_CLIENT, _PLAYER_CLIENT_REST_SEC)
+        _PLAYER_CLIENT_RESTING_UNTIL = time.time() + _PLAYER_CLIENT_REST_SEC
+    return fallback or out
 
 # What each video's stream is (itag, size, container, bit rate), learned in the same run that
 # picked its URL. A video's format and size do not change, so these outlive the URL itself.
@@ -376,7 +446,7 @@ def _payload_from(data: dict) -> dict:
 def _search_single(q: str, bg: bool = False) -> Optional[dict]:
     """No duration hint: fast path. One extraction yields metadata AND the
     stream URL, which we warm into the URL cache so /stream is a cache hit."""
-    out = _run(
+    out = _run_with_client(
         [
             f"ytsearch1:{q}",
             "-f", _AUDIO_FORMAT,
@@ -385,7 +455,6 @@ def _search_single(q: str, bg: bool = False) -> Optional[dict]:
             "--print", stream_info.FORMAT_PRINT,
             "--print", "%(urls)s",
         ],
-        timeout=15,
         label="search+resolve",
         bg=bg,
     )
@@ -405,8 +474,7 @@ def _search_single(q: str, bg: bool = False) -> Optional[dict]:
         # `yt-dlp -g` on a detached daemon thread; folding it in removes an
         # entire yt-dlp invocation per track and makes the warm /stream path a
         # deterministic cache hit instead of a gate-race.
-        _url_cache_put(payload["video_id"], stream_url)
-        _facts_put(payload["video_id"], stream_info.stream_facts(format_line, stream_url))
+        _keep_url(payload["video_id"], format_line, stream_url)
     return _with_facts(payload)
 
 
@@ -629,14 +697,13 @@ def _resolve_url(video_id: str, bg: bool = False) -> Optional[str]:
         if cached:
             return cached
         # The same URL `-g` printed, plus the picked format's facts from the same run.
-        out = _run(
+        out = _run_with_client(
             [
                 "-f", _AUDIO_FORMAT,
                 "--print", stream_info.FORMAT_PRINT,
                 "--print", "%(urls)s",
                 f"https://www.youtube.com/watch?v={video_id}",
             ],
-            timeout=15,
             label="resolve",
             bg=bg,
         )
@@ -644,8 +711,7 @@ def _resolve_url(video_id: str, bg: bool = False) -> Optional[str]:
             return None
         _, format_line, url = stream_info.split_run(out)
         if url:
-            _url_cache_put(video_id, url)
-            _facts_put(video_id, stream_info.stream_facts(format_line, url))
+            _keep_url(video_id, format_line, url)
         return url or None
     finally:
         # Only the thread that actually holds the lock may pop and release it.
@@ -815,6 +881,7 @@ def _maybe_measure_loudness(video_id: str, url: str) -> bool:
 
 
 def _open_upstream(url: str, headers: dict, video_id: str):
+    _wait_until_ready(url, video_id)
     try:
         return _SESSION.get(url, stream=True, timeout=(8, 30), headers=headers)
     except Exception as e:

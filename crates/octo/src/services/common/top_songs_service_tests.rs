@@ -9,6 +9,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use octo_core::soulseek::soulseek_metadata_service::SoulseekRouting;
 
 use super::*;
+use crate::services::charts::ListenerCharts;
 use crate::services::common::test_fakes::FakeMetadata;
 use crate::services::metadata::deezer_rate_limit_handler::DeezerRateLimitHandler;
 use crate::services::metadata::deezer_rate_limiter::DeezerRateLimiter;
@@ -38,6 +39,8 @@ struct Charts {
     _deezer: MockServer,
     deezer_routes: Routes,
     hints: Arc<ArtworkHints>,
+    listeners: Arc<ChartCountryStore>,
+    now: Arc<Mutex<DateTime<Utc>>>,
 }
 
 impl Charts {
@@ -74,6 +77,13 @@ impl Charts {
             ))
         });
         let hints = Arc::new(ArtworkHints::new());
+        let listeners = Arc::new(ChartCountryStore::new(None));
+        let now = Arc::new(Mutex::new(
+            DateTime::parse_from_rfc3339("2026-10-22T09:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        ));
+        let clock_now = Arc::clone(&now);
         let service = TopSongsService::new(
             deezer,
             last_fm,
@@ -82,14 +92,54 @@ impl Charts {
             Arc::new(AppleMusicPages::with_base_url(&apple.uri(), Duration::ZERO)),
             Arc::clone(&hints),
             settings,
-        );
+        )
+        .with_listeners(Arc::clone(&listeners))
+        .with_clock(Clock::new(move || *clock_now.lock()));
         Charts {
             service,
             apple,
             _deezer: deezer_server,
             deezer_routes,
             hints,
+            listeners,
+            now,
         }
+    }
+
+    fn choose(&self, user: &str, country: &str, pinned: &[&str]) {
+        self.listeners.set(
+            user,
+            ListenerCharts {
+                country: country.to_string(),
+                pinned: pinned.iter().map(|c| (*c).to_string()).collect(),
+            },
+        );
+    }
+
+    /// The US overall chart as another country's: the same songs, that country's storefront.
+    async fn overall_for(&self, country: &str) {
+        let body = fixture!("us_all").replace(
+            "\"storefront\":\"us\"",
+            &format!("\"storefront\":\"{country}\""),
+        );
+        self.serve(&format!("/{country}/new/top-charts/songs"), None, &body)
+            .await;
+        let genre = fixture!("us_18").replace(
+            "\"storefront\":\"us\"",
+            &format!("\"storefront\":\"{country}\""),
+        );
+        self.serve(&format!("/{country}/new/top-charts/songs/"), Some("18"), &genre)
+            .await;
+    }
+
+    async fn asked_for(&self, at: &str) -> usize {
+        self.apple
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path() == at)
+            .count()
     }
 
     async fn serve(&self, at: &str, genre: Option<&str>, body: &str) {
@@ -384,6 +434,169 @@ async fn a_fixed_country_is_asked_for() {
     assert_eq!(list.songs[0].song.title, "Raindance");
     let asked = charts.apple.received_requests().await.unwrap();
     assert!(asked.iter().all(|r| r.url.path().starts_with("/gb/")));
+}
+
+#[tokio::test]
+async fn a_listener_country_reads_that_country() {
+    let charts = Charts::new("us", None, None).await;
+    charts.us_pages().await;
+    charts.overall_for("br").await;
+    charts.choose("anna", "br", &[]);
+
+    let country = charts.service.country_of("anna").await;
+    let list = charts.service.chart_in(country, "34").await;
+
+    assert_eq!(list.country.as_deref(), Some("br"));
+    assert_eq!(list.songs[0].song.title, "Solar Eclipse");
+    assert!(charts.asked_for("/br/new/top-charts/songs").await >= 1);
+    assert_eq!(charts.service.country_of("bob").await.as_deref(), Some("us"));
+}
+
+#[tokio::test]
+async fn a_saved_country_apple_lacks_follows_the_server() {
+    let charts = Charts::new("us", None, None).await;
+    charts.choose("anna", "zz", &[]);
+
+    assert_eq!(charts.service.country_of("anna").await.as_deref(), Some("us"));
+}
+
+#[tokio::test]
+async fn two_listeners_on_one_country_share_one_fetch() {
+    let charts = Charts::new("us", None, None).await;
+    charts.overall_for("br").await;
+    charts.choose("anna", "br", &[]);
+    charts.choose("bob", "br", &["jp"]);
+    charts.service.learn_in(Some("br".into())).await;
+
+    let (anna, bob) = (
+        charts.service.country_of("anna").await,
+        charts.service.country_of("bob").await,
+    );
+    let (a, b) = tokio::join!(
+        charts.service.chart_in(anna, "18"),
+        charts.service.chart_in(bob, "18")
+    );
+
+    assert_eq!(a.songs[0].song.title, "Janice STFU");
+    assert_eq!(a.songs.len(), b.songs.len());
+    assert_eq!(charts.asked_for("/br/new/top-charts/songs/").await, 1);
+}
+
+#[tokio::test]
+async fn no_deezer_stand_in_for_another_country() {
+    let charts = Charts::new("us", Some(DEEZER_CHART), None).await;
+    charts.apple_down().await;
+
+    let japan = charts.service.chart_in(Some("jp".into()), "34").await;
+
+    assert!(japan.songs.is_empty());
+    assert_eq!(japan.source, "");
+    assert_eq!(charts.deezer_routes.calls("/chart/0/tracks"), 0);
+    let fetch = charts
+        .service
+        .fetches()
+        .into_iter()
+        .find(|f| f.asked.as_deref() == Some("jp"))
+        .unwrap();
+    assert!(fetch.error.is_some());
+
+    let home = charts.service.chart("34").await;
+    assert_eq!(home.source, "deezer");
+    assert_eq!(charts.service.fetches().len(), 2, "one fetch per country");
+}
+
+#[tokio::test]
+async fn menus_are_learned_per_country() {
+    let charts = Charts::new("us", None, None).await;
+    charts.us_pages().await;
+    charts
+        .serve("/jp/new/top-charts/songs", None, fixture!("jp_all"))
+        .await;
+
+    // Both start learning behind the answer; one country's learning does not hold up the other's.
+    charts.service.menu_in(Some("jp".into())).await;
+    charts.service.menu_in(Some("us".into())).await;
+    let menus = &charts.service.inner.menus;
+    for _ in 0..100 {
+        if menus.get("jp").is_some() && menus.get("us").is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let (_, japan) = charts.service.menu_in(Some("jp".into())).await;
+    let (_, home) = charts.service.menu().await;
+    assert!(japan.iter().any(|g| g.id == "27"), "J-Pop is Japan's");
+    assert!(!home.iter().any(|g| g.id == "27"));
+    assert!(home.iter().any(|g| g.id == "18"));
+}
+
+/// Twelve countries besides `us`, the server's, and those `skip` names.
+fn others(skip: &[&str]) -> Vec<&'static str> {
+    chart_settings::APPLE_COUNTRIES
+        .iter()
+        .copied()
+        .filter(|c| *c != "us" && !skip.contains(c))
+        .take(OTHER_COUNTRIES_PER_HOUR)
+        .collect()
+}
+
+#[tokio::test]
+async fn the_thirteenth_other_country_in_an_hour_is_refused() {
+    let charts = Charts::new("us", None, None).await;
+    for code in others(&["jp"]) {
+        assert!(charts.service.may_read("anna", code, "34"), "{code}");
+    }
+
+    assert!(!charts.service.may_read("anna", "jp", "34"));
+    assert!(!charts.service.may_choose("anna", "jp"));
+    assert!(
+        charts.service.may_read("anna", others(&[])[0], "18"),
+        "a country read this hour is counted once"
+    );
+    assert!(charts.service.may_read("bob", "jp", "34"), "the hour is per listener");
+}
+
+#[tokio::test]
+async fn a_held_chart_is_never_refused() {
+    let charts = Charts::new("us", None, None).await;
+    charts
+        .serve("/jp/new/top-charts/songs", None, fixture!("jp_all"))
+        .await;
+    charts.service.chart_in(Some("jp".into()), "34").await;
+    for code in others(&["jp"]) {
+        charts.service.may_read("anna", code, "34");
+    }
+
+    assert!(charts.service.may_read("anna", "JP", "34"));
+    assert!(!charts.service.may_read("anna", "jp", "18"));
+}
+
+#[tokio::test]
+async fn own_pinned_and_server_countries_are_never_counted() {
+    let charts = Charts::new("us", None, None).await;
+    charts.choose("anna", "br", &["jp", "kr"]);
+    for code in others(&["br", "jp", "kr"]) {
+        charts.service.may_read("anna", code, "34");
+    }
+
+    for code in ["br", "jp", "kr", "us"] {
+        assert!(charts.service.may_read("anna", code, "34"), "{code}");
+    }
+    assert!(!charts.service.may_read("anna", "de", "34"));
+}
+
+#[tokio::test]
+async fn the_hour_frees_up() {
+    let charts = Charts::new("us", None, None).await;
+    for code in others(&["jp"]) {
+        charts.service.may_read("anna", code, "34");
+    }
+    assert!(!charts.service.may_read("anna", "jp", "34"));
+
+    *charts.now.lock() += TimeDelta::minutes(61);
+
+    assert!(charts.service.may_read("anna", "jp", "34"));
 }
 
 #[tokio::test]

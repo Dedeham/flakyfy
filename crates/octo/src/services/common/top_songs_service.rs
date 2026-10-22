@@ -9,18 +9,18 @@
 //!   - The charts are Apple Music's (`AppleMusicPages`): current, per country, per genre, and
 //!     each row carries its album, length, explicit badge and artwork, so a row costs no
 //!     further lookup. Best New Songs and Trending Songs are the New page's song rooms.
-//!   - When Apple's page cannot be read, Popular right now is Deezer's chart, then Last.fm's.
-//!     The genre charts and the rooms have no stand-in: they keep their last list.
+//!   - When Apple's page cannot be read, Popular right now is Deezer's chart, then Last.fm's,
+//!     for the server's own country only (neither knows another country's chart). The genre
+//!     charts, the rooms and other countries' lists have no stand-in: they keep their last list.
 //!   - An artist's ranking is Last.fm's play counts when a key is set, each row dressed by
 //!     Deezer's own top list; without a key, Deezer's list is the ranking.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::charts::apple_pages::{ChartGenre, RoomKind};
 use octo_core::charts::chart_settings::{
     self, ChartCountry, ChartKind, OVERALL, english_menu, genre_name, kind, max_songs, playlist_name,
@@ -30,7 +30,7 @@ use octo_core::charts::top_songs::{
     library_query, merge, one_row_per_library_song,
 };
 use octo_core::common::dotnet::is_blank;
-use octo_core::common::{SongIdentity, skipped_takes};
+use octo_core::common::{Clock, SongIdentity, skipped_takes};
 use octo_core::models::domain::Song;
 use octo_core::settings::SettingsStore;
 use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
@@ -39,6 +39,7 @@ use serde_json::Value;
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
+use crate::services::charts::ChartCountryStore;
 use crate::services::charts::apple_music_pages::{AppleMusicPages, PageError};
 use crate::services::cover_art::ArtworkHints;
 use crate::services::framework::{InFlight, MemoryCache};
@@ -69,6 +70,11 @@ pub const LIBRARY_SEARCHES_AT_ONCE: usize = 4;
 
 /// How often a failing Apple list is warned about.
 const WARN_EVERY: Duration = Duration::from_secs(60 * 60);
+
+/// New countries one listener may have read for them in an hour, besides their own, their
+/// pinned ones and the server's.
+pub const OTHER_COUNTRIES_PER_HOUR: usize = 12;
+const OTHER_COUNTRIES_WINDOW: TimeDelta = TimeDelta::hours(1);
 
 /// One ranked song. Plays and listeners are Last.fm's, when it gave them.
 #[derive(Debug, Clone, Default)]
@@ -101,7 +107,10 @@ pub struct TopList {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChartFetch {
     pub chart: String,
+    /// The country Apple's page was for.
     pub country: Option<String>,
+    /// The country it was read for, None for Apple's own pick.
+    pub asked: Option<String>,
     pub source: String,
     pub songs: usize,
     pub fetched_utc: DateTime<Utc>,
@@ -125,11 +134,17 @@ struct Inner {
     settings: Arc<SettingsStore>,
     cache: MemoryCache<Arc<TopList>>,
     menus: MemoryCache<Arc<Vec<ChartGenre>>>,
-    /// Whether a [`TopSongsService::learn`] started by a request is going.
-    learning: AtomicBool,
+    /// The countries (`auto` for the server's own) whose [`TopSongsService::learn_in`] started
+    /// by a request is going.
+    learning: Mutex<HashSet<String>>,
     builds: InFlight<(Arc<TopList>, bool)>,
     fetches: Mutex<HashMap<String, ChartFetch>>,
     warned: Mutex<HashMap<String, Instant>>,
+    /// Each listener's own and pinned chart countries.
+    listeners: Arc<ChartCountryStore>,
+    /// Per listener, the other countries read for them in the last hour, and when.
+    others_read: Mutex<HashMap<String, Vec<(String, DateTime<Utc>)>>>,
+    clock: Clock,
 }
 
 /// What a chart build came back with: the list, whether every source answered, and why not.
@@ -161,12 +176,36 @@ impl TopSongsService {
                 settings,
                 cache: MemoryCache::new(512),
                 menus: MemoryCache::new(64),
-                learning: AtomicBool::new(false),
+                learning: Mutex::new(HashSet::new()),
                 builds: InFlight::new(),
                 fetches: Mutex::new(HashMap::new()),
                 warned: Mutex::new(HashMap::new()),
+                listeners: Arc::new(ChartCountryStore::new(None)),
+                others_read: Mutex::new(HashMap::new()),
+                clock: Clock::system(),
             }),
         }
+    }
+
+    /// The service with each listener's chart countries. Call it before the service is cloned.
+    pub fn with_listeners(mut self, store: Arc<ChartCountryStore>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.listeners = store;
+        }
+        self
+    }
+
+    /// The service reading the time from `clock`. Call it before the service is cloned.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.clock = clock;
+        }
+        self
+    }
+
+    /// Each listener's own and pinned chart countries.
+    pub fn listeners(&self) -> &Arc<ChartCountryStore> {
+        &self.inner.listeners
     }
 
     /// The pages this reads Apple Music through, for the dashboard's country list.
@@ -276,39 +315,121 @@ impl TopSongsService {
     /// the server in. Never waits on Apple: while Automatic has not learned the country yet this
     /// is None (Apple's own redirect picks it) and the learning starts behind the answer.
     pub async fn country(&self) -> Option<String> {
+        self.server_country()
+    }
+
+    fn server_country(&self) -> Option<String> {
         match self.inner.settings.current().generated_playlists.chart_country() {
             ChartCountry::Fixed(code) => Some(code),
             ChartCountry::Auto => {
                 let known = self.inner.apple.known_country();
                 if known.is_none() {
-                    self.learn_behind();
+                    self.learn_behind(None);
                 }
                 known
             }
         }
     }
 
-    /// The country's genre menu, "All Genres" first, as Apple lists it; Octo's English list
-    /// while Apple's is not known yet (learned behind the answer, never waited on).
+    /// A listener's chart country: their own choice while Apple Music has it, else the server's
+    /// (see [`Self::country`]).
+    pub async fn country_of(&self, user: &str) -> Option<String> {
+        let own = self.inner.listeners.get(user).country;
+        if own.is_empty() || !self.has_country(&own) {
+            self.country().await
+        } else {
+            Some(own)
+        }
+    }
+
+    /// Whether Apple Music has this country (its country switcher's list).
+    pub fn has_country(&self, code: &str) -> bool {
+        let code = code.trim().to_ascii_lowercase();
+        self.inner.apple.countries().iter().any(|c| *c == code)
+    }
+
+    /// Whether a chart of `country` may be read for this listener now. Their own country, their
+    /// pinned ones, the server's and a chart already held always may; any other country counts
+    /// once an hour against [`OTHER_COUNTRIES_PER_HOUR`], so no one listener fills Apple's queue.
+    pub fn may_read(&self, user: &str, country: &str, chart: &str) -> bool {
+        let code = country.trim().to_ascii_lowercase();
+        let held = self.inner.cache.get(&chart_key(Some(code.as_str()), chart)).is_some();
+        self.spend_other_country(user, &code, held)
+    }
+
+    /// Whether this listener may choose `country` as their own or pin it now: a new country
+    /// counts against the same hour as [`Self::may_read`].
+    pub fn may_choose(&self, user: &str, country: &str) -> bool {
+        self.spend_other_country(user, country, false)
+    }
+
+    fn spend_other_country(&self, user: &str, country: &str, free: bool) -> bool {
+        let user = user.trim().to_lowercase();
+        let country = country.trim().to_ascii_lowercase();
+        let mine = self.inner.listeners.get(&user);
+        if free
+            || mine.country == country
+            || mine.pinned.contains(&country)
+            || self.server_country().as_deref() == Some(country.as_str())
+        {
+            return true;
+        }
+        let now = self.inner.clock.now();
+        let mut read = self.inner.others_read.lock();
+        for countries in read.values_mut() {
+            countries.retain(|(_, at)| now - *at < OTHER_COUNTRIES_WINDOW);
+        }
+        read.retain(|_, countries| !countries.is_empty());
+        let countries = read.entry(user.clone()).or_default();
+        if countries.iter().any(|(c, _)| *c == country) {
+            return true;
+        }
+        if countries.len() >= OTHER_COUNTRIES_PER_HOUR {
+            info!(
+                "Charts for {user}: {country} refused, {} other countries read in the last hour",
+                countries.len()
+            );
+            return false;
+        }
+        countries.push((country, now));
+        true
+    }
+
+    /// The server's genre menu (see [`Self::menu_in`]).
     pub async fn menu(&self) -> (Option<String>, Arc<Vec<ChartGenre>>) {
-        let country = self.country().await;
+        self.menu_in(self.country().await).await
+    }
+
+    /// A country's genre menu, "All Genres" first, as Apple lists it; Octo's English list
+    /// while Apple's is not known yet (learned behind the answer, never waited on). None is the
+    /// country Apple's own redirect picks.
+    pub async fn menu_in(&self, country: Option<String>) -> (Option<String>, Arc<Vec<ChartGenre>>) {
         let Some(code) = country.clone() else {
             return (None, Arc::new(english_menu()));
         };
         if let Some(menu) = self.inner.menus.get(&code) {
             return (country, menu);
         }
-        self.learn_behind();
+        self.learn_behind(Some(code));
         (country, Arc::new(english_menu()))
     }
 
-    /// Learns the country (when Automatic) and its genre menu from Apple, waiting for them: for
-    /// the warm worker and tests, never a request. What cannot be learned stays unknown, so the
-    /// English menu and Apple's redirect go on serving.
+    /// [`Self::learn_in`] for the server's own country.
     pub async fn learn(&self) -> (Option<String>, Arc<Vec<ChartGenre>>) {
-        let country = match self.inner.settings.current().generated_playlists.chart_country() {
-            ChartCountry::Fixed(code) => Some(code),
-            ChartCountry::Auto => self.inner.apple.detected_country().await,
+        self.learn_in(None).await
+    }
+
+    /// Learns a country's genre menu from Apple, waiting for it: for the warm worker and tests,
+    /// never a request. None is the server's own country, itself learned first when Automatic.
+    /// What cannot be learned stays unknown, so the English menu and Apple's redirect go on
+    /// serving.
+    pub async fn learn_in(&self, country: Option<String>) -> (Option<String>, Arc<Vec<ChartGenre>>) {
+        let country = match country {
+            Some(code) => Some(code),
+            None => match self.inner.settings.current().generated_playlists.chart_country() {
+                ChartCountry::Fixed(code) => Some(code),
+                ChartCountry::Auto => self.inner.apple.detected_country().await,
+            },
         };
         let Some(code) = country.clone() else {
             return (None, Arc::new(english_menu()));
@@ -326,16 +447,17 @@ impl TopSongsService {
         }
     }
 
-    /// [`Self::learn`] in the background, one at a time; Apple's own memo of what failed keeps a
-    /// server that cannot reach it from asking again for a while.
-    fn learn_behind(&self) {
-        if self.inner.learning.swap(true, Ordering::AcqRel) {
+    /// [`Self::learn_in`] in the background, one at a time per country; Apple's own memo of what
+    /// failed keeps a server that cannot reach it from asking again for a while.
+    fn learn_behind(&self, country: Option<String>) {
+        let key = country.clone().unwrap_or_else(|| "auto".into());
+        if !self.inner.learning.lock().insert(key.clone()) {
             return;
         }
         let this = self.clone();
         tokio::spawn(async move {
-            this.learn().await;
-            this.inner.learning.store(false, Ordering::Release);
+            this.learn_in(country).await;
+            this.inner.learning.lock().remove(&key);
         });
     }
 
@@ -351,19 +473,31 @@ impl TopSongsService {
         Some((playlist_name(id, &label), label))
     }
 
-    /// The list a chart already holds for the current country, without building it.
+    /// The list a chart already holds for the server's country, without building it.
     pub async fn peek_chart(&self, id: &str) -> Option<Arc<TopList>> {
-        let country = self.country().await;
+        self.peek_chart_in(self.country().await, id).await
+    }
+
+    /// The list a chart already holds for a country, without building it.
+    pub async fn peek_chart_in(&self, country: Option<String>, id: &str) -> Option<Arc<TopList>> {
         self.inner.cache.get(&chart_key(country.as_deref(), id))
     }
 
-    /// A chart: `34` (Popular right now), `new`, `trending` or a genre id. Empty for an id that is
-    /// no chart, or a genre the country does not have, without asking anyone.
+    /// A chart for the server's country (see [`Self::chart_in`]).
     pub async fn chart(&self, id: &str) -> Arc<TopList> {
+        self.chart_in(self.country().await, id).await
+    }
+
+    /// A chart for a country: `34` (Popular right now), `new`, `trending` or a genre id. Empty
+    /// for an id that is no chart, or a genre the country does not have, without asking anyone.
+    /// Every listener of one country shares one list.
+    pub async fn chart_in(&self, country: Option<String>, id: &str) -> Arc<TopList> {
         let Some(chart_kind) = kind(id) else {
             return Arc::default();
         };
-        let (country, menu) = self.menu().await;
+        // The stand-ins for Popular right now know only the server's own region.
+        let backup = country == self.country().await;
+        let (country, menu) = self.menu_in(country).await;
         if chart_kind == ChartKind::Genre && !menu.iter().any(|g| g.id == id) {
             return Arc::default();
         }
@@ -375,7 +509,9 @@ impl TopSongsService {
         let id_owned = id.to_string();
         self.cached(key, CHART_TTL, CHART_BUILD_TIMEOUT, async move {
             let started = Instant::now();
-            let built = this.build_chart(&id_owned, chart_kind, country.clone()).await;
+            let built = this
+                .build_chart(&id_owned, chart_kind, country.clone(), backup)
+                .await;
             let Built {
                 mut list,
                 whole,
@@ -384,7 +520,7 @@ impl TopSongsService {
             list.chart = Some(id_owned.clone());
             list.name = Some(name);
             list.country = list.country.or(country.clone());
-            this.record(&id_owned, &list, error.as_deref());
+            this.record(&id_owned, country.as_deref(), &list, error.as_deref());
             info!(
                 "Chart {id_owned} for {}: {} songs from {} in {} ms",
                 list.country.as_deref().unwrap_or("the server's country"),
@@ -401,7 +537,13 @@ impl TopSongsService {
         .await
     }
 
-    async fn build_chart(&self, id: &str, chart_kind: ChartKind, country: Option<String>) -> Built {
+    async fn build_chart(
+        &self,
+        id: &str,
+        chart_kind: ChartKind,
+        country: Option<String>,
+        backup: bool,
+    ) -> Built {
         let max = max_songs(id);
         let apple = match chart_kind {
             ChartKind::Overall | ChartKind::Genre => self
@@ -454,8 +596,8 @@ impl TopSongsService {
             }
             Err(error) => {
                 let why = error.describe();
-                self.warn_once(id, &why);
-                if chart_kind != ChartKind::Overall {
+                self.warn_once(id, country.as_deref(), &why);
+                if chart_kind != ChartKind::Overall || !backup {
                     return Built {
                         list: TopList::default(),
                         whole: false,
@@ -511,30 +653,36 @@ impl TopSongsService {
         self.inner.fetches.lock().values().cloned().collect()
     }
 
-    fn record(&self, id: &str, list: &TopList, error: Option<&str>) {
+    fn record(&self, id: &str, asked: Option<&str>, list: &TopList, error: Option<&str>) {
         let fetch = ChartFetch {
             chart: id.to_string(),
             country: list.country.clone(),
+            asked: asked.map(str::to_string),
             source: list.source.clone(),
             songs: list.songs.len(),
             fetched_utc: Utc::now(),
             error: error.map(str::to_string),
             room_id: list.room_id.clone(),
         };
-        self.inner.fetches.lock().insert(id.to_string(), fetch);
+        self.inner.fetches.lock().insert(chart_key(asked, id), fetch);
     }
 
-    fn warn_once(&self, id: &str, why: &str) {
+    fn warn_once(&self, id: &str, country: Option<&str>, why: &str) {
         let now = Instant::now();
+        let key = chart_key(country, id);
         let mut warned = self.inner.warned.lock();
         let due = warned
-            .get(id)
+            .get(&key)
             .is_none_or(|at| now.duration_since(*at) >= WARN_EVERY);
+        let chart = match country {
+            Some(code) => format!("{id} for {code}"),
+            None => id.to_string(),
+        };
         if due {
-            warned.insert(id.to_string(), now);
-            warn!("Chart {id}: {why}");
+            warned.insert(key, now);
+            warn!("Chart {chart}: {why}");
         } else {
-            debug!("Chart {id}: {why}");
+            debug!("Chart {chart}: {why}");
         }
     }
 

@@ -1334,3 +1334,26 @@ async fn an_octo_app_play_served_its_lossless_copy_keeps_it_on_the_next_range() 
     assert_eq!(later.body.as_ref(), [6]);
     assert!(downloads.stream_calls().is_empty(), "never the preview");
 }
+
+#[test]
+fn a_pinned_chart_cover_says_its_country() {
+    use super::media::chart_cover_words;
+    assert_eq!(
+        chart_cover_words("34", Some("jp"), "Popular right now · Japan").as_deref(),
+        Some("Popular · Japan")
+    );
+    assert_eq!(
+        chart_cover_words("34", Some("ae"), "Popular right now · United Arab Emirates").as_deref(),
+        Some("Popular · United Arab Emirates")
+    );
+    assert_eq!(
+        chart_cover_words("15", Some("jp"), "Top R&B/Soul · Japan").as_deref(),
+        Some("Top R&B/Soul · Japan")
+    );
+    // The listener's own lists say what they always said.
+    assert_eq!(
+        chart_cover_words("34", None, "Popular right now").as_deref(),
+        Some("Popular")
+    );
+    assert_eq!(chart_cover_words("18", None, "Top Hip-Hop/Rap"), None);
+}

@@ -197,12 +197,19 @@ pub(crate) fn chart_playlist_fields(
     };
     let mut fields = builder.generated_playlist_fields(list, &wide);
     fields.insert("songCount".into(), list.pool_size.into());
-    let chart = chart_settings::chart_from_key(&list.key).unwrap_or_default();
+    let (chart, pinned) = chart_settings::list_from_key(&list.key).unwrap_or_default();
     let kind = chart_settings::kind_word(&chart).unwrap_or("overall");
-    let genre = list.name.strip_prefix("Top ").unwrap_or(&list.name);
-    fields.insert("comment".into(), chart_playlist_comment(kind, genre).into());
+    let mut genre = list.name.strip_prefix("Top ").unwrap_or(&list.name);
+    if pinned.is_some() {
+        genre = genre.rsplit_once(" · ").map_or(genre, |(name, _)| name);
+    }
+    let country = pinned.as_deref().map(chart_settings::country_name);
+    fields.insert(
+        "comment".into(),
+        chart_playlist_comment(kind, genre, country.as_deref()).into(),
+    );
     // octoCoverTitle: the words the Octo apps put on the list's cover in place of its name.
-    if let Some(title) = super::media::chart_cover_title(&chart) {
+    if let Some(title) = super::media::chart_cover_words(&chart, pinned.as_deref(), &list.name) {
         fields.insert("octoCoverTitle".into(), title.into());
     }
     fields

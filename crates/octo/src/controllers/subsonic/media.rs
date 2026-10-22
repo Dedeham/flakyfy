@@ -970,7 +970,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 async move { Ok(seeds) }.boxed()
             })),
             song_count,
-            cover_title: chart_cover_title(&chart.chart).map(str::to_string),
+            cover_title: chart_cover_words(&chart.chart, chart.country.as_deref(), &chart.name),
             glyph: None,
         };
         let bytes = state
@@ -1232,6 +1232,19 @@ pub(crate) fn chart_cover_title(chart: &str) -> Option<&'static str> {
         Some(octo_core::charts::chart_settings::ChartKind::Overall)
     )
     .then_some(octo_core::charts::chart_settings::OVERALL_COVER_TITLE)
+}
+
+/// The words a chart list's cover shows in place of its name, when they differ: Popular right
+/// now says "Popular", and a pinned country's list adds its country ("Popular · Japan", or the
+/// list's own name, "Top Pop · Japan"). The server's covers and the Octo apps' say the same.
+pub(crate) fn chart_cover_words(chart: &str, pinned: Option<&str>, name: &str) -> Option<String> {
+    match pinned {
+        None => chart_cover_title(chart).map(str::to_string),
+        Some(country) => Some(match chart_cover_title(chart) {
+            Some(words) => octo_core::charts::chart_settings::pinned_name(words, country),
+            None => name.to_string(),
+        }),
+    }
 }
 
 /// The size a client asked a cover at, if it asked.

@@ -639,6 +639,17 @@ Fixes are written in place and can be undone. Stray spaces in titles and albums 
 the check itself when library actions may change files. Needs the AcoustID key; its place is kept
 in `identity-sweep.json` beside the settings, so a restart carries on where it was.
 
+"Check every song against YouTube" (Library actions, Review) compares each song already in the
+library with its YouTube preview, once, the way a new download is compared when AcoustID cannot
+place it. Songs downloaded before that check, or kept from before Octo, never had it. A song that
+sounds nothing like a preview whose title, artist and length are the song's becomes a Review
+question; one that may be another version, or has no preview, is left alone. Nothing is changed or
+removed. It goes `LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR` (default 30, 0 is off) songs an hour, one
+at a time and only while nothing is downloading, pauses while 50 library questions wait in Review,
+and rests an hour when the shim stops answering. It needs library actions and Review on and
+someone on the allowed list to ask. Where it is is kept in `youtube-check.json` beside the
+settings, so a restart carries on; pressing the button again starts over.
+
 `LIBRARY_ACTIONS_DUPLICATES` adds a Duplicates playlist per allowed user: recordings the
 library holds more than once, side by side, the copy worth keeping first (lossless before
 lossy, then the higher bitrate). Two files are copies only when they carry the same

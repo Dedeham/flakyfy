@@ -51,6 +51,7 @@ use super::soulseek_client::{SoulseekClient, SoulseekClientError};
 use super::soulseek_link::ISoulseekLink;
 use super::soulseek_metadata_service::SoulseekMetadataService;
 use crate::services::common::acquisition_tracker::acquisition_event_kinds;
+use crate::services::common::base_download_service::AheadBusy;
 use crate::services::common::download_picks::{LIDARR_SOURCE, SOULSEEK_SOURCE};
 use crate::services::common::{
     AcquisitionState, BaseDownloadService, DownloadBackend, DownloadCore, DownloadServices,
@@ -1220,11 +1221,18 @@ impl SoulseekDownloadService {
         });
         self.sweep_job_folders(base);
 
+        // A download ahead leaves a file an album walk queued to the walk, which keeps the song in
+        // the library.
+        if download.ahead && self.prepared.lock().contains_key(&track_key) {
+            return Err(AheadBusy.into());
+        }
         // A copy picked in Find songs is the only one tried: no search, and no other peer after it.
+        // A download ahead leaves the pick to the download it was made for.
         let picked = base
             .services()
             .picks
             .as_ref()
+            .filter(|_| !download.ahead)
             .and_then(|picks| picks.take(&track_key, SOULSEEK_SOURCE))
             .and_then(|pick| pick.to_hit());
         let remembers = self.verification.remembers_rejections();

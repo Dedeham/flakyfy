@@ -334,6 +334,8 @@ fn is_flac_path(path: &str) -> bool {
 struct RunningWalk {
     source: Option<DownloadSource>,
     requested_by: Option<Vec<String>>,
+    /// The track the walk leaves out, or empty for none.
+    exclude: String,
     answer: watch::Receiver<Option<bool>>,
 }
 
@@ -1540,7 +1542,8 @@ impl BaseDownloadService {
     }
 
     /// One walk of an album at a time. A request that comes while one runs for the same source and
-    /// the same people answers what that walk answers, and starts no walk of its own. Any other
+    /// the same people, and that walks every track that walk walks, answers what that walk answers,
+    /// and starts no walk of its own. Any other
     /// request waits for that walk to end and then walks the album itself: its own source may find
     /// what the running one could not, and its own people decide what it may upgrade.
     async fn walk_album(
@@ -1557,7 +1560,9 @@ impl BaseDownloadService {
                 let mut walks = self.album_walks.lock();
                 match walks.get(album_external_id) {
                     Some(running) => Err((
-                        running.source == source_override && running.requested_by == requested_by,
+                        running.source == source_override
+                            && running.requested_by == requested_by
+                            && (running.exclude.is_empty() || running.exclude == exclude_track_external_id),
                         running.answer.clone(),
                     )),
                     None => {
@@ -1567,6 +1572,7 @@ impl BaseDownloadService {
                             RunningWalk {
                                 source: source_override,
                                 requested_by: requested_by.clone(),
+                                exclude: exclude_track_external_id.to_string(),
                                 answer: running,
                             },
                         );

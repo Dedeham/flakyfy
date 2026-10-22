@@ -299,6 +299,8 @@
       rangeSeg.querySelectorAll('button[data-days]').forEach((b) => { b.hidden = !allowed.includes(Number(b.dataset.days)); });
       if (allowed.includes(state.days)) return false;
       state.days = allowed[allowed.length - 1];
+      // The saved range follows, so the next visit asks for one the server keeps.
+      storeRange(state.days);
       rangeSeg.querySelectorAll('button[data-days]').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.days) === state.days)));
       return true;
     }

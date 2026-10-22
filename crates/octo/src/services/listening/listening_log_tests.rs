@@ -577,7 +577,13 @@ fn an_app_that_runs_on_one_platform_names_it() {
     for app in ["DSub", "Ultrasonic", "Symfonium", "Tempo", "Tempus", "subtracks"] {
         assert_eq!(platform_of("okhttp/4.12.0", app), "android", "{app}");
     }
-    assert_eq!(platform_of("CFNetwork/1490 Darwin/23.2.0", ""), "iphone");
+    // A bare Apple networking agent with no app name could be a Mac app too.
+    assert_eq!(platform_of("CFNetwork/1490 Darwin/23.2.0", ""), UNKNOWN_PLATFORM);
+    // An iPhone app's Mac build says so in its agent.
+    assert_eq!(
+        platform_of("Amperfy/1.4 (Macintosh; Mac OS X 15.1) CFNetwork/1568", "Amperfy"),
+        "macos"
+    );
     // The app's own name wins over a User-Agent that says otherwise.
     assert_eq!(
         platform_of("Mozilla/5.0 (X11; Linux x86_64)", "Symfonium"),

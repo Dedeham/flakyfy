@@ -128,14 +128,16 @@ struct HeartLine {
     at: DateTime<Utc>,
 }
 
-/// The platform a play came from: the app's name when it says, then the User-Agent's own words
-/// in its parentheses (`Octo/1.9.0 (Android)` is android; Android is checked before Linux, since
-/// Android's own agents name both), then Apple's networking stack, which only iPhone and iPad
-/// apps send bare.
+/// The platform a play came from: the app's name when it says (an iPhone app's Mac build names
+/// the Mac in its agent), then the User-Agent's own words in its parentheses
+/// (`Octo/1.9.0 (Android)` is android; Android is checked before Linux, since Android's own agents
+/// name both).
 pub fn platform_of(user_agent: &str, client: &str) -> &'static str {
     let app = client.trim().to_ascii_lowercase();
+    let lower = user_agent.to_ascii_lowercase();
+    let on_a_mac = lower.contains("macintosh") || lower.contains("mac os") || lower.contains("macos");
     if IPHONE_APPS.iter().any(|name| app.starts_with(name)) {
-        return "iphone";
+        return if on_a_mac { "macos" } else { "iphone" };
     }
     if ANDROID_APPS.iter().any(|name| app.starts_with(name)) {
         return "android";
@@ -155,8 +157,6 @@ pub fn platform_of(user_agent: &str, client: &str) -> &'static str {
         "macos"
     } else if inside.contains("linux") {
         "linux"
-    } else if user_agent.contains("CFNetwork") || user_agent.contains("Darwin") {
-        "iphone"
     } else {
         UNKNOWN_PLATFORM
     }

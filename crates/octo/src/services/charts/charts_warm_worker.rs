@@ -1,8 +1,9 @@
-//! Fetches every chart list that is on, so a listener's app finds them on its first look after a
-//! start and at each new period: Symfonium and the like list playlists rarely, and a chart that
-//! takes a few seconds to arrive would otherwise be missing until the next time they look.
-//! Only the shared charts are fetched here; each listener's own library match is still made in
-//! their own request, with their own sign-in.
+//! Fetches every chart list that is on, for the server's country and every country a listener
+//! chose as their own or pinned, so a listener's app finds them on its first look after a start
+//! and at each new period: Symfonium and the like list playlists rarely, and a chart that takes a
+//! few seconds to arrive would otherwise be missing until the next time they look. Only the
+//! shared charts are fetched here; each listener's own library match is still made in their own
+//! request, with their own sign-in.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,8 +38,9 @@ impl ChartsWarmWorker {
         }
     }
 
-    /// Fetches every list that is on, Popular right now first. A genre the country lacks answers
-    /// at once without asking anyone (`TopSongsService::chart`).
+    /// Fetches every list that is on, Popular right now first, for the server's country and then
+    /// each country listeners chose. A genre a country lacks answers at once without asking
+    /// anyone (`TopSongsService::chart_in`).
     pub async fn warm_once(&self) -> usize {
         let on = self.playlists.lists_on();
         if on.is_empty() {
@@ -52,7 +54,27 @@ impl ChartsWarmWorker {
                 fetched += 1;
             }
         }
-        debug!("chart lists warmed: {fetched} of {}", on.len());
+        let server = self.top_songs.country().await;
+        let mut asked = on.len();
+        for country in self.top_songs.listeners().countries() {
+            if Some(&country) == server.as_ref() || !self.top_songs.has_country(&country) {
+                continue;
+            }
+            self.top_songs.learn_in(Some(country.clone())).await;
+            for chart in &on {
+                asked += 1;
+                if !self
+                    .top_songs
+                    .chart_in(Some(country.clone()), chart)
+                    .await
+                    .songs
+                    .is_empty()
+                {
+                    fetched += 1;
+                }
+            }
+        }
+        debug!("chart lists warmed: {fetched} of {asked}");
         fetched
     }
 

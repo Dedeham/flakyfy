@@ -8,6 +8,7 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 use super::*;
 use crate::services::charts::apple_music_pages::AppleMusicPages;
+use crate::services::charts::{ChartCountryStore, ListenerCharts};
 use crate::services::common::test_fakes::FakeMetadata;
 use crate::services::cover_art::ArtworkHints;
 use crate::services::metadata::deezer_metadata_service::DeezerMetadataService;
@@ -34,6 +35,7 @@ struct Lists {
     navidrome: MockServer,
     _apple: MockServer,
     now: Arc<Mutex<DateTime<Utc>>>,
+    listeners: Arc<ChartCountryStore>,
 }
 
 fn settings_for(navidrome: &str, charts: &str, discovery: bool, filter: ExplicitFilter) -> AppSettings {
@@ -90,6 +92,7 @@ impl Lists {
             format!("http://{}", crate::services::test_support::refused_address()),
         );
         let registry = Arc::new(ExternalIdRegistry::in_memory());
+        let listeners = Arc::new(ChartCountryStore::new(None));
         let top_songs = TopSongsService::new(
             deezer,
             None,
@@ -98,7 +101,8 @@ impl Lists {
             Arc::new(AppleMusicPages::with_base_url(&apple.uri(), Duration::ZERO)),
             Arc::new(ArtworkHints::new()),
             Arc::clone(&settings),
-        );
+        )
+        .with_listeners(Arc::clone(&listeners));
         let now = Arc::new(Mutex::new(Utc.with_ymd_and_hms(2026, 10, 7, 9, 0, 0).unwrap()));
         let clock_now = Arc::clone(&now);
         let service = ChartPlaylistService::new(
@@ -121,7 +125,72 @@ impl Lists {
             navidrome,
             _apple: apple,
             now,
+            listeners,
         }
+    }
+
+    /// Apple's pages for another country: Japan's own overall chart for `jp`, the US pages
+    /// under that country's storefront for the rest. `genre_down`: its genre chart fails.
+    async fn pages_for(&self, code: &str, genre_down: bool) {
+        let mine = |body: &str| body.replace("\"storefront\":\"us\"", &format!("\"storefront\":\"{code}\""));
+        let overall = if code == "jp" {
+            fixture!("jp_all").to_string()
+        } else {
+            mine(fixture!("us_all"))
+        };
+        for (at, body) in [
+            (format!("/{code}/new/top-charts/songs"), overall),
+            (format!("/{code}/new"), mine(fixture!("us_new"))),
+            (
+                format!("/{code}/room/6818396128"),
+                mine(fixture!("us_room_best_new")),
+            ),
+            (
+                format!("/{code}/room/6818395867"),
+                mine(fixture!("us_room_trending")),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(at))
+                .and(query_param_is_missing("genreId"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "text/html"))
+                .mount(&self._apple)
+                .await;
+        }
+        let genre = Mock::given(method("GET"))
+            .and(path(format!("/{code}/new/top-charts/songs/")))
+            .and(query_param("genreId", "18"));
+        let answer = if genre_down {
+            ResponseTemplate::new(503)
+        } else {
+            ResponseTemplate::new(200).set_body_raw(mine(fixture!("us_18")).into_bytes(), "text/html")
+        };
+        genre.respond_with(answer).mount(&self._apple).await;
+    }
+
+    fn choose(&self, user: &str, country: &str, pinned: &[&str]) {
+        self.listeners.set(
+            user,
+            ListenerCharts {
+                country: country.to_string(),
+                pinned: pinned.iter().map(|c| (*c).to_string()).collect(),
+            },
+        );
+    }
+
+    async fn searches(&self) -> usize {
+        self.navidrome
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path() == "/rest/search3")
+            .count()
+    }
+
+    fn advance_minutes(&self, minutes: i64) {
+        let mut now = self.now.lock();
+        *now += TimeDelta::minutes(minutes);
     }
 
     /// Navidrome's search3: the songs for a query, or nothing for any other query.
@@ -615,5 +684,167 @@ async fn the_warm_worker_does_nothing_with_every_list_off() {
             .await
             .unwrap_or_default()
             .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_pinned_country_adds_every_list_that_is_on() {
+    let lists = Lists::new("new").await;
+    lists.pages_for("jp", false).await;
+    lists.library(Vec::new()).await;
+    lists.choose("alice", "", &["jp"]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+
+    let listed = lists.service.list("alice", &auth()).await;
+
+    let names: Vec<&str> = listed.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "Popular right now",
+            "Best New Songs",
+            "Popular right now · Japan",
+            "Best New Songs · Japan"
+        ]
+    );
+    assert_eq!(lists.service.as_sync_stations("alice").len(), 4);
+}
+
+#[tokio::test]
+async fn pinned_ids_differ_and_home_ids_stay() {
+    let lists = Lists::new("").await;
+    lists.pages_for("jp", false).await;
+    lists.library(Vec::new()).await;
+    lists.choose("alice", "", &["jp"]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+
+    let listed = lists.service.list("alice", &auth()).await;
+
+    assert_eq!(listed[0].id, playlist_id("alice", "chart:popular"));
+    assert_eq!(listed[0].key, "chart:popular");
+    assert_eq!(listed[1].id, playlist_id("alice", "chart:popular@jp"));
+    assert_eq!(listed[1].key, "chart:popular@jp");
+    assert_ne!(listed[0].id, listed[1].id);
+}
+
+#[tokio::test]
+async fn which_finds_a_pinned_list() {
+    let lists = Lists::new("").await;
+    lists.pages_for("jp", false).await;
+    lists.library(Vec::new()).await;
+    lists.choose("alice", "", &["jp"]);
+    let id = playlist_id("alice", "chart:popular@jp");
+    lists.service.songs("alice", "34@jp", &auth()).await;
+
+    assert_eq!(lists.service.which("alice", &id).as_deref(), Some("34@jp"));
+    assert_eq!(lists.service.which("bob", &id), None);
+    let cover = lists.service.cover("alice", &id).unwrap();
+    assert_eq!(cover.chart, "34");
+    assert_eq!(cover.country.as_deref(), Some("jp"));
+    assert_eq!(cover.name, "Popular right now · Japan");
+}
+
+#[tokio::test]
+async fn a_pin_equal_to_the_home_country_is_skipped() {
+    let lists = Lists::new("").await;
+    lists.library(Vec::new()).await;
+    lists.choose("alice", "", &["us"]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+
+    let listed = lists.service.list("alice", &auth()).await;
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "Popular right now");
+    assert_eq!(lists.service.lists_for("alice"), vec![OVERALL.to_string()]);
+}
+
+#[tokio::test]
+async fn a_removed_pin_stops_being_listed() {
+    let lists = Lists::new("").await;
+    lists.pages_for("jp", false).await;
+    lists.library(Vec::new()).await;
+    lists.choose("alice", "", &["jp"]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(lists.service.list("alice", &auth()).await.len(), 2);
+
+    lists.choose("alice", "", &[]);
+
+    let listed = lists.service.list("alice", &auth()).await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "Popular right now");
+    assert_eq!(lists.service.as_sync_stations("alice").len(), 1);
+    assert!(lists.service.outside_songs("alice", "34@jp").is_empty(), "let go");
+}
+
+#[tokio::test]
+async fn a_listener_country_change_remakes_the_lists() {
+    let lists = Lists::new("").await;
+    lists.pages_for("br", false).await;
+    lists.library(Vec::new()).await;
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(lists.searches_for("Drake Solar Eclipse").await, 1, "not due again");
+
+    lists.choose("alice", "br", &[]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+
+    assert_eq!(lists.searches_for("Drake Solar Eclipse").await, 2);
+    assert_eq!(lists.service.list("alice", &auth()).await[0].name, "Popular right now");
+}
+
+#[tokio::test]
+async fn a_failing_list_does_not_remake_the_others() {
+    let lists = Lists::new("18").await;
+    lists.pages_for("jp", true).await;
+    lists.library(Vec::new()).await;
+    lists.choose("alice", "", &["jp"]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    assert!(lists.service.outside_songs("alice", "18@jp").is_empty());
+    assert!(!lists.service.outside_songs("alice", "34@jp").is_empty());
+    let searched = lists.searches().await;
+
+    // Within the wait, nothing is due; after it, only the list that failed is tried again.
+    lists.service.songs("alice", "18@jp", &auth()).await;
+    lists.advance_minutes(6);
+    lists.service.songs("alice", "18@jp", &auth()).await;
+
+    assert_eq!(lists.searches().await, searched);
+    assert_eq!(lists.searches_for("Drake Solar Eclipse").await, 1);
+}
+
+#[tokio::test]
+async fn a_new_pin_is_made_without_remaking_home_lists() {
+    let lists = Lists::new("").await;
+    lists.pages_for("jp", false).await;
+    lists.library(Vec::new()).await;
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    let before = lists.searches().await;
+
+    lists.choose("alice", "", &["jp"]);
+    let japan = lists.service.songs("alice", "34@jp", &auth()).await;
+
+    assert!(!japan.is_empty());
+    assert!(lists.searches().await > before);
+    assert_eq!(lists.searches_for("Drake Solar Eclipse").await, 1, "home lists stay");
+}
+
+#[tokio::test]
+async fn countries_listeners_chose_are_warmed_too() {
+    let lists = Lists::new("").await;
+    lists.pages_for("jp", false).await;
+    lists.choose("alice", "", &["jp"]);
+    let worker = crate::services::charts::ChartsWarmWorker::new(
+        lists.top_songs.clone(),
+        lists.service.clone(),
+        Clock::system(),
+    );
+
+    assert_eq!(worker.warm_once().await, 2, "Popular right now here and in Japan");
+    assert!(
+        lists
+            .top_songs
+            .peek_chart_in(Some("jp".into()), OVERALL)
+            .await
+            .is_some()
     );
 }

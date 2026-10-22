@@ -670,6 +670,7 @@ pub struct ReviewSweepStatus {
     pub recheck: Option<RecheckStatus>,
     /// Whether replacing is switched on, the day's cap, and what today brought.
     pub auto_replace: bool,
+    pub auto_replace_preview: bool,
     pub auto_replace_per_day: i32,
     pub today: Today,
     /// `Soulseek:MinMatchScore` differs from the one the last re-check ran with (the default
@@ -1356,13 +1357,21 @@ impl LibraryReviewSweepWorker {
                 return false;
             }
         }
-        let heard = question
-            .matched_text()
-            .unwrap_or_else(|| "another song".to_string());
-        let replacing = format!(
-            "Replacing '{} - {}', which AcoustID heard as {heard}.",
-            song.artist, song.title
-        );
+        let by_preview = question.reason == InconclusiveReason::DiffersFromYouTube;
+        let replacing = if by_preview {
+            format!(
+                "Replacing '{} - {}', which sounds nothing like its YouTube preview.",
+                song.artist, song.title
+            )
+        } else {
+            let heard = question
+                .matched_text()
+                .unwrap_or_else(|| "another song".to_string());
+            format!(
+                "Replacing '{} - {}', which AcoustID heard as {heard}.",
+                song.artist, song.title
+            )
+        };
         self.hold("Running", Some(&replacing), Duration::ZERO);
         let outcome = replacer
             .replace(LibraryActionRequest::new(
@@ -1376,9 +1385,21 @@ impl LibraryReviewSweepWorker {
             Ok(outcome) if outcome.state == LibraryActionState::Applied => {
                 self.count_today(now, true);
                 let needs = self.settings.current().soulseek.effective_min_match_score();
-                let note = Self::replaced_note(question, needs);
-                self.notices
-                    .add_replaced(keeper, path, song, question, &id, needs);
+                let note = if by_preview {
+                    format!(
+                        "Octo replaced this: it sounded nothing like its YouTube preview ({})",
+                        question.evidence.as_deref().unwrap_or("not the same song")
+                    )
+                } else {
+                    Self::replaced_note(question, needs)
+                };
+                if by_preview {
+                    self.notices
+                        .add_replaced_because(keeper, path, song, question, &id, note.clone(), None);
+                } else {
+                    self.notices
+                        .add_replaced(keeper, path, song, question, &id, needs);
+                }
                 info!(
                     "Library review sweep replaced '{} - {}' through Wrong song as {keeper}: {note}",
                     song.artist, song.title
@@ -1415,9 +1436,10 @@ impl LibraryReviewSweepWorker {
         self.store.flush();
     }
 
-    /// Whether a file the sweep would ask about is replaced through Wrong song instead: with
-    /// `ReviewSweepAutoReplace` on, no dry run, the keeper on the allowlist, Wrong song on, the
-    /// day's cap and breaker not reached, and AcoustID clearly hearing another song.
+    /// Whether a file the sweep would ask about is replaced through Wrong song instead: no dry
+    /// run, the keeper on the allowlist, Wrong song on, the day's cap and breaker not reached,
+    /// and either `ReviewSweepAutoReplace` on with AcoustID clearly hearing another song, or
+    /// `ReviewSweepAutoReplacePreview` on with the song's YouTube preview clearly not matching.
     pub fn decide(
         question: &VerificationResult,
         file: &SweptFile,
@@ -1430,13 +1452,17 @@ impl LibraryReviewSweepWorker {
             .effective_actions()
             .iter()
             .any(|entry| entry.action == LibraryAction::WrongSong && entry.enabled);
-        let may = actions.review_sweep_auto_replace
-            && !actions.dry_run
+        let may = !actions.dry_run
             && actions.is_allowed(Some(keeper))
             && wrong_song_on
             && today.replaced < actions.effective_review_sweep_auto_replace_per_day()
             && today.failed < Self::MAX_FAILED_REPLACEMENTS_PER_DAY;
-        if may && Self::clearly_another_song(question, file, &settings.soulseek) {
+        let by_acoustid = actions.review_sweep_auto_replace
+            && Self::clearly_another_song(question, file, &settings.soulseek);
+        let by_preview = actions.review_sweep_auto_replace_preview
+            && file.tagged
+            && question.reason == InconclusiveReason::DiffersFromYouTube;
+        if may && (by_acoustid || by_preview) {
             AutoReplace::Replace
         } else {
             AutoReplace::Ask
@@ -1849,6 +1875,7 @@ impl LibraryReviewSweepWorker {
                 finished_utc: recheck.finished_utc,
             }),
             auto_replace: settings.library_actions.review_sweep_auto_replace,
+            auto_replace_preview: settings.library_actions.review_sweep_auto_replace_preview,
             auto_replace_per_day: settings
                 .library_actions
                 .effective_review_sweep_auto_replace_per_day(),

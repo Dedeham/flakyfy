@@ -417,6 +417,7 @@ $(setting YTDLP_MAX_CONCURRENT 5)
 $(setting YTDLP_SEARCH_CACHE_MAX 1024)
 $(setting YTDLP_URL_CACHE_MAX 512)
 $(setting YTDLP_URL_CACHE_TTL 3600)
+$(setting YTDLP_PLAYER_CLIENT visionos)
 EOF
 # Every other line the old .env had goes back in as it was: settings this installer
 # never writes (LASTFM_API_SECRET, OCTO_CONFIG_DIR, one added by a later release),

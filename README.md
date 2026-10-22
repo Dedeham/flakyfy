@@ -805,6 +805,10 @@ They are on by default, whether or not the mixes are. The dashboard's Mixes page
 `trending` and Apple genre numbers, default `new,trending,18,14,6`; empty for none);
 `CHART_COUNTRY` is `auto` or a two-letter country such as `gb`.
 
+Each listener can pick their own chart country and pin up to three more in the Octo apps' Charts
+page; the dashboard's Charts card sets them for anyone. A pinned country adds every chart list
+that is on, named after its country, such as `Popular right now · Japan`.
+
 ### Importing your music
 
 To listen before downloading, import a list and turn on **Stream without downloading** on the
@@ -963,10 +967,11 @@ Octo hijacks these endpoints; everything else proxies to Navidrome unchanged:
 | `findSongs`, `getFoundSongs`, `pickFoundSong` | `octoAcquisitions` 2: a song's search run again on the caller's download sources, every copy found, and fetching the one picked |
 | `getImports`, `getImport`, `importAction` | the `octoImports` extension: the caller's imported lists with what the library has of each, and the trickle |
 | `getTopSongs` | the standard top songs of an artist (by name, or by id as Navidrome's `topSongsByArtistId`), for every app: ranked as `getArtistTopSongs` ranks them, songs you have as your library's own and the rest as outside songs (only yours while search discovery is off); Navidrome's answer when Octo has none |
-| `getArtistTopSongs`, `getTopChart` | the `octoTopSongs` extension: an artist's most played songs and the chart of the moment, each marked in the caller's library or playable from outside it |
+| `getArtistTopSongs`, `getTopChart`, `getCharts` | the `octoTopSongs` extension: an artist's most played songs and the chart of the moment, each marked in the caller's library or playable from outside it, and the charts a country has; `getTopChart` and `getCharts` take `country` (any Apple Music country, the caller's own when not sent; error 10 for one Apple does not have, error 0 after 12 other countries in an hour) |
+| `setChartCountry`, `pinChartCountry` | `octoTopSongs` 3: the caller's own chart country (`country`, or `auto` to follow the server's), and pinning (`pinned=true`) or unpinning (`pinned=false`) one more `country`, at most 3; each answers like `getCharts`, which then says the caller's `setting`, `pinned`, the `serverCountry`, Apple's `countries` and `maxPinned` |
 | `getPlace` | the `octoPlaces` extension, for the apps' Live radio near you: a postal code (`code` and `country`, any case or spacing, `UK` for `GB`; a full UK, Canadian or Dutch code finds the part GeoNames keeps, and a ZIP+4 its five digits), a city (`name`, optional `state` by name or code, and `country`; of the towns with that name, and that state when one is sent, the one with the most postal codes, at the postal code nearest its others) or a coordinate (`latitude` and `longitude` in decimal degrees: the nearest place within 30 km), in that order when several are sent, answered as `place` with `code`, `name`, `state` (when known), `country`, `latitude` and `longitude` (2 decimals). Error 70 for a place Octo does not know, error 10 for missing parameters or coordinates that are not decimal degrees. Answered from GeoNames' postal codes, built into the image; nothing is sent anywhere |
 | `/api/artist/{id}`, `/api/album?artist_id=` | Navidrome's own API, for clients that use it (Feishin): an outside artist's page and its albums |
-| `getOpenSubsonicExtensions` | Navidrome's list plus `octoAcquisitions` 1 and 2, `octoLyrics` (while lyrics lookups are on), `octoLibraryActions` (while library actions are on), `octoTopSongs` (while search discovery is on), `octoImports`, `octoRadioSources` (while radio can answer: radio songs carry `octoSuggestedBy`), `octoPlaces` (while the place data can be read, so an app without it keeps to its own lookup) and `songLyrics` 1 and 2 |
+| `getOpenSubsonicExtensions` | Navidrome's list plus `octoAcquisitions` 1 and 2, `octoLyrics` (while lyrics lookups are on), `octoLibraryActions` (while library actions are on), `octoTopSongs` 1 to 3 (while search discovery is on), `octoImports`, `octoRadioSources` (while radio can answer: radio songs carry `octoSuggestedBy`), `octoPlaces` (while the place data can be read, so an app without it keeps to its own lookup) and `songLyrics` 1 and 2 |
 
 ### Soulseek download details
 

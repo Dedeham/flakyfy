@@ -2715,6 +2715,14 @@
               <div class="dl-list health-songs" id="youtube-results-list"></div>
               <div id="youtube-results-more"></div>
             </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Replace a song that sounds nothing like its YouTube preview</div><div class="set-info-d">Octo fetches the right song through Wrong song instead of asking. Off by default.</div><div class="set-info-more"><p>Only when the preview has the song's title, artist and length and nothing in the file lines up with it. A song with no tags, one you starred or rated, one Navidrome does not show yet, and anything unclear are still asked about in Review.</p><p>Needs Wrong song on and dry run off. It asks as the library keeper, the replacement is checked like any download, and Review keeps a note of what was replaced.</p></div></div>
+              <label class="switch"><input type="checkbox" name="LibraryActions.YoutubeCheckAutoReplace" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">At most <span class="set-opt">a day</span></div><div class="set-info-d">How many songs the YouTube check replaces by itself in a day. The rest wait in Review, as do the rest of a day with three replacements that failed.</div></div>
+              <input class="set-input" name="LibraryActions.YoutubeCheckAutoReplacePerDay" type="number" min="1" max="50" data-number="true" />
+            </div>
             <details class="set-more">
               <summary>Playlist name and size</summary>
               <div class="set-row stack">

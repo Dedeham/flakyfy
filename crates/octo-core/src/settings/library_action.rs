@@ -279,6 +279,18 @@ pub struct LibraryActionSettings {
     /// Environment variable: LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR
     pub youtube_check_per_hour: i32,
 
+    /// Let the YouTube check replace a song that sounds nothing like a YouTube preview that can
+    /// be believed, through Wrong song, instead of asking. Off by default. Respects DryRun and
+    /// the allowlist, runs as the person the check asks, and leaves a song anyone starred or
+    /// rated to Review.
+    /// Environment variable: LIBRARY_ACTIONS_YOUTUBE_CHECK_AUTO_REPLACE
+    pub youtube_check_auto_replace: bool,
+
+    /// Most songs the YouTube check replaces by itself in a UTC day (1 to 50, default 5). Past
+    /// it, or after three replacements fail in a day, the rest of the day's are asked about.
+    /// Environment variable: LIBRARY_ACTIONS_YOUTUBE_CHECK_AUTO_REPLACE_PER_DAY
+    pub youtube_check_auto_replace_per_day: i32,
+
     /// A "Duplicates" playlist per allowed user: recordings the library holds more than once,
     /// side by side, the copy worth keeping first. Octo only points them out; nothing is removed
     /// unless you remove it (#53).
@@ -345,6 +357,8 @@ impl Default for LibraryActionSettings {
             review_sweep_auto_replace_per_day: 10,
             tag_check_per_hour: 60,
             youtube_check_per_hour: 30,
+            youtube_check_auto_replace: false,
+            youtube_check_auto_replace_per_day: 5,
             duplicates_enabled: false,
             duplicates_playlist_name: "Duplicates".to_string(),
             duplicates_scan_hours: 24,
@@ -389,6 +403,10 @@ impl LibraryActionSettings {
     /// 0 is off; the same ceiling as the other sweeps, one song every ten seconds.
     pub fn effective_youtube_check_per_hour(&self) -> i32 {
         self.youtube_check_per_hour.clamp(0, 360)
+    }
+
+    pub fn effective_youtube_check_auto_replace_per_day(&self) -> i32 {
+        self.youtube_check_auto_replace_per_day.clamp(1, 50)
     }
 
     pub fn effective_duplicates_scan_interval(&self) -> Duration {

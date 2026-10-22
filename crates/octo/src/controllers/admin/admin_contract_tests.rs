@@ -286,6 +286,8 @@ async fn settings_list_the_sweep_replacing_off_with_ten_a_day() {
         let actions = &document["LibraryActions"];
         assert_eq!(actions["ReviewSweepAutoReplace"], false, "{path}");
         assert_eq!(actions["ReviewSweepAutoReplacePerDay"], 10, "{path}");
+        assert_eq!(actions["YoutubeCheckAutoReplace"], false, "{path}");
+        assert_eq!(actions["YoutubeCheckAutoReplacePerDay"], 5, "{path}");
     }
 }
 
@@ -868,9 +870,10 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, the sweep's
     // replacing two: LibraryActions:ReviewSweepAutoReplace and :ReviewSweepAutoReplacePerDay,
     // then LibraryActions:KeepRatedCopies, Subsonic:DownloadAlbumOnSongStar,
-    // Metadata:AnimatedArt and Subsonic:CoverBadge, then LibraryActions:YoutubeCheckPerHour,
+    // Metadata:AnimatedArt and Subsonic:CoverBadge, then LibraryActions:YoutubeCheckPerHour
+    // and its replacing two: :YoutubeCheckAutoReplace and :YoutubeCheckAutoReplacePerDay,
     // listed last.
-    assert_eq!(rows.len(), 205);
+    assert_eq!(rows.len(), 207);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()
@@ -885,6 +888,8 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(rows[202]["Key"], "Metadata:AnimatedArt");
     assert_eq!(rows[203]["Key"], "Subsonic:CoverBadge");
     assert_eq!(rows[204]["Key"], "LibraryActions:YoutubeCheckPerHour");
+    assert_eq!(rows[205]["Key"], "LibraryActions:YoutubeCheckAutoReplace");
+    assert_eq!(rows[206]["Key"], "LibraryActions:YoutubeCheckAutoReplacePerDay");
     assert_eq!(row("LibraryActions:YoutubeCheckPerHour")["IsSecret"], false);
     assert_eq!(row("Subsonic:CoverBadge")["IsSecret"], false);
     assert_eq!(row("Subsonic:DownloadAlbumOnSongStar")["IsSecret"], false);

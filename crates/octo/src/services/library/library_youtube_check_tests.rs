@@ -5,10 +5,13 @@
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 
-use octo_core::settings::{AppSettings, LibraryActionSettings, NoticeKind, SubsonicSettings};
+use octo_core::settings::{
+    AppSettings, LibraryActionDefinition, LibraryActionSettings, NoticeKind, SubsonicSettings,
+};
 use tokio::sync::Notify;
 
 use super::*;
+use crate::services::library::library_action_executor::LibraryActionOutcome;
 
 /// Answers one by one from a script, and remembers which files it was asked about.
 #[derive(Default)]
@@ -1136,4 +1139,278 @@ async fn without_a_replacer_replacing_is_refused() {
             .await
             .is_err()
     );
+}
+
+// ---- Replacing a song that sounds nothing like its preview ------------------------------
+
+/// Wrong song, as a script: what Navidrome shows, what the marks say, how each request ends.
+struct FakeReplacer {
+    shown: bool,
+    marked: Option<bool>,
+    state: LibraryActionState,
+    requests: Mutex<Vec<(LibraryAction, String, String)>>,
+}
+
+impl FakeReplacer {
+    fn new(shown: bool, marked: Option<bool>, state: LibraryActionState) -> Arc<Self> {
+        Arc::new(FakeReplacer {
+            shown,
+            marked,
+            state,
+            requests: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn applying() -> Arc<Self> {
+        Self::new(true, Some(false), LibraryActionState::Applied)
+    }
+
+    fn requests(&self) -> Vec<(LibraryAction, String, String)> {
+        self.requests.lock().clone()
+    }
+}
+
+#[async_trait]
+impl SweepReplacer for FakeReplacer {
+    async fn song_id(&self, _: &str, _: &str, path: &str) -> Option<String> {
+        self.shown
+            .then(|| format!("nd-{}", path.rsplit('/').next().unwrap_or(path)))
+    }
+
+    async fn marked(&self, _: &str) -> Option<bool> {
+        self.marked
+    }
+
+    async fn replace(&self, request: LibraryActionRequest) -> anyhow::Result<LibraryActionOutcome> {
+        self.requests
+            .lock()
+            .push((request.action, request.navidrome_id, request.username));
+        Ok(LibraryActionOutcome::new(self.state, Some("done".into())))
+    }
+}
+
+/// Replacing on, no dry run, Wrong song on, at most `per_day` a day, `dry_run` as given.
+fn replacing_settings(per_day: i32, dry_run: bool) -> Arc<SettingsStore> {
+    Arc::new(SettingsStore::for_tests(AppSettings {
+        library_actions: LibraryActionSettings {
+            enabled: true,
+            review_enabled: true,
+            youtube_check_per_hour: 60,
+            youtube_check_auto_replace: true,
+            youtube_check_auto_replace_per_day: per_day,
+            dry_run,
+            allowed_users: vec!["bob".into()],
+            actions: vec![LibraryActionDefinition {
+                action: LibraryAction::WrongSong,
+                name: String::new(),
+                enabled: true,
+                rating: None,
+            }],
+            ..Default::default()
+        },
+        subsonic: SubsonicSettings {
+            admin_username: Some("bob".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    }))
+}
+
+/// Two wrong songs, each answered as a mismatch, run to the end.
+async fn two_wrong_songs(
+    check: &Check,
+    settings: Arc<SettingsStore>,
+    replacer: Arc<FakeReplacer>,
+) -> (LibraryYoutubeCheck, Arc<NoticeQueue>) {
+    check.tagged("a.flac");
+    check.tagged("b.flac");
+    let checker = FakeChecker::answering(vec![heard(Heard::Mismatch, 0.44), heard(Heard::Mismatch, 0.46)]);
+    let notices = Arc::new(NoticeQueue::new());
+    let worker = check
+        .worker(
+            checker,
+            notices.clone(),
+            settings,
+            Arc::new(FakeActivity::default()),
+        )
+        .with_replacer(replacer);
+    worker.start();
+    run_to_the_end(&worker).await;
+    (worker, notices)
+}
+
+#[tokio::test]
+async fn a_song_that_clearly_is_not_the_song_is_replaced_through_wrong_song_when_asked_to() {
+    let check = Check::new();
+    let replacer = FakeReplacer::applying();
+
+    let (worker, notices) = two_wrong_songs(&check, replacing_settings(5, false), replacer.clone()).await;
+
+    assert_eq!(
+        replacer.requests(),
+        [
+            (
+                LibraryAction::WrongSong,
+                "nd-a.flac".to_string(),
+                "bob".to_string()
+            ),
+            (
+                LibraryAction::WrongSong,
+                "nd-b.flac".to_string(),
+                "bob".to_string()
+            ),
+        ]
+    );
+    assert_eq!(worker.store().read(|s| (s.replaced, s.asked, s.done)), (2, 0, 2));
+    // Each replacement leaves a note that is already answered, and no question.
+    let entries = notices.for_user("bob", NoticeKind::Review);
+    assert!(entries.iter().all(|entry| !entry.is_open()), "{entries:?}");
+    assert_eq!(worker.status().replaced, 2);
+}
+
+#[tokio::test]
+async fn replacing_is_off_by_default_so_the_song_is_only_asked_about() {
+    let check = Check::new();
+    let replacer = FakeReplacer::applying();
+
+    let (worker, notices) = two_wrong_songs(&check, settings_of(60), replacer.clone()).await;
+
+    assert!(replacer.requests().is_empty());
+    assert_eq!(worker.store().read(|s| (s.replaced, s.asked)), (0, 2));
+    assert_eq!(notices.for_user("bob", NoticeKind::Review).len(), 2);
+}
+
+#[tokio::test]
+async fn a_dry_run_only_asks() {
+    let check = Check::new();
+    let replacer = FakeReplacer::applying();
+
+    let (worker, _) = two_wrong_songs(&check, replacing_settings(5, true), replacer.clone()).await;
+
+    assert!(replacer.requests().is_empty());
+    assert_eq!(worker.store().read(|s| (s.replaced, s.asked)), (0, 2));
+}
+
+#[tokio::test]
+async fn a_song_anyone_starred_or_rated_is_asked_about_and_so_is_one_whose_marks_cannot_be_read() {
+    for marked in [Some(true), None] {
+        let check = Check::new();
+        let replacer = FakeReplacer::new(true, marked, LibraryActionState::Applied);
+
+        let (worker, _) = two_wrong_songs(&check, replacing_settings(5, false), replacer.clone()).await;
+
+        assert!(replacer.requests().is_empty(), "{marked:?}");
+        assert_eq!(
+            worker.store().read(|s| (s.replaced, s.asked)),
+            (0, 2),
+            "{marked:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_song_navidrome_does_not_show_yet_is_asked_about() {
+    let check = Check::new();
+    let replacer = FakeReplacer::new(false, Some(false), LibraryActionState::Applied);
+
+    let (worker, _) = two_wrong_songs(&check, replacing_settings(5, false), replacer.clone()).await;
+
+    assert!(replacer.requests().is_empty());
+    assert_eq!(worker.store().read(|s| (s.replaced, s.asked)), (0, 2));
+}
+
+#[tokio::test]
+async fn past_the_days_cap_the_rest_are_asked_about() {
+    let check = Check::new();
+    let replacer = FakeReplacer::applying();
+
+    let (worker, notices) = two_wrong_songs(&check, replacing_settings(1, false), replacer.clone()).await;
+
+    assert_eq!(replacer.requests().len(), 1);
+    assert_eq!(worker.store().read(|s| (s.replaced, s.asked)), (1, 1));
+    let open = notices
+        .for_user("bob", NoticeKind::Review)
+        .iter()
+        .filter(|entry| entry.is_open())
+        .count();
+    assert_eq!(open, 1);
+}
+
+#[tokio::test]
+async fn three_failed_replacements_in_a_day_stop_it_trying() {
+    let check = Check::new();
+    for name in ["a.flac", "b.flac", "c.flac", "d.flac"] {
+        check.tagged(name);
+    }
+    let replacer = FakeReplacer::new(true, Some(false), LibraryActionState::Failed);
+    let checker = FakeChecker::answering(vec![heard(Heard::Mismatch, 0.45); 4]);
+    let worker = check
+        .worker(
+            checker,
+            Arc::new(NoticeQueue::new()),
+            replacing_settings(50, false),
+            Arc::new(FakeActivity::default()),
+        )
+        .with_replacer(replacer.clone());
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    // A failed replacement leaves the song a question; the fourth is not even tried.
+    assert_eq!(
+        replacer.requests().len(),
+        LibraryReviewSweepWorker::MAX_FAILED_REPLACEMENTS_PER_DAY as usize
+    );
+    assert_eq!(worker.store().read(|s| (s.replaced, s.asked)), (0, 4));
+}
+
+#[tokio::test]
+async fn a_song_alike_or_unclear_is_never_replaced() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    check.tagged("b.flac");
+    let replacer = FakeReplacer::applying();
+    let checker = FakeChecker::answering(vec![heard(Heard::Match, 0.05), heard(Heard::Unclear, 0.3)]);
+    let worker = check
+        .worker(
+            checker,
+            Arc::new(NoticeQueue::new()),
+            replacing_settings(5, false),
+            Arc::new(FakeActivity::default()),
+        )
+        .with_replacer(replacer.clone());
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert!(replacer.requests().is_empty());
+}
+
+#[tokio::test]
+async fn the_days_count_holds_across_a_restart() {
+    let check = Check::new();
+    let replacer = FakeReplacer::applying();
+    let (worker, notices) = two_wrong_songs(&check, replacing_settings(2, false), replacer).await;
+    assert_eq!(worker.store().read(|s| s.replaced), 2);
+    drop(worker);
+
+    // Started over the same day: the file remembers what was replaced, so nothing more goes.
+    check.tagged("c.flac");
+    let again = FakeReplacer::applying();
+    let worker = check
+        .worker(
+            FakeChecker::answering(vec![heard(Heard::Mismatch, 0.45)]),
+            notices,
+            replacing_settings(2, false),
+            Arc::new(FakeActivity::default()),
+        )
+        .with_replacer(again.clone());
+    worker.store().update(|s| {
+        s.running = true;
+        s.cursor = "b.flac".into();
+    });
+    run_to_the_end(&worker).await;
+
+    assert!(again.requests().is_empty());
+    assert_eq!(worker.store().read(|s| s.today(Utc::now()).replaced), 2);
 }

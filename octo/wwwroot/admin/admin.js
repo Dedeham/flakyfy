@@ -2998,10 +2998,10 @@ async function loadYoutubeCheck() {
     const parts = [];
     if (s.running) {
       parts.push(`${youtubeCheckStates[s.state] || s.state}.`);
-      parts.push(`Compared ${s.position} of ${s.total} songs, ${s.asked} asked about, ${s.open} waiting for an answer.`);
+      parts.push(`Compared ${s.position} of ${s.total} songs, ${s.asked} asked about${s.autoReplace ? `, ${s.replaced} replaced` : ''}, ${s.open} waiting for an answer.`);
       if (s.keeper) parts.push(`Asking ${s.keeper}.`);
     } else if (s.finishedUtc) {
-      parts.push(`Done: compared ${s.done} songs, ${s.asked} asked about, ${s.unsure} left alone as unclear, ${s.noCopy} with no preview to compare.`);
+      parts.push(`Done: compared ${s.done} songs, ${s.asked} asked about${s.autoReplace ? `, ${s.replaced} replaced` : ''}, ${s.unsure} left alone as unclear, ${s.noCopy} with no preview to compare.`);
     } else {
       parts.push('Compares each song in your library with its YouTube preview, once.');
     }

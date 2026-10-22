@@ -2,10 +2,13 @@
 //!
 //! Every song already in the library is compared with its YouTube preview, once, after a person
 //! starts it from the dashboard, the way a new download is ([`preview_check`]). A song that sounds
-//! nothing like a preview that can be believed becomes a Review question; nothing is ever changed
-//! or removed. The songs it heard as wrong or unclear are kept, worst first, for the dashboard's list,
-//! where a person picks the ones to replace, keep or dismiss all at once. It goes a few songs an hour, only while nothing
-//! is downloading, only of whoever keeps the library, and carries on where it stopped after a
+//! nothing like a preview that can be believed becomes a Review question. Nothing is changed or
+//! removed unless a person turned on replacing: then such a song goes through Wrong song instead,
+//! by the same gates, daily cap and failure breaker as the Review sweep's replacing, and a song
+//! anyone starred or rated is still only asked about. The songs it heard as wrong or unclear are
+//! kept, worst first, for the dashboard's list, where a person picks the ones to replace, keep or
+//! dismiss all at once. It goes a few songs an hour, only while
+//! nothing is downloading, only of whoever keeps the library, and carries on where it stopped after a
 //! restart: the files are walked once in order and the cursor is the only memory a run needs. The
 //! walk and the tags are read off the runtime's threads, and no song may take longer than
 //! [`LibraryYoutubeCheck::CHECK_TIMEOUT`]. A shim that could not answer is not an answer and is
@@ -25,7 +28,7 @@ use octo_core::common::Clock;
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::json::datetime;
 use octo_core::models::domain::Song;
-use octo_core::settings::{LibraryAction, SettingsStore};
+use octo_core::settings::{AppSettings, LibraryAction, SettingsStore};
 use octo_media::audio::AudioFingerprinter;
 use octo_media::tags::TagFile;
 use parking_lot::Mutex;
@@ -35,7 +38,7 @@ use tracing::{error, info, warn};
 
 use super::library_action_executor::LibraryActionRequest;
 use super::library_action_journal::LibraryActionState;
-use super::library_review_sweep_worker::{LibraryReviewSweepWorker, SweepReplacer};
+use super::library_review_sweep_worker::{LibraryReviewSweepWorker, ReplacedDay, SweepReplacer, Today};
 use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::{NoticeOrigin, NoticeQueue, NoticeState};
 use super::quality_upgrade_worker::compare_ordinal;
@@ -196,6 +199,13 @@ pub struct YoutubeCheckState {
     /// Songs with no preview to compare with, or no names to look one up by.
     #[serde(default)]
     pub no_copy: i32,
+    /// Songs this run replaced through Wrong song. Left out of the file while 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub replaced: i32,
+    /// The replacements made or failed on the day one was last tried. Left out of the file until
+    /// then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced_today: Option<ReplacedDay>,
     #[serde(default, with = "datetime::utc_option")]
     pub started_utc: Option<DateTime<Utc>>,
     #[serde(default, with = "datetime::utc_option")]
@@ -254,6 +264,44 @@ fn stamp_of(full: &str) -> String {
             format!("{}:{modified}", m.len())
         })
         .unwrap_or_default()
+}
+
+fn is_zero(n: &i32) -> bool {
+    *n == 0
+}
+
+impl YoutubeCheckState {
+    /// Today's replacements and failures, by `now`'s UTC day.
+    pub fn today(&self, now: DateTime<Utc>) -> Today {
+        match &self.replaced_today {
+            Some(day) if day.day_utc == ReplacedDay::day_of(now) => Today {
+                replaced: day.replaced,
+                failed: day.failed,
+            },
+            _ => Today::default(),
+        }
+    }
+
+    /// Counts one replacement, or one failed one, on `now`'s UTC day. The run's own count only
+    /// goes up with a replacement.
+    fn count_today(&mut self, now: DateTime<Utc>, replaced: bool) {
+        let day_utc = ReplacedDay::day_of(now);
+        let mut day = match self.replaced_today.take() {
+            Some(day) if day.day_utc == day_utc => day,
+            _ => ReplacedDay {
+                day_utc,
+                replaced: 0,
+                failed: 0,
+            },
+        };
+        if replaced {
+            day.replaced += 1;
+            self.replaced += 1;
+        } else {
+            day.failed += 1;
+        }
+        self.replaced_today = Some(day);
+    }
 }
 
 struct StoreInner {
@@ -372,6 +420,8 @@ pub struct YoutubeCheckStatus {
     /// Songs on the list that sound like another song, and songs it could not tell.
     pub listed_wrong: usize,
     pub listed_unclear: usize,
+    pub replaced: i32,
+    pub auto_replace: bool,
     pub open: usize,
     pub keeper: Option<String>,
     pub per_hour: i32,
@@ -390,6 +440,7 @@ struct StatusFields {
     alike: i32,
     unsure: i32,
     no_copy: i32,
+    replaced: i32,
     listed_wrong: usize,
     listed_unclear: usize,
     started_utc: Option<DateTime<Utc>>,
@@ -469,7 +520,8 @@ impl LibraryYoutubeCheck {
         self
     }
 
-    /// How the songs a person picks in the dashboard are replaced, through Wrong song.
+    /// How the songs a person picks in the dashboard, and the ones the check replaces by itself
+    /// once `YoutubeCheckAutoReplace` is on, are replaced through Wrong song.
     pub fn with_replacer(mut self, replacer: Arc<dyn SweepReplacer>) -> Self {
         self.replacer = Some(replacer);
         self
@@ -488,6 +540,113 @@ impl LibraryYoutubeCheck {
 
     fn in_shared(view: Option<&ScopeView>, full: &str) -> bool {
         view.is_none_or(|view| view.allows(&LibraryScope::Shared, None, Some(full)))
+    }
+
+    /// Whether a song the check would ask about is replaced through Wrong song instead: replacing
+    /// on, no dry run, the keeper on the allowlist, Wrong song on, and the day's cap and breaker
+    /// not reached. The same gates as the Review sweep's.
+    pub fn may_replace(settings: &AppSettings, keeper: &str, today: Today) -> bool {
+        let actions = &settings.library_actions;
+        let wrong_song_on = actions
+            .effective_actions()
+            .iter()
+            .any(|entry| entry.action == LibraryAction::WrongSong && entry.enabled);
+        actions.youtube_check_auto_replace
+            && !actions.dry_run
+            && actions.is_allowed(Some(keeper))
+            && wrong_song_on
+            && today.replaced < actions.effective_youtube_check_auto_replace_per_day()
+            && today.failed < LibraryReviewSweepWorker::MAX_FAILED_REPLACEMENTS_PER_DAY
+    }
+
+    /// Wrong song on the file at `path`, as the keeper. True once the replacement went in, which
+    /// leaves the keeper a note in Review; false leaves the file a question. A song anyone
+    /// starred or rated, one whose marks cannot be read and one Navidrome does not show are asked
+    /// about. A replacement that failed counts toward the day's breaker.
+    async fn replace(&self, keeper: &str, path: &str, song: &Song, question: &VerificationResult) -> bool {
+        let Some(replacer) = self.replacer.clone() else {
+            return false;
+        };
+        let Some(id) = replacer.song_id(&song.artist, &song.title, path).await else {
+            info!(
+                "YouTube check: Navidrome does not show '{} - {}' yet, so it is asked about instead of replaced",
+                song.artist, song.title
+            );
+            return false;
+        };
+        match replacer.marked(&id).await {
+            Some(false) => {}
+            Some(true) => {
+                info!(
+                    "YouTube check: '{} - {}' is starred or rated, so it is asked about instead of replaced",
+                    song.artist, song.title
+                );
+                return false;
+            }
+            None => {
+                info!(
+                    "YouTube check: the stars and ratings on '{} - {}' could not be read, so it is asked about instead of replaced",
+                    song.artist, song.title
+                );
+                return false;
+            }
+        }
+        let replacing = format!(
+            "Replacing '{} - {}', which sounds nothing like its YouTube preview.",
+            song.artist, song.title
+        );
+        self.hold("Running", Some(&replacing), Duration::ZERO);
+        let outcome = replacer
+            .replace(LibraryActionRequest::new(
+                LibraryAction::WrongSong,
+                id.clone(),
+                keeper,
+            ))
+            .await;
+        let now = self.clock.now();
+        match outcome {
+            Ok(outcome) if outcome.state == LibraryActionState::Applied => {
+                self.count_today(now, true);
+                let note = format!(
+                    "Octo replaced this: it sounded nothing like its YouTube preview ({})",
+                    question.evidence.as_deref().unwrap_or("not the same song")
+                );
+                self.notices
+                    .add_replaced_because(keeper, path, song, question, &id, note, None);
+                info!(
+                    "YouTube check replaced '{} - {}' through Wrong song as {keeper}",
+                    song.artist, song.title
+                );
+                true
+            }
+            Ok(outcome) => {
+                if outcome.state == LibraryActionState::Failed {
+                    self.count_today(now, false);
+                }
+                info!(
+                    "YouTube check did not replace '{} - {}' ({}), so it is asked about",
+                    song.artist,
+                    song.title,
+                    outcome.detail.as_deref().unwrap_or("no reason given")
+                );
+                false
+            }
+            Err(e) => {
+                self.count_today(now, false);
+                warn!(
+                    "YouTube check could not replace '{} - {}' ({e}), so it is asked about",
+                    song.artist, song.title
+                );
+                false
+            }
+        }
+    }
+
+    /// Counts one replacement, or one that failed, and writes it at once: the day's cap and
+    /// breaker must hold across a restart right after.
+    fn count_today(&self, now: DateTime<Utc>, replaced: bool) {
+        self.store.update(|s| s.count_today(now, replaced));
+        self.store.flush();
     }
 
     fn hold(&self, state: &str, reason: Option<&str>, wait: Duration) -> Duration {
@@ -760,13 +919,24 @@ impl LibraryYoutubeCheck {
                             evidence: Some(format!("{}% of its bits differ", (bit_error * 100.0).round())),
                             ..Default::default()
                         };
-                        asked = self.notices.add_review_from(
+                        let replaced = Self::may_replace(
+                            &self.settings.current(),
                             keeper,
-                            &full,
-                            &song,
-                            &question,
-                            NoticeOrigin::LibrarySweep,
-                        );
+                            self.store.read(|s| s.today(self.clock.now())),
+                        ) && self.replace(keeper, &full, &song, &question).await;
+                        if replaced {
+                            self.store.update(|s| {
+                                s.results.remove(target);
+                            });
+                        }
+                        asked = !replaced
+                            && self.notices.add_review_from(
+                                keeper,
+                                &full,
+                                &song,
+                                &question,
+                                NoticeOrigin::LibrarySweep,
+                            );
                     }
                     Heard::Match => alike = 1,
                     Heard::Unclear => unsure = 1,
@@ -802,6 +972,7 @@ impl LibraryYoutubeCheck {
             alike: s.alike,
             unsure: s.unsure,
             no_copy: s.no_copy,
+            replaced: s.replaced,
             listed_wrong: s.results.values().filter(|r| r.clearly_wrong).count(),
             listed_unclear: s.results.values().filter(|r| !r.clearly_wrong).count(),
             started_utc: s.started_utc,
@@ -822,6 +993,8 @@ impl LibraryYoutubeCheck {
             no_copy: s.no_copy,
             listed_wrong: s.listed_wrong,
             listed_unclear: s.listed_unclear,
+            replaced: s.replaced,
+            auto_replace: actions.youtube_check_auto_replace,
             open: self.notices.open_count(NoticeOrigin::LibrarySweep),
             keeper: LibraryReviewSweepWorker::keeper(actions, current.subsonic.admin_username.as_deref()),
             per_hour: actions.effective_youtube_check_per_hour(),

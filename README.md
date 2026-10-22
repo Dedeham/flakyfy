@@ -644,7 +644,13 @@ library with its YouTube preview, once, the way a new download is compared when 
 place it. Songs downloaded before that check, or kept from before Octo, never had it. A song that
 sounds nothing like a preview whose title, artist and length are the song's becomes a Review
 question; one that may be another version, or has no preview, is left alone. Nothing is changed or
-removed. It goes `LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR` (default 30, 0 is off) songs an hour, one
+removed unless you turn on `LIBRARY_ACTIONS_YOUTUBE_CHECK_AUTO_REPLACE` (off by default): then
+such a song is replaced through Wrong song, as the library keeper, instead of asked about. That
+needs Wrong song on and dry run off, replaces at most
+`LIBRARY_ACTIONS_YOUTUBE_CHECK_AUTO_REPLACE_PER_DAY` (5) a day, and stops for the day after three
+replacements fail, like the Review sweep's replacing. A song anyone starred or rated, a song whose
+marks cannot be read and one Navidrome does not show yet are still asked about; Review keeps a
+note of each replacement, and the new file is checked like any download. It goes `LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR` (default 30, 0 is off) songs an hour, one
 at a time and only while nothing is downloading, pauses while 50 library questions wait in Review,
 and rests an hour when the shim stops answering. It needs library actions and Review on and
 someone on the allowed list to ask. Where it is is kept in `youtube-check.json` beside the

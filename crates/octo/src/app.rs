@@ -97,6 +97,9 @@ use crate::services::library::library_edit_service::{
 use crate::services::library::library_review_sweep_worker::SweepVerification;
 use crate::services::library::library_tag_edits::TagEditJournal;
 use crate::services::library::library_write_gate::LibraryWriteGate;
+use crate::services::library::library_youtube_check::{
+    AppYoutubeChecker, LibraryYoutubeCheck, YoutubeCheckStore,
+};
 use crate::services::library::navidrome_song_list;
 use crate::services::library::tidy::worker::ListSongs;
 use crate::services::library::tidy::{TidyJournal, TidyServices, TidyStore, TidyWorker};
@@ -508,6 +511,9 @@ pub struct AppInner {
     pub review_sweep_store: Arc<ReviewSweepStore>,
     /// `LibraryReviewSweepWorker`: the "LibraryReviewSweepWorker" worker.
     pub library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
+    /// `LibraryYoutubeCheck`: the one-time comparison of every library song with its YouTube
+    /// preview; its state is `youtube-check.json`. The "LibraryYoutubeCheck" worker.
+    pub library_youtube_check: Arc<LibraryYoutubeCheck>,
     /// `IdentitySweepStore`: the library tag check's place and answers, `identity-sweep.json`.
     /// Its 5-second flush is the "IdentitySweepStore" worker.
     pub identity_sweep_store: Arc<IdentitySweepStore>,
@@ -1325,6 +1331,7 @@ struct Stores {
     quality_upgrade_store: Arc<QualityUpgradeStore>,
     notice_queue: Arc<NoticeQueue>,
     review_sweep_store: Arc<ReviewSweepStore>,
+    youtube_check_store: Arc<YoutubeCheckStore>,
     identity_sweep_store: Arc<IdentitySweepStore>,
     lidarr_pending: Arc<LidarrPendingAlbums>,
     family_vault: Arc<FamilyVault>,
@@ -1440,6 +1447,9 @@ impl Stores {
             ))),
             notice_queue: Arc::new(NoticeQueue::with_path(Some(config_dir.join("notice-queue.json")))),
             review_sweep_store: Arc::new(ReviewSweepStore::new(Some(config_dir.join("review-sweep.json")))),
+            youtube_check_store: Arc::new(YoutubeCheckStore::new(Some(
+                config_dir.join("youtube-check.json"),
+            ))),
             identity_sweep_store: Arc::new(IdentitySweepStore::new(Some(
                 config_dir.join("identity-sweep.json"),
             ))),
@@ -1484,6 +1494,10 @@ impl Stores {
         workers.register("NoticeQueue", move |token| notices.clone().run_flusher(token));
         let sweep = self.review_sweep_store.clone();
         workers.register("ReviewSweepStore", move |token| sweep.clone().run_flusher(token));
+        let youtube_check = self.youtube_check_store.clone();
+        workers.register("YoutubeCheckStore", move |token| {
+            youtube_check.clone().run_flusher(token)
+        });
         let identities = self.identity_sweep_store.clone();
         workers.register("IdentitySweepStore", move |token| {
             identities.clone().run_flusher(token)
@@ -2424,6 +2438,7 @@ struct LibraryJobs {
     duplicate_scan_worker: Arc<DuplicateScanWorker>,
     fingerprint_sweep_verifier: Arc<FingerprintSweepVerifier>,
     library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
+    library_youtube_check: Arc<LibraryYoutubeCheck>,
 }
 
 impl LibraryJobs {
@@ -2524,6 +2539,24 @@ impl LibraryJobs {
                 )),
             ))),
         );
+        // Walks the library once, when a person starts it, and keeps to the shared library.
+        let resolver = navidrome.navidrome_song_path_resolver.clone();
+        let library_youtube_check = Arc::new(
+            LibraryYoutubeCheck::new(
+                stores.youtube_check_store.clone(),
+                stores.notice_queue.clone(),
+                Arc::new(AppYoutubeChecker {
+                    fingerprinter: Arc::new(AudioFingerprinter::new()),
+                    youtube: stores.you_tube_resolver.clone(),
+                    settings: settings.clone(),
+                }),
+                acquisition.acquisition_activity.clone(),
+                settings.clone(),
+                Box::new(move || resolver.music_root()),
+                Clock::system(),
+            )
+            .with_library_scope(navidrome.library_scope.clone()),
+        );
         LibraryJobs {
             upgrade_worker,
             quality_upgrade_worker,
@@ -2531,6 +2564,7 @@ impl LibraryJobs {
             duplicate_scan_worker,
             fingerprint_sweep_verifier,
             library_review_sweep_worker,
+            library_youtube_check,
         }
     }
 
@@ -2554,6 +2588,10 @@ impl LibraryJobs {
         let sweep = self.library_review_sweep_worker.clone();
         workers.register("LibraryReviewSweepWorker", move |stopping| {
             sweep.clone().run(stopping)
+        });
+        let youtube_check = self.library_youtube_check.clone();
+        workers.register("LibraryYoutubeCheck", move |stopping| {
+            youtube_check.clone().run(stopping)
         });
     }
 }
@@ -3278,6 +3316,7 @@ impl AppState {
             identity_sweep_store: stores.identity_sweep_store,
             library_identity_sweep,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
+            library_youtube_check: library_jobs.library_youtube_check,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
             library_edits,
@@ -3714,6 +3753,7 @@ impl AppState {
             identity_sweep_store: stores.identity_sweep_store,
             library_identity_sweep,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
+            library_youtube_check: library_jobs.library_youtube_check,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
             library_edits,
@@ -4049,6 +4089,8 @@ mod tests {
             "UpgradeWorker",
             "QualityUpgradeWorker",
             "LibraryReviewSweepWorker",
+            "YoutubeCheckStore",
+            "LibraryYoutubeCheck",
             "IdentitySweepStore",
             "LibraryIdentitySweep",
         ] {
@@ -4086,6 +4128,9 @@ mod tests {
             crate::services::library::quality_upgrade_worker::Tick::Off
         );
         assert_eq!(state.library_review_sweep_worker.status().state, "Off");
+        // The one-time YouTube check waits for a person to start it.
+        assert_eq!(state.library_youtube_check.status().state, "Idle");
+        assert!(!state.library_youtube_check.store().read(|s| s.running));
         assert!(state.duplicate_scan_worker.last_result().is_none());
         // The verification service is set, but with no AcoustID key the sweep is not set up.
         use crate::services::library::IReviewSweepVerifier;

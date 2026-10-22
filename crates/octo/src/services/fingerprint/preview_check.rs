@@ -6,7 +6,6 @@
 //! asked for, at a length within [`LENGTH_SLACK_SECONDS`] of it. Any other disagreement leaves
 //! the file to a person, like any sound AcoustID could not place.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -45,12 +44,13 @@ pub const MATCH_AT_MOST: f64 = 0.25;
 /// same song (a re-recording, a cover, up to 0.37), and below every wrong file against a
 /// believed preview (from 0.39).
 pub const MISMATCH_FROM: f64 = 0.38;
-/// At least this share of a stretch's items have to be different numbers for it to say anything.
-/// Silence, a pure tone or a steady hum fingerprints to a few repeated numbers, and two such
-/// stretches look alike whatever they are (silence against a 440 Hz tone, 94% alike). Real music
-/// measured 84% at the lowest over 83 stretches (median 99%), 10 s of silence in a 30 s stretch
-/// leaves 72% and 20 s leaves 36%.
-pub const MIN_DISTINCT_SHARE: f64 = 0.7;
+/// At least this share of a stretch's items have to differ from the item before them for it to
+/// say anything. Silence, a pure tone or a steady hum fingerprints to one number over and over,
+/// and two such stretches look alike whatever they are (silence against a 440 Hz tone, 94%
+/// alike). Real music changes at nearly every item, loops and spoken skits too: 0.92 at the
+/// lowest over 125 library songs (median 0.98), where a song built on one loop has only a few
+/// hundred different numbers. A stretch with up to 9 s of silence in its 30 s still counts.
+pub const MIN_CHANGING_SHARE: f64 = 0.7;
 /// The most of a preview's audio that is read.
 pub const MAX_PREVIEW_BYTES: usize = 40 * 1024 * 1024;
 /// How long reading the preview may take.
@@ -266,27 +266,20 @@ pub fn trustworthy(request: &PreviewRequest<'_>, preview: &PreviewFacts) -> bool
 }
 
 /// For each position, whether the `window` items that start there have enough in them to be
-/// compared (see [`MIN_DISTINCT_SHARE`]).
+/// compared (see [`MIN_CHANGING_SHARE`]).
 fn informative_windows(items: &[u32], window: usize) -> Vec<bool> {
-    let need = (window as f64 * MIN_DISTINCT_SHARE).ceil() as usize;
-    let mut counts: HashMap<u32, u32> = HashMap::new();
-    let mut out = Vec::with_capacity(items.len().saturating_sub(window) + 1);
-    for (i, item) in items.iter().enumerate() {
-        *counts.entry(*item).or_default() += 1;
-        if i >= window {
-            let gone = items[i - window];
-            if let Some(count) = counts.get_mut(&gone) {
-                *count -= 1;
-                if *count == 0 {
-                    counts.remove(&gone);
-                }
-            }
-        }
-        if i + 1 >= window {
-            out.push(counts.len() >= need);
-        }
+    if window == 0 || items.len() < window {
+        return Vec::new();
     }
-    out
+    let need = ((window - 1) as f64 * MIN_CHANGING_SHARE).ceil() as u32;
+    // changed[j]: how many items up to j differ from the one before them.
+    let mut changed = vec![0u32; items.len()];
+    for j in 1..items.len() {
+        changed[j] = changed[j - 1] + u32::from(items[j] != items[j - 1]);
+    }
+    (0..=items.len() - window)
+        .map(|start| changed[start + window - 1] - changed[start] >= need)
+        .collect()
 }
 
 /// The best [`WINDOW_SECONDS`] stretch at which the download's fingerprint lines up with the

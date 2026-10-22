@@ -345,6 +345,27 @@ fn a_silent_preview_says_nothing() {
     assert_eq!(compare(&sound(1, 120.0), &tone(200.0)), None);
 }
 
+/// A song built on one short loop: few different numbers, but a new one at nearly every item.
+fn looped(seed: u64, seconds: f64) -> Vec<u32> {
+    let pattern = sound(seed, 5.0);
+    pattern
+        .iter()
+        .copied()
+        .cycle()
+        .take((seconds / ITEM_SECONDS) as usize)
+        .collect()
+}
+
+/// A loop that keeps coming back, like a skit over one sample, is compared like any music.
+#[test]
+fn a_looping_song_is_still_compared() {
+    let song = looped(5, 150.0);
+    let comparison = compare(&song[..song.len() * 4 / 5], &reencoded(&song, 2)).expect("enough audio");
+    assert_eq!(judge(&comparison, true), Heard::Match, "{comparison:?}");
+    let other = compare(&looped(6, 120.0), &song).expect("enough audio");
+    assert_eq!(judge(&other, true), Heard::Mismatch, "{other:?}");
+}
+
 // ---- The check end to end ---------------------------------------------------------------
 
 /// A shim that knows the song's video but cannot send it, counting what it was asked.

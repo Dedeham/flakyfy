@@ -176,10 +176,10 @@ impl ChartPlaylistService {
     pub fn lists_for(&self, username: &str) -> Vec<String> {
         let on = self.lists_on();
         let top = &self.inner.top_songs;
-        let mine = top.listeners().get(username);
+        let home = top.home_of(username);
         let mut out = on.clone();
-        for pin in &mine.pinned {
-            if *pin == mine.country || !top.has_country(pin) {
+        for pin in &top.listeners().get(username).pinned {
+            if Some(pin) == home.as_ref() || !top.has_country(pin) {
                 continue;
             }
             out.extend(on.iter().map(|chart| list_id(chart, Some(pin))));
@@ -210,7 +210,8 @@ impl ChartPlaylistService {
         self.lists_on()
             .into_iter()
             .filter_map(|chart| {
-                if chart_settings::kind(&chart) == Some(ChartKind::Genre) && !menu.iter().any(|g| g.id == chart)
+                if chart_settings::kind(&chart) == Some(ChartKind::Genre)
+                    && !menu.iter().any(|g| g.id == chart)
                 {
                     return None;
                 }
@@ -508,8 +509,10 @@ impl ChartPlaylistService {
                 mine.retain(|list, _| on.iter().any(|(l, _)| l == list));
             }
             let mine = made.get(&user);
-            let any_made =
-                mine.is_some_and(|m| on.iter().any(|(l, _)| m.get(l).is_some_and(|x| !x.entries.is_empty())));
+            let any_made = mine.is_some_and(|m| {
+                on.iter()
+                    .any(|(l, _)| m.get(l).is_some_and(|x| !x.entries.is_empty()))
+            });
             let due: Vec<(String, String)> = on
                 .iter()
                 .filter(|(list, _)| {
@@ -531,10 +534,9 @@ impl ChartPlaylistService {
             .collect();
         let this = self.clone();
         let name = username.to_string();
-        let building = self.inner.builds.run(
-            &user,
-            async move { this.make(&name, sign_in, period, rule, due).await },
-        );
+        let building = self.inner.builds.run(&user, async move {
+            this.make(&name, sign_in, period, rule, due).await
+        });
         (any_made, Some(building))
     }
 

@@ -123,7 +123,11 @@ impl SubsonicResponseBuilder {
     /// Trending Songs, then the genres in Apple's order; `playlist` is the chart's playlist for
     /// this listener while it is one. The header says the listener's own country and pinned
     /// ones, the server's, and Apple's countries to pick from. Always JSON.
-    pub fn create_charts_response(&self, header: &ChartsHeader<'_>, charts: &[ChartChoiceRow]) -> SubsonicReply {
+    pub fn create_charts_response(
+        &self,
+        header: &ChartsHeader<'_>,
+        charts: &[ChartChoiceRow],
+    ) -> SubsonicReply {
         let rows: Vec<Value> = charts
             .iter()
             .map(|chart| {

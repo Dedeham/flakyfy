@@ -180,7 +180,10 @@ fn pinned_names_say_the_country() {
         pinned_name("Popular right now", "ae"),
         "Popular right now · United Arab Emirates"
     );
-    assert_eq!(pinned_name("Popular right now", "xk"), "Popular right now · Kosovo");
+    assert_eq!(
+        pinned_name("Popular right now", "xk"),
+        "Popular right now · Kosovo"
+    );
     assert_eq!(country_name("zz"), "ZZ");
 }
 

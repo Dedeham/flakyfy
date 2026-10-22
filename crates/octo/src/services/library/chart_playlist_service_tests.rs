@@ -783,13 +783,20 @@ async fn a_listener_country_change_remakes_the_lists() {
     lists.library(Vec::new()).await;
     lists.service.songs("alice", OVERALL, &auth()).await;
     lists.service.songs("alice", OVERALL, &auth()).await;
-    assert_eq!(lists.searches_for("Drake Solar Eclipse").await, 1, "not due again");
+    assert_eq!(
+        lists.searches_for("Drake Solar Eclipse").await,
+        1,
+        "not due again"
+    );
 
     lists.choose("alice", "br", &[]);
     lists.service.songs("alice", OVERALL, &auth()).await;
 
     assert_eq!(lists.searches_for("Drake Solar Eclipse").await, 2);
-    assert_eq!(lists.service.list("alice", &auth()).await[0].name, "Popular right now");
+    assert_eq!(
+        lists.service.list("alice", &auth()).await[0].name,
+        "Popular right now"
+    );
 }
 
 #[tokio::test]
@@ -825,7 +832,11 @@ async fn a_new_pin_is_made_without_remaking_home_lists() {
 
     assert!(!japan.is_empty());
     assert!(lists.searches().await > before);
-    assert_eq!(lists.searches_for("Drake Solar Eclipse").await, 1, "home lists stay");
+    assert_eq!(
+        lists.searches_for("Drake Solar Eclipse").await,
+        1,
+        "home lists stay"
+    );
 }
 
 #[tokio::test]

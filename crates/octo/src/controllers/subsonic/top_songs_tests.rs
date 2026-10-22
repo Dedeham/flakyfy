@@ -475,7 +475,9 @@ async fn pages_for(h: &Harness, code: &str) {
     Mock::given(method("GET"))
         .and(path(format!("/{code}/new/top-charts/songs/")))
         .and(query_param("genreId", "18"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(mine(fixture!("us_18")).into_bytes(), "text/html"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(mine(fixture!("us_18")).into_bytes(), "text/html"),
+        )
         .mount(&h._apple)
         .await;
 }
@@ -548,12 +550,7 @@ async fn a_country_param_reads_that_country() {
 #[tokio::test]
 async fn an_unknown_country_is_error_10() {
     let h = harness("", true).await;
-    for call in [
-        "getTopChart",
-        "getCharts",
-        "setChartCountry",
-        "pinChartCountry",
-    ] {
+    for call in ["getTopChart", "getCharts", "setChartCountry", "pinChartCountry"] {
         let answer = top(&h, &format!("{call}?{ALICE}&country=zz&pinned=true")).await;
         assert_eq!(answer["error"]["code"], 10, "{call}");
     }
@@ -607,10 +604,17 @@ async fn set_chart_country_saves_and_answers_the_charts() {
     let charts = &answer["charts"];
     assert_eq!(charts["setting"], "br");
     assert_eq!(charts["country"], "br");
-    assert_eq!(charts["pinned"], json!(["jp"]), "her own country is no longer pinned");
+    assert_eq!(
+        charts["pinned"],
+        json!(["jp"]),
+        "her own country is no longer pinned"
+    );
     let saved = h._state.top_songs.listeners().get("alice");
     assert_eq!(saved.country, "br");
-    assert_eq!(top(&h, &format!("getCharts?{BOB}")).await["charts"]["setting"], "auto");
+    assert_eq!(
+        top(&h, &format!("getCharts?{BOB}")).await["charts"]["setting"],
+        "auto"
+    );
 }
 
 #[tokio::test]
@@ -638,9 +642,17 @@ async fn pin_and_unpin_one_country_at_a_time() {
 
     assert_eq!(pin("jp", true).await, json!(["jp"]));
     assert_eq!(pin("KR", true).await, json!(["jp", "kr"]));
-    assert_eq!(pin("jp", true).await, json!(["jp", "kr"]), "pinning twice keeps one");
+    assert_eq!(
+        pin("jp", true).await,
+        json!(["jp", "kr"]),
+        "pinning twice keeps one"
+    );
     assert_eq!(pin("jp", false).await, json!(["kr"]));
-    assert_eq!(pin("de", false).await, json!(["kr"]), "unpinning one not pinned is fine");
+    assert_eq!(
+        pin("de", false).await,
+        json!(["kr"]),
+        "unpinning one not pinned is fine"
+    );
     assert_eq!(
         top(&h, &format!("pinChartCountry?{ALICE}&country=jp")).await["error"]["code"],
         10,

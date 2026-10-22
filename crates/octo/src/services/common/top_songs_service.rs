@@ -334,9 +334,14 @@ impl TopSongsService {
     /// A listener's chart country: their own choice while Apple Music has it, else the server's
     /// (see [`Self::country`]).
     pub async fn country_of(&self, user: &str) -> Option<String> {
+        self.home_of(user)
+    }
+
+    /// [`Self::country_of`], for code that cannot wait.
+    pub fn home_of(&self, user: &str) -> Option<String> {
         let own = self.inner.listeners.get(user).country;
         if own.is_empty() || !self.has_country(&own) {
-            self.country().await
+            self.server_country()
         } else {
             Some(own)
         }
@@ -345,7 +350,7 @@ impl TopSongsService {
     /// Whether Apple Music has this country (its country switcher's list).
     pub fn has_country(&self, code: &str) -> bool {
         let code = code.trim().to_ascii_lowercase();
-        self.inner.apple.countries().iter().any(|c| *c == code)
+        self.inner.apple.countries().contains(&code)
     }
 
     /// Whether a chart of `country` may be read for this listener now. Their own country, their
@@ -353,7 +358,11 @@ impl TopSongsService {
     /// once an hour against [`OTHER_COUNTRIES_PER_HOUR`], so no one listener fills Apple's queue.
     pub fn may_read(&self, user: &str, country: &str, chart: &str) -> bool {
         let code = country.trim().to_ascii_lowercase();
-        let held = self.inner.cache.get(&chart_key(Some(code.as_str()), chart)).is_some();
+        let held = self
+            .inner
+            .cache
+            .get(&chart_key(Some(code.as_str()), chart))
+            .is_some();
         self.spend_other_country(user, &code, held)
     }
 

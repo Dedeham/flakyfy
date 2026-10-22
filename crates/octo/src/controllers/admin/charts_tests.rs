@@ -122,7 +122,10 @@ fn played(id: &str) -> crate::services::listening::Play {
     }
 }
 
-async fn put_people(app: &crate::http::pipeline::App, body: serde_json::Value) -> super::super::test_app::Reply {
+async fn put_people(
+    app: &crate::http::pipeline::App,
+    body: serde_json::Value,
+) -> super::super::test_app::Reply {
     super::super::test_app::send(
         app,
         axum::http::Method::PUT,
@@ -179,9 +182,16 @@ async fn listeners_put_saves_a_persons_charts() {
     let people = saved.json()["people"].clone();
     assert_eq!(people[0]["user"], "anna");
 
-    let back = put_people(&app, serde_json::json!({"user": "anna", "country": "auto", "pinned": []})).await;
+    let back = put_people(
+        &app,
+        serde_json::json!({"user": "anna", "country": "auto", "pinned": []}),
+    )
+    .await;
     assert_eq!(back.status, StatusCode::OK);
-    assert!(state.top_songs.listeners().all().is_empty(), "nothing chosen, nothing kept");
+    assert!(
+        state.top_songs.listeners().all().is_empty(),
+        "nothing chosen, nothing kept"
+    );
 }
 
 #[tokio::test]

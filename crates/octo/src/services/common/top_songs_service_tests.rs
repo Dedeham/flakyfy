@@ -118,16 +118,12 @@ impl Charts {
 
     /// The US overall chart as another country's: the same songs, that country's storefront.
     async fn overall_for(&self, country: &str) {
-        let body = fixture!("us_all").replace(
-            "\"storefront\":\"us\"",
-            &format!("\"storefront\":\"{country}\""),
-        );
+        let body =
+            fixture!("us_all").replace("\"storefront\":\"us\"", &format!("\"storefront\":\"{country}\""));
         self.serve(&format!("/{country}/new/top-charts/songs"), None, &body)
             .await;
-        let genre = fixture!("us_18").replace(
-            "\"storefront\":\"us\"",
-            &format!("\"storefront\":\"{country}\""),
-        );
+        let genre =
+            fixture!("us_18").replace("\"storefront\":\"us\"", &format!("\"storefront\":\"{country}\""));
         self.serve(&format!("/{country}/new/top-charts/songs/"), Some("18"), &genre)
             .await;
     }
@@ -554,7 +550,10 @@ async fn the_thirteenth_other_country_in_an_hour_is_refused() {
         charts.service.may_read("anna", others(&[])[0], "18"),
         "a country read this hour is counted once"
     );
-    assert!(charts.service.may_read("bob", "jp", "34"), "the hour is per listener");
+    assert!(
+        charts.service.may_read("bob", "jp", "34"),
+        "the hour is per listener"
+    );
 }
 
 #[tokio::test]

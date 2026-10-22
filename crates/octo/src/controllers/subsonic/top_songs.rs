@@ -56,6 +56,7 @@ const TOO_MANY_COUNTRIES: &str = "Too many countries in an hour. Try again later
 /// The country a chart call asks for: `country` when sent (Apple must have it, and the listener
 /// must not have asked for too many other countries this hour), else the caller's own. Err holds
 /// the answer for one that is refused.
+#[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
 async fn asked_country(
     state: &AppState,
     call: &SubsonicCall,
@@ -90,6 +91,7 @@ async fn listener(state: &AppState, call: &SubsonicCall) -> Result<Result<String
 }
 
 /// The `country` a save names, lowercase, or the answer when it is missing.
+#[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
 fn sent_country(state: &AppState, call: &SubsonicCall) -> Result<String, Response> {
     call.param_opt("country")
         .map(str::trim)
@@ -239,7 +241,11 @@ pub async fn set_chart_country(State(state): State<AppState>, req: Request) -> A
         Some(code.clone())
     };
     let _ = service.listeners().update(&username, |mine| {
-        mine.country = if code == "auto" { String::new() } else { code.clone() };
+        mine.country = if code == "auto" {
+            String::new()
+        } else {
+            code.clone()
+        };
         mine.pinned.retain(|pin| Some(pin) != home.as_ref());
         Ok::<(), ()>(())
     });
@@ -287,7 +293,11 @@ pub async fn pin_chart_country(State(state): State<AppState>, req: Request) -> A
         let mine = service.listeners().get(&username);
         if !mine.pinned.contains(&code) {
             if mine.pinned.len() >= MAX_PINNED {
-                return Ok(refuse(&state, 10, &format!("You can pin at most {MAX_PINNED} countries.")));
+                return Ok(refuse(
+                    &state,
+                    10,
+                    &format!("You can pin at most {MAX_PINNED} countries."),
+                ));
             }
             if !service.may_choose(&username, &code) {
                 return Ok(refuse(&state, 0, TOO_MANY_COUNTRIES));
@@ -306,7 +316,11 @@ pub async fn pin_chart_country(State(state): State<AppState>, req: Request) -> A
         Ok(())
     });
     let Ok(saved) = saved else {
-        return Ok(refuse(&state, 10, &format!("You can pin at most {MAX_PINNED} countries.")));
+        return Ok(refuse(
+            &state,
+            10,
+            &format!("You can pin at most {MAX_PINNED} countries."),
+        ));
     };
     info!(
         "Chart countries pinned for {username}: {}",

@@ -618,9 +618,20 @@ and nothing is asked. If it sounds nothing like a preview with the song's title,
 Review gets a question that says so ("it sounds nothing like its YouTube preview, 47% of its bits
 differ"). Anything the preview cannot settle (another version, a preview that may not be the song,
 no preview) stays the question it was, so Review still decides those. When the YouTube shim does
-not answer, the song is looked at again later instead of becoming a question. Nothing is ever
-replaced because of the preview, not even with the sweep's replacing on. It needs the same things
-as the sweep and uses no setting of its own.
+not answer, the song is looked at again later instead of becoming a question. By default
+nothing is replaced because of the preview, not even with the sweep's replacing on.
+
+`LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PREVIEW` (off by default) lets the sweep replace such a
+song through Wrong song instead of asking, for when there are too many questions to go through by
+hand. It acts only on the clear case above, the preview having the song's title, artist and length
+and nothing in the file lining up with it, and never on a song with no tags, an ISRC tag, a star or
+a rating, or anything the preview cannot settle; those stay questions. It needs what the replacing
+above needs (Wrong song on, dry run off, the keeper on the allowlist) and counts toward the same
+`LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY` and the same stop after three failures. The
+replacement is checked like any download, against the same preview, and the old file waits in
+Recently removed. Review keeps a note of each replacement ("Octo replaced this: it sounded nothing
+like its YouTube preview, 47% of its bits differ"). The song it fetches comes from your download
+source, so with YouTube as the source it is the preview's own MP3.
 
 `LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE` (off by default) lets the check replace a song that
 clearly is another one instead of asking: AcoustID names a different song, by another title, at

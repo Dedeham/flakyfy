@@ -127,12 +127,14 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
     // Octo's apps read the bytes they get, whatever the listing declared, so a song with a file
     // here (fetched ahead, or kept by a heart) plays as that file there, for every play that
     // starts on it, and every other play of theirs keeps the preview it started on. With getting
-    // songs ahead off, a song not kept yet takes the path below, which waits for the lossless
-    // copy when that is on.
+    // songs ahead off and Wait for lossless on play on, every play takes the path below, which
+    // serves a kept file and waits for a copy not kept yet.
     let prefetching = state.settings.current().prefetch.enabled;
+    let waits_for_lossless = state.settings.current().subsonic.wait_for_lossless_on_play;
     let octo_app = draws_its_own_marks(&call);
     let owned = octo_app
         && !prefetching
+        && !waits_for_lossless
         && state
             .local_library
             .get_local_path_for_external_song(&provider, &external_id)

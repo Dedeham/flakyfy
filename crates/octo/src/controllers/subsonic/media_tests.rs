@@ -1299,3 +1299,38 @@ async fn an_octo_app_still_waits_for_lossless_on_a_song_not_kept_yet() {
         "the play waited for the lossless copy"
     );
 }
+
+#[tokio::test]
+async fn an_octo_app_play_served_its_lossless_copy_keeps_it_on_the_next_range() {
+    let navidrome = ping_ok().await;
+    let (state, downloads, library) = kept_song_state(&navidrome, true);
+    let app = app(&state);
+    let url = "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Octo";
+    let first = {
+        let app = app.clone();
+        tokio::spawn(async move { get(&app, url).await })
+    };
+    let queue = state.track_acquisition_queue.clone();
+    let request = tokio::time::timeout(Duration::from_secs(30), queue.dequeue(&CancellationToken::new()))
+        .await
+        .expect("the stream queued an acquisition")
+        .expect("a request");
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("octo-playback.flac");
+    std::fs::write(&path, [4, 5, 6]).expect("written");
+    request
+        .completion
+        .try_set_result(path.to_string_lossy().into_owned());
+    queue.release(&request);
+    assert_eq!(first.await.expect("ran").body.as_ref(), [4, 5, 6]);
+    // The copy is now the song's file in the library.
+    library.local_paths.lock().insert(
+        ("soulseek".into(), "track-id".into()),
+        path.to_string_lossy().into_owned(),
+    );
+
+    let later = send(&app, Method::GET, url, &[("Range", "bytes=2-")], Body::empty()).await;
+    assert_eq!(later.header("content-type"), Some("audio/flac"));
+    assert_eq!(later.body.as_ref(), [6]);
+    assert!(downloads.stream_calls().is_empty(), "never the preview");
+}

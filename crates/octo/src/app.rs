@@ -94,7 +94,7 @@ use crate::services::library::generated_playlist_service::ForYouServices;
 use crate::services::library::library_edit_service::{
     LibraryEditService, LibraryEditServices, LibraryRescan,
 };
-use crate::services::library::library_review_sweep_worker::SweepVerification;
+use crate::services::library::library_review_sweep_worker::{SweepReplacer, SweepVerification};
 use crate::services::library::library_tag_edits::TagEditJournal;
 use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::library::library_youtube_check::{
@@ -2501,6 +2501,28 @@ impl LibraryJobs {
         );
         let fingerprint_sweep_verifier = Arc::new(FingerprintSweepVerifier::new());
         let resolver = navidrome.navidrome_song_path_resolver.clone();
+        // The admin's marks are read with Octo's admin sign-in and each Family member's with
+        // their own. Anyone else on the server, or a member whose marks cannot be read, keeps
+        // the song a question.
+        let sweep_replacer: Arc<dyn SweepReplacer> = Arc::new(ExecutorSweepReplacer::new(
+            navidrome.navidrome_song_path_resolver.clone(),
+            executor.clone(),
+            navidrome.navidrome_playlist_api.clone(),
+            Some(Arc::new(NavidromeMemberMarks::new(
+                Arc::clone(settings),
+                navidrome.http.clone(),
+                Arc::clone(&stores.family_store),
+                Arc::new(MemberCredentials::new(
+                    Arc::clone(&stores.family_store),
+                    Arc::clone(&stores.family_vault),
+                    Arc::clone(settings),
+                )),
+            ))),
+            Arc::new(NavidromeOtherListeners::new(
+                navidrome.navidrome_admin.clone(),
+                stores.family_store.clone(),
+            )),
+        ));
         let library_review_sweep_worker = Arc::new(
             LibraryReviewSweepWorker::new(
                 LibraryReviewSweepParts {
@@ -2516,28 +2538,7 @@ impl LibraryJobs {
                 Clock::system(),
             )
             .with_library_scope(navidrome.library_scope.clone())
-            // The admin's marks are read with Octo's admin sign-in and each Family member's with
-            // their own. Anyone else on the server, or a member whose marks cannot be read, keeps
-            // the song a question.
-            .with_replacer(Arc::new(ExecutorSweepReplacer::new(
-                navidrome.navidrome_song_path_resolver.clone(),
-                executor.clone(),
-                navidrome.navidrome_playlist_api.clone(),
-                Some(Arc::new(NavidromeMemberMarks::new(
-                    Arc::clone(settings),
-                    navidrome.http.clone(),
-                    Arc::clone(&stores.family_store),
-                    Arc::new(MemberCredentials::new(
-                        Arc::clone(&stores.family_store),
-                        Arc::clone(&stores.family_vault),
-                        Arc::clone(settings),
-                    )),
-                ))),
-                Arc::new(NavidromeOtherListeners::new(
-                    navidrome.navidrome_admin.clone(),
-                    stores.family_store.clone(),
-                )),
-            ))),
+            .with_replacer(sweep_replacer.clone()),
         );
         // Walks the library once, when a person starts it, and keeps to the shared library.
         let resolver = navidrome.navidrome_song_path_resolver.clone();
@@ -2555,7 +2556,8 @@ impl LibraryJobs {
                 Box::new(move || resolver.music_root()),
                 Clock::system(),
             )
-            .with_library_scope(navidrome.library_scope.clone()),
+            .with_library_scope(navidrome.library_scope.clone())
+            .with_replacer(sweep_replacer),
         );
         LibraryJobs {
             upgrade_worker,

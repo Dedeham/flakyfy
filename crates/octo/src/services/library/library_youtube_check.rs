@@ -3,7 +3,8 @@
 //! Every song already in the library is compared with its YouTube preview, once, after a person
 //! starts it from the dashboard, the way a new download is ([`preview_check`]). A song that sounds
 //! nothing like a preview that can be believed becomes a Review question; nothing is ever changed
-//! or removed. It goes a few songs an hour, only while nothing
+//! or removed. The songs it heard as wrong or unclear are kept, worst first, for the dashboard's list,
+//! where a person picks the ones to replace, keep or dismiss all at once. It goes a few songs an hour, only while nothing
 //! is downloading, only of whoever keeps the library, and carries on where it stopped after a
 //! restart: the files are walked once in order and the cursor is the only memory a run needs. The
 //! walk and the tags are read off the runtime's threads, and no song may take longer than
@@ -11,10 +12,10 @@
 //! tried again, but not for ever: a song that cannot be answered after two rests is counted as
 //! having no copy.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -24,7 +25,7 @@ use octo_core::common::Clock;
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::json::datetime;
 use octo_core::models::domain::Song;
-use octo_core::settings::SettingsStore;
+use octo_core::settings::{LibraryAction, SettingsStore};
 use octo_media::audio::AudioFingerprinter;
 use octo_media::tags::TagFile;
 use parking_lot::Mutex;
@@ -32,9 +33,11 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::library_review_sweep_worker::LibraryReviewSweepWorker;
+use super::library_action_executor::LibraryActionRequest;
+use super::library_action_journal::LibraryActionState;
+use super::library_review_sweep_worker::{LibraryReviewSweepWorker, SweepReplacer};
 use super::navidrome_song_path_resolver::get_full_path;
-use super::notice_queue::{NoticeOrigin, NoticeQueue};
+use super::notice_queue::{NoticeOrigin, NoticeQueue, NoticeState};
 use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
 use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
@@ -46,7 +49,7 @@ use crate::services::state_file;
 use crate::services::you_tube::YouTubeResolver;
 
 /// What the preview says of one library file.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Compared {
     /// Nothing to compare with: no video for the song, a file fpcalc cannot read, or too little
     /// audio. An answer: asking again would not change it.
@@ -54,7 +57,13 @@ pub enum Compared {
     /// The shim did not answer or did not send the preview. Not an answer: tried again.
     Unavailable,
     /// The two were compared ([`preview_check::judge`]).
-    Heard { heard: Heard, bit_error: f64 },
+    Heard {
+        heard: Heard,
+        bit_error: f64,
+        /// The preview has the song's title, artist and length ([`preview_check::trustworthy`]).
+        trusted: bool,
+        video_id: String,
+    },
 }
 
 /// What the check asks of YouTube, behind a seam so tests need no shim and no fpcalc.
@@ -149,12 +158,18 @@ pub async fn hear(
     Compared::Heard {
         heard: preview_check::judge(&comparison, trusted),
         bit_error: comparison.bit_error,
+        trusted,
+        video_id: preview.video_id,
     }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct YoutubeCheckState {
+    /// The songs heard as wrong or unclear, by library-relative path. Left out of the file while
+    /// there are none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub results: BTreeMap<String, YoutubeResult>,
     /// A run is going: started from the dashboard and not yet finished.
     #[serde(default)]
     pub running: bool,
@@ -185,6 +200,60 @@ pub struct YoutubeCheckState {
     pub started_utc: Option<DateTime<Utc>>,
     #[serde(default, with = "datetime::utc_option")]
     pub finished_utc: Option<DateTime<Utc>>,
+}
+
+/// What the check heard of one song it did not find alike: kept for the dashboard's list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct YoutubeResult {
+    pub artist: String,
+    pub title: String,
+    /// The share of bits that differ at the best match, 0 to 1 ([`preview_check::Comparison`]).
+    pub bit_error: f64,
+    /// Clearly another song ([`Heard::Mismatch`]); otherwise unclear.
+    pub clearly_wrong: bool,
+    /// The preview has the song's title, artist and length.
+    pub trusted: bool,
+    pub video_id: String,
+    /// The file's size and modified time when heard: a file that changed is another file.
+    pub stamp: String,
+    #[serde(default = "datetime::min_value", with = "datetime::utc")]
+    pub checked_utc: DateTime<Utc>,
+}
+
+impl YoutubeCheckState {
+    /// The most songs a run keeps for the list. Past it the least suspicious one goes.
+    pub const MAX_RESULTS: usize = 2000;
+
+    fn remember(&mut self, path: &str, result: YoutubeResult) {
+        self.results.insert(path.to_string(), result);
+        while self.results.len() > Self::MAX_RESULTS {
+            let least = self
+                .results
+                .iter()
+                .min_by(|a, b| a.1.bit_error.total_cmp(&b.1.bit_error))
+                .map(|(path, _)| path.clone());
+            match least {
+                Some(path) => self.results.remove(&path),
+                None => break,
+            };
+        }
+    }
+}
+
+/// The file's size and modified time, or empty when it cannot be read.
+fn stamp_of(full: &str) -> String {
+    std::fs::metadata(full)
+        .ok()
+        .map(|m| {
+            let modified = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs());
+            format!("{}:{modified}", m.len())
+        })
+        .unwrap_or_default()
 }
 
 struct StoreInner {
@@ -300,11 +369,31 @@ pub struct YoutubeCheckStatus {
     pub alike: i32,
     pub unsure: i32,
     pub no_copy: i32,
+    /// Songs on the list that sound like another song, and songs it could not tell.
+    pub listed_wrong: usize,
+    pub listed_unclear: usize,
     pub open: usize,
     pub keeper: Option<String>,
     pub per_hour: i32,
     pub started_utc: Option<DateTime<Utc>>,
     pub finished_utc: Option<DateTime<Utc>>,
+}
+
+/// What [`LibraryYoutubeCheck::status`] reads of the state.
+struct StatusFields {
+    running: bool,
+    paused: bool,
+    cursor: String,
+    total: i32,
+    done: i32,
+    asked: i32,
+    alike: i32,
+    unsure: i32,
+    no_copy: i32,
+    listed_wrong: usize,
+    listed_unclear: usize,
+    started_utc: Option<DateTime<Utc>>,
+    finished_utc: Option<DateTime<Utc>>,
 }
 
 /// Compares every library song with its YouTube preview, once.
@@ -319,6 +408,10 @@ pub struct LibraryYoutubeCheck {
     /// With Family on, the check keeps to the shared library: a member's own songs are never
     /// asked about.
     scope: Option<ScopeResolver>,
+    /// How the songs picked in the dashboard are replaced. None leaves replacing off.
+    replacer: Option<Arc<dyn SweepReplacer>>,
+    /// A batch of replacements is going; a second one waits until it is over.
+    replacing: AtomicBool,
 
     files: Mutex<Option<Arc<Vec<String>>>>,
     /// Changes when a run starts, so work in flight for the last one drops its result.
@@ -361,6 +454,8 @@ impl LibraryYoutubeCheck {
             music_root,
             clock,
             scope: None,
+            replacer: None,
+            replacing: AtomicBool::new(false),
             files: Mutex::new(None),
             generation: AtomicI32::new(0),
             unavailable_in_a_row: AtomicI32::new(0),
@@ -371,6 +466,12 @@ impl LibraryYoutubeCheck {
 
     pub fn with_library_scope(mut self, scope: ScopeResolver) -> Self {
         self.scope = Some(scope);
+        self
+    }
+
+    /// How the songs a person picks in the dashboard are replaced, through Wrong song.
+    pub fn with_replacer(mut self, replacer: Arc<dyn SweepReplacer>) -> Self {
+        self.replacer = Some(replacer);
         self
     }
 
@@ -632,25 +733,45 @@ impl LibraryYoutubeCheck {
         let mut asked = false;
         let (mut alike, mut unsure, mut no_copy) = (0, 0, 0);
         match answer {
-            Compared::Heard { heard, bit_error } => match heard {
-                Heard::Mismatch => {
-                    let question = VerificationResult {
-                        verdict: VerificationVerdict::Inconclusive,
-                        reason: InconclusiveReason::DiffersFromYouTube,
-                        evidence: Some(format!("{}% of its bits differ", (bit_error * 100.0).round())),
-                        ..Default::default()
+            Compared::Heard {
+                heard,
+                bit_error,
+                trusted,
+                video_id,
+            } => {
+                if heard != Heard::Match {
+                    let result = YoutubeResult {
+                        artist: song.artist.clone(),
+                        title: song.title.clone(),
+                        bit_error,
+                        clearly_wrong: heard == Heard::Mismatch,
+                        trusted,
+                        video_id,
+                        stamp: stamp_of(&full),
+                        checked_utc: self.clock.now(),
                     };
-                    asked = self.notices.add_review_from(
-                        keeper,
-                        &full,
-                        &song,
-                        &question,
-                        NoticeOrigin::LibrarySweep,
-                    );
+                    self.store.update(|s| s.remember(target, result));
                 }
-                Heard::Match => alike = 1,
-                Heard::Unclear => unsure = 1,
-            },
+                match heard {
+                    Heard::Mismatch => {
+                        let question = VerificationResult {
+                            verdict: VerificationVerdict::Inconclusive,
+                            reason: InconclusiveReason::DiffersFromYouTube,
+                            evidence: Some(format!("{}% of its bits differ", (bit_error * 100.0).round())),
+                            ..Default::default()
+                        };
+                        asked = self.notices.add_review_from(
+                            keeper,
+                            &full,
+                            &song,
+                            &question,
+                            NoticeOrigin::LibrarySweep,
+                        );
+                    }
+                    Heard::Match => alike = 1,
+                    Heard::Unclear => unsure = 1,
+                }
+            }
             Compared::NoCopy | Compared::Unavailable => no_copy = 1,
         }
         self.store.update(|s| {
@@ -670,7 +791,22 @@ impl LibraryYoutubeCheck {
         let actions = &current.library_actions;
         let files = self.files.lock().clone();
         let (state, reason) = self.hold.lock().clone();
-        let s = self.store.read(Clone::clone);
+        // Not a clone of the whole state: the list of results can be long, and this is polled.
+        let s = self.store.read(|s| StatusFields {
+            running: s.running,
+            paused: s.paused,
+            cursor: s.cursor.clone(),
+            total: s.total,
+            done: s.done,
+            asked: s.asked,
+            alike: s.alike,
+            unsure: s.unsure,
+            no_copy: s.no_copy,
+            listed_wrong: s.results.values().filter(|r| r.clearly_wrong).count(),
+            listed_unclear: s.results.values().filter(|r| !r.clearly_wrong).count(),
+            started_utc: s.started_utc,
+            finished_utc: s.finished_utc,
+        });
         let position = files.map_or(0, |files| first_after(&files, &s.cursor));
         YoutubeCheckStatus {
             state,
@@ -684,12 +820,286 @@ impl LibraryYoutubeCheck {
             alike: s.alike,
             unsure: s.unsure,
             no_copy: s.no_copy,
+            listed_wrong: s.listed_wrong,
+            listed_unclear: s.listed_unclear,
             open: self.notices.open_count(NoticeOrigin::LibrarySweep),
             keeper: LibraryReviewSweepWorker::keeper(actions, current.subsonic.admin_username.as_deref()),
             per_hour: actions.effective_youtube_check_per_hour(),
             started_utc: s.started_utc,
             finished_utc: s.finished_utc,
         }
+    }
+}
+
+/// Which songs of the list a request is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SongFilter {
+    /// Sound like another song.
+    Wrong,
+    /// Neither alike nor clearly another song.
+    Unclear,
+    All,
+}
+
+impl SongFilter {
+    pub fn parse(name: Option<&str>) -> SongFilter {
+        match name.map(str::trim) {
+            Some(n) if n.eq_ignore_ascii_case("unclear") => SongFilter::Unclear,
+            Some(n) if n.eq_ignore_ascii_case("all") => SongFilter::All,
+            _ => SongFilter::Wrong,
+        }
+    }
+
+    fn takes(self, result: &YoutubeResult) -> bool {
+        match self {
+            SongFilter::Wrong => result.clearly_wrong,
+            SongFilter::Unclear => !result.clearly_wrong,
+            SongFilter::All => true,
+        }
+    }
+}
+
+/// One song of the list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SongRow {
+    /// The library-relative path: what a request names the song by.
+    pub id: String,
+    pub result: YoutubeResult,
+}
+
+/// A page of the list, worst first, and how many songs each filter holds.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SongPage {
+    pub rows: Vec<SongRow>,
+    /// Songs the filter takes, over all pages.
+    pub matching: usize,
+    pub wrong: usize,
+    pub unclear: usize,
+}
+
+/// What a batch of replacements was made of.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReplaceReport {
+    /// Songs handed to Wrong song, one after the other.
+    pub queued: usize,
+    /// Songs left out, and why.
+    pub skipped: Vec<(String, String)>,
+}
+
+/// Clears [`LibraryYoutubeCheck::replacing`] when a batch ends, however it ends.
+struct ReplacingGuard(Arc<LibraryYoutubeCheck>);
+
+impl Drop for ReplacingGuard {
+    fn drop(&mut self) {
+        self.0.replacing.store(false, Ordering::SeqCst);
+    }
+}
+
+impl LibraryYoutubeCheck {
+    /// The most songs one request may replace.
+    pub const MAX_REPLACE_AT_ONCE: usize = 50;
+    /// The longest one replacement may take before the batch goes on to the next song.
+    pub const REPLACE_TIMEOUT: Duration = Duration::from_secs(600);
+
+    /// A page of the songs heard as wrong or unclear, the most different first. A song whose file
+    /// changed since it was heard is not on the list any more.
+    pub async fn songs(&self, filter: SongFilter, offset: usize, limit: usize) -> SongPage {
+        let root = (self.music_root)();
+        let mut listed: Vec<(String, YoutubeResult)> = self.store.read(|s| {
+            s.results
+                .iter()
+                .map(|(path, result)| (path.clone(), result.clone()))
+                .collect()
+        });
+        listed.sort_by(|a, b| {
+            b.1.bit_error
+                .total_cmp(&a.1.bit_error)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        let wrong = listed.iter().filter(|(_, r)| r.clearly_wrong).count();
+        let unclear = listed.len() - wrong;
+        let page: Vec<(String, YoutubeResult)> = listed
+            .into_iter()
+            .filter(|(_, result)| filter.takes(result))
+            .collect();
+        let matching = page.len();
+        let page: Vec<(String, YoutubeResult)> = page.into_iter().skip(offset).take(limit).collect();
+
+        // Reads the disk for one page of files, so not on a runtime thread.
+        let Ok((fresh, gone)) = tokio::task::spawn_blocking(move || {
+            let (mut fresh, mut gone) = (Vec::new(), Vec::new());
+            for (path, result) in page {
+                if stamp_of(&full_path(&root, &path)) == result.stamp {
+                    fresh.push(SongRow { id: path, result });
+                } else {
+                    gone.push(path);
+                }
+            }
+            (fresh, gone)
+        })
+        .await
+        else {
+            return SongPage {
+                rows: Vec::new(),
+                matching,
+                wrong,
+                unclear,
+            };
+        };
+        if !gone.is_empty() {
+            self.store.update(|s| {
+                for path in &gone {
+                    s.results.remove(path);
+                }
+            });
+        }
+        SongPage {
+            rows: fresh,
+            matching: matching - gone.len(),
+            wrong,
+            unclear,
+        }
+    }
+
+    /// Takes these songs off the list and settles the Review question about each, as `state`:
+    /// Kept for songs to leave as they are, Dismissed for songs to stop asking about. Nothing
+    /// else changes. How many were on the list.
+    pub fn settle(&self, ids: &[String], state: NoticeState) -> usize {
+        let current = self.settings.current();
+        let keeper = LibraryReviewSweepWorker::keeper(
+            &current.library_actions,
+            current.subsonic.admin_username.as_deref(),
+        );
+        let root = (self.music_root)();
+        let mut settled = 0;
+        let found: Vec<String> = self.store.read(|s| {
+            ids.iter()
+                .filter(|id| s.results.contains_key(*id))
+                .cloned()
+                .collect()
+        });
+        for id in &found {
+            if let Some(keeper) = &keeper {
+                let key = NoticeQueue::review_key(keeper, &full_path(&root, id));
+                self.notices.resolve(&key, state);
+            }
+            settled += 1;
+        }
+        self.store.update(|s| {
+            for id in &found {
+                s.results.remove(id);
+            }
+        });
+        self.store.flush();
+        settled
+    }
+
+    /// Wrong song for the songs picked on the list, as `user`, one after the other in the
+    /// background. A song anyone starred or rated, one whose marks cannot be read, one Navidrome
+    /// does not show, one that changed or is gone, and one not on the list are left out and said
+    /// so. Err when replacing is not set up or a batch is still going.
+    pub async fn replace_selected(
+        self: &Arc<Self>,
+        user: &str,
+        ids: &[String],
+    ) -> Result<ReplaceReport, &'static str> {
+        let Some(replacer) = self.replacer.clone() else {
+            return Err("Replacing is not set up.");
+        };
+        if self.replacing.swap(true, Ordering::SeqCst) {
+            return Err("Songs are still being replaced. Wait for them to finish.");
+        }
+        // From here, however this returns, the flag is cleared: by the batch when it ends, or by
+        // the guard when nothing is left to do.
+        let guard = ReplacingGuard(Arc::clone(self));
+        let root = (self.music_root)();
+        let mut report = ReplaceReport::default();
+        let mut picked: Vec<(String, String, String)> = Vec::new();
+        for id in ids.iter().take(Self::MAX_REPLACE_AT_ONCE) {
+            let Some(result) = self.store.read(|s| s.results.get(id).cloned()) else {
+                report.skipped.push((id.clone(), "It is not on the list.".into()));
+                continue;
+            };
+            let full = full_path(&root, id);
+            let owned = full.clone();
+            let stamp = tokio::task::spawn_blocking(move || stamp_of(&owned))
+                .await
+                .unwrap_or_default();
+            if stamp != result.stamp {
+                self.store.update(|s| {
+                    s.results.remove(id);
+                });
+                report
+                    .skipped
+                    .push((id.clone(), "The file changed or is gone.".into()));
+                continue;
+            }
+            let Some(navidrome_id) = replacer.song_id(&result.artist, &result.title, &full).await else {
+                report
+                    .skipped
+                    .push((id.clone(), "Navidrome does not show it yet.".into()));
+                continue;
+            };
+            match replacer.marked(&navidrome_id).await {
+                Some(false) => picked.push((id.clone(), navidrome_id, full)),
+                Some(true) => report
+                    .skipped
+                    .push((id.clone(), "Someone starred or rated it.".into())),
+                None => report
+                    .skipped
+                    .push((id.clone(), "Its stars and ratings could not be read.".into())),
+            }
+        }
+        report.queued = picked.len();
+        if picked.is_empty() {
+            return Ok(report);
+        }
+        let user = user.to_string();
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let _guard = guard;
+            this.replace_one_by_one(replacer, &user, picked).await;
+        });
+        Ok(report)
+    }
+
+    async fn replace_one_by_one(
+        &self,
+        replacer: Arc<dyn SweepReplacer>,
+        user: &str,
+        picked: Vec<(String, String, String)>,
+    ) {
+        let current = self.settings.current();
+        let keeper = LibraryReviewSweepWorker::keeper(
+            &current.library_actions,
+            current.subsonic.admin_username.as_deref(),
+        );
+        for (id, navidrome_id, full) in picked {
+            let request = LibraryActionRequest::new(LibraryAction::WrongSong, navidrome_id, user);
+            match tokio::time::timeout(Self::REPLACE_TIMEOUT, replacer.replace(request)).await {
+                Ok(Ok(outcome)) if outcome.state == LibraryActionState::Applied => {
+                    info!("YouTube check list: replaced {id} through Wrong song as {user}");
+                    self.store.update(|s| {
+                        s.results.remove(&id);
+                    });
+                    if let Some(keeper) = &keeper {
+                        self.notices
+                            .resolve(&NoticeQueue::review_key(keeper, &full), NoticeState::Acted);
+                    }
+                }
+                Ok(Ok(outcome)) => info!(
+                    "YouTube check list: {id} was not replaced ({:?}: {})",
+                    outcome.state,
+                    outcome.detail.as_deref().unwrap_or("no reason given")
+                ),
+                Ok(Err(e)) => warn!("YouTube check list: replacing {id} failed: {e}"),
+                Err(_) => warn!(
+                    "YouTube check list: replacing {id} took longer than {:?}",
+                    Self::REPLACE_TIMEOUT
+                ),
+            }
+        }
+        self.store.flush();
     }
 }
 

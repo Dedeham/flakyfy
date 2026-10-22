@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 
 use octo_core::settings::{AppSettings, LibraryActionSettings, NoticeKind, SubsonicSettings};
+use tokio::sync::Notify;
 
 use super::*;
 
@@ -66,7 +67,12 @@ impl IAcquisitionActivity for FakeActivity {
 }
 
 fn heard(heard: Heard, bit_error: f64) -> Compared {
-    Compared::Heard { heard, bit_error }
+    Compared::Heard {
+        heard,
+        bit_error,
+        trusted: heard != Heard::Unclear,
+        video_id: "vid".into(),
+    }
 }
 
 fn settings_of(per_hour: i32) -> Arc<SettingsStore> {
@@ -160,7 +166,7 @@ impl Check {
 
 /// Ticks until the run is over, a bounded number of times.
 async fn run_to_the_end(worker: &LibraryYoutubeCheck) {
-    for _ in 0..50 {
+    for _ in 0..200 {
         worker.tick().await;
         if !worker.store().read(|s| s.running) {
             return;
@@ -771,5 +777,363 @@ async fn an_unreachable_shim_is_unavailable_not_no_copy() {
     assert_eq!(
         checker.check(Path::new(&path), &song).await,
         Compared::Unavailable
+    );
+}
+
+// ---- The list of songs to look at -------------------------------------------------------
+
+#[tokio::test]
+async fn the_wrong_and_unclear_songs_are_kept_for_the_list_and_the_alike_are_not() {
+    let check = Check::new();
+    for name in ["a-wrong.flac", "b-unclear.flac", "c-alike.flac"] {
+        check.tagged(name);
+    }
+    let checker = FakeChecker::answering(vec![
+        heard(Heard::Mismatch, 0.47),
+        heard(Heard::Unclear, 0.3),
+        heard(Heard::Match, 0.05),
+    ]);
+    let (worker, _) = check.simple(checker);
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    let page = worker.songs(SongFilter::All, 0, 50).await;
+    let rows: Vec<(&str, bool, bool)> = page
+        .rows
+        .iter()
+        .map(|row| (row.id.as_str(), row.result.clearly_wrong, row.result.trusted))
+        .collect();
+    assert_eq!(
+        rows,
+        [("a-wrong.flac", true, true), ("b-unclear.flac", false, false)]
+    );
+    assert_eq!((page.wrong, page.unclear), (1, 1));
+    let status = worker.status();
+    assert_eq!((status.listed_wrong, status.listed_unclear), (1, 1));
+    assert_eq!(page.rows[0].result.video_id, "vid");
+}
+
+#[tokio::test]
+async fn the_list_is_worst_first_and_filters_and_pages() {
+    let check = Check::new();
+    for name in ["a.flac", "b.flac", "c.flac"] {
+        check.tagged(name);
+    }
+    let checker = FakeChecker::answering(vec![
+        heard(Heard::Mismatch, 0.40),
+        heard(Heard::Mismatch, 0.55),
+        heard(Heard::Unclear, 0.30),
+    ]);
+    let (worker, _) = check.simple(checker);
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    let all = worker.songs(SongFilter::All, 0, 50).await;
+    let ids: Vec<&str> = all.rows.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(ids, ["b.flac", "a.flac", "c.flac"]);
+    let wrong = worker.songs(SongFilter::Wrong, 0, 50).await;
+    assert_eq!(wrong.matching, 2);
+    let second = worker.songs(SongFilter::Wrong, 1, 1).await;
+    assert_eq!(second.rows.len(), 1);
+    assert_eq!(second.rows[0].id, "a.flac");
+    assert_eq!(second.matching, 2);
+    assert_eq!(worker.songs(SongFilter::Unclear, 0, 50).await.rows.len(), 1);
+}
+
+#[tokio::test]
+async fn a_file_that_changed_since_it_was_heard_is_not_on_the_list_any_more() {
+    let check = Check::new();
+    let path = check.tagged("a.flac");
+    let (worker, _) = check.simple(FakeChecker::answering(vec![heard(Heard::Mismatch, 0.5)]));
+    worker.start();
+    run_to_the_end(&worker).await;
+    assert_eq!(worker.songs(SongFilter::All, 0, 50).await.rows.len(), 1);
+
+    std::fs::write(&path, b"another file, another size").expect("rewritten");
+
+    assert!(worker.songs(SongFilter::All, 0, 50).await.rows.is_empty());
+    assert!(worker.store().read(|s| s.results.is_empty()));
+}
+
+#[test]
+fn a_full_list_drops_the_least_suspicious_song() {
+    let mut state = YoutubeCheckState::default();
+    let result = |bit_error: f64| YoutubeResult {
+        artist: "A".into(),
+        title: "T".into(),
+        bit_error,
+        clearly_wrong: true,
+        trusted: true,
+        video_id: "vid".into(),
+        stamp: String::new(),
+        checked_utc: Utc::now(),
+    };
+    for i in 0..=YoutubeCheckState::MAX_RESULTS {
+        state.remember(&format!("{i:05}.flac"), result(0.3 + i as f64 / 100_000.0));
+    }
+
+    assert_eq!(state.results.len(), YoutubeCheckState::MAX_RESULTS);
+    assert!(!state.results.contains_key("00000.flac"));
+    assert!(state.results.contains_key("02000.flac"));
+}
+
+#[tokio::test]
+async fn the_list_survives_a_restart_and_starting_over_empties_it() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let (worker, notices) = check.simple(FakeChecker::answering(vec![heard(Heard::Mismatch, 0.5)]));
+    worker.start();
+    run_to_the_end(&worker).await;
+    drop(worker);
+
+    let worker = check.worker(
+        FakeChecker::answering(vec![]),
+        notices,
+        settings_of(60),
+        Arc::new(FakeActivity::default()),
+    );
+    assert_eq!(worker.songs(SongFilter::All, 0, 50).await.rows.len(), 1);
+
+    worker.start();
+    assert!(worker.store().read(|s| s.results.is_empty()));
+}
+
+#[tokio::test]
+async fn keeping_and_dismissing_take_songs_off_the_list_and_answer_their_question() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    check.tagged("b.flac");
+    let (worker, notices) = check.simple(FakeChecker::answering(vec![
+        heard(Heard::Mismatch, 0.5),
+        heard(Heard::Mismatch, 0.45),
+    ]));
+    worker.start();
+    run_to_the_end(&worker).await;
+    assert_eq!(notices.for_user("bob", NoticeKind::Review).len(), 2);
+
+    let kept = worker.settle(
+        &["a.flac".to_string(), "nope.flac".to_string()],
+        NoticeState::Kept,
+    );
+    let dismissed = worker.settle(&["b.flac".to_string()], NoticeState::Dismissed);
+
+    // Only songs that were on the list count, and no file was touched.
+    assert_eq!((kept, dismissed), (1, 1));
+    assert!(worker.store().read(|s| s.results.is_empty()));
+    // Answered, so none of them waits any more (the answers stay in the queue).
+    let entries = notices.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|entry| !entry.is_open()), "{entries:?}");
+    assert!(Path::new(&check.root.path().join("a.flac")).exists());
+}
+
+/// Wrong song as a script. With `gate` set, a replacement waits there until it is let go.
+struct ListReplacer {
+    shown: bool,
+    marked: Option<bool>,
+    gate: Option<Arc<Notify>>,
+    requests: Mutex<Vec<(LibraryAction, String, String)>>,
+}
+
+impl ListReplacer {
+    fn new(shown: bool, marked: Option<bool>, gate: Option<Arc<Notify>>) -> Arc<Self> {
+        Arc::new(ListReplacer {
+            shown,
+            marked,
+            gate,
+            requests: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+#[async_trait]
+impl SweepReplacer for ListReplacer {
+    async fn song_id(&self, _: &str, _: &str, path: &str) -> Option<String> {
+        self.shown
+            .then(|| format!("nd-{}", path.rsplit('/').next().unwrap_or(path)))
+    }
+
+    async fn marked(&self, _: &str) -> Option<bool> {
+        self.marked
+    }
+
+    async fn replace(
+        &self,
+        request: crate::services::library::library_action_executor::LibraryActionRequest,
+    ) -> anyhow::Result<crate::services::library::library_action_executor::LibraryActionOutcome> {
+        if let Some(gate) = &self.gate {
+            gate.notified().await;
+        }
+        self.requests
+            .lock()
+            .push((request.action, request.navidrome_id, request.username));
+        Ok(
+            crate::services::library::library_action_executor::LibraryActionOutcome::new(
+                LibraryActionState::Applied,
+                Some("done".into()),
+            ),
+        )
+    }
+}
+
+/// A run over `names`, each heard as a mismatch, with `replacer` set.
+async fn listed(check: &Check, names: &[&str], replacer: Arc<ListReplacer>) -> Arc<LibraryYoutubeCheck> {
+    listed_as(check, names, replacer, heard(Heard::Mismatch, 0.5)).await
+}
+
+/// [`listed`] with every song heard as `answer`. A mismatch is also a question in Review, and
+/// the check rests at 50 of those; an unclear song is on the list without one.
+async fn listed_as(
+    check: &Check,
+    names: &[&str],
+    replacer: Arc<ListReplacer>,
+    answer: Compared,
+) -> Arc<LibraryYoutubeCheck> {
+    for name in names {
+        check.tagged(name);
+    }
+    let checker = FakeChecker::answering(vec![answer; names.len()]);
+    let worker = Arc::new(
+        check
+            .worker(
+                checker,
+                Arc::new(NoticeQueue::new()),
+                settings_of(60),
+                Arc::new(FakeActivity::default()),
+            )
+            .with_replacer(replacer),
+    );
+    worker.start();
+    run_to_the_end(&worker).await;
+    worker
+}
+
+/// Waits, for a bounded time, until the list is as long as `len`.
+async fn until_listed(worker: &LibraryYoutubeCheck, len: usize) {
+    for _ in 0..200 {
+        if worker.store().read(|s| s.results.len()) == len {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the list did not get to {len} songs");
+}
+
+#[tokio::test]
+async fn picked_songs_are_replaced_one_after_the_other_and_leave_the_list() {
+    let check = Check::new();
+    let replacer = ListReplacer::new(true, Some(false), None);
+    let worker = listed(&check, &["a.flac", "b.flac", "c.flac"], replacer.clone()).await;
+
+    let report = worker
+        .replace_selected("bob", &["a.flac".to_string(), "b.flac".to_string()])
+        .await
+        .expect("started");
+
+    assert_eq!((report.queued, report.skipped.len()), (2, 0));
+    until_listed(&worker, 1).await;
+    let requests = replacer.requests.lock().clone();
+    assert_eq!(
+        requests,
+        [
+            (
+                LibraryAction::WrongSong,
+                "nd-a.flac".to_string(),
+                "bob".to_string()
+            ),
+            (
+                LibraryAction::WrongSong,
+                "nd-b.flac".to_string(),
+                "bob".to_string()
+            ),
+        ]
+    );
+    assert_eq!(worker.songs(SongFilter::All, 0, 50).await.rows[0].id, "c.flac");
+}
+
+#[tokio::test]
+async fn a_starred_song_one_navidrome_does_not_show_and_one_not_on_the_list_are_left_out() {
+    for (shown, marked, why) in [
+        (true, Some(true), "Someone starred or rated it."),
+        (true, None, "Its stars and ratings could not be read."),
+        (false, Some(false), "Navidrome does not show it yet."),
+    ] {
+        let check = Check::new();
+        let replacer = ListReplacer::new(shown, marked, None);
+        let worker = listed(&check, &["a.flac"], replacer.clone()).await;
+
+        let report = worker
+            .replace_selected("bob", &["a.flac".to_string(), "ghost.flac".to_string()])
+            .await
+            .expect("started");
+
+        assert_eq!(report.queued, 0, "{why}");
+        assert_eq!(
+            report.skipped,
+            [
+                ("a.flac".to_string(), why.to_string()),
+                ("ghost.flac".to_string(), "It is not on the list.".to_string()),
+            ]
+        );
+        assert!(replacer.requests.lock().is_empty());
+        // Nothing left running: the next batch is not refused.
+        assert!(worker.replace_selected("bob", &[]).await.is_ok());
+    }
+}
+
+#[tokio::test]
+async fn a_second_batch_waits_until_the_first_is_over() {
+    let check = Check::new();
+    let gate = Arc::new(Notify::new());
+    let replacer = ListReplacer::new(true, Some(false), Some(gate.clone()));
+    let worker = listed(&check, &["a.flac", "b.flac"], replacer.clone()).await;
+
+    let first = worker
+        .replace_selected("bob", &["a.flac".to_string()])
+        .await
+        .expect("started");
+    let second = worker.replace_selected("bob", &["b.flac".to_string()]).await;
+
+    assert_eq!(first.queued, 1);
+    assert!(second.is_err(), "{second:?}");
+    gate.notify_one();
+    until_listed(&worker, 1).await;
+    // Over: a new batch goes through.
+    let third = worker.replace_selected("bob", &["b.flac".to_string()]).await;
+    assert!(third.is_ok(), "{third:?}");
+    gate.notify_one();
+}
+
+#[tokio::test]
+async fn at_most_fifty_songs_are_taken_in_one_request() {
+    let check = Check::new();
+    let replacer = ListReplacer::new(true, Some(false), None);
+    let names: Vec<String> = (0..LibraryYoutubeCheck::MAX_REPLACE_AT_ONCE + 5)
+        .map(|i| format!("{i:03}.flac"))
+        .collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let worker = listed_as(&check, &refs, replacer, heard(Heard::Unclear, 0.3)).await;
+
+    let report = worker.replace_selected("bob", &names).await.expect("started");
+
+    assert_eq!(report.queued, LibraryYoutubeCheck::MAX_REPLACE_AT_ONCE);
+    until_listed(&worker, 5).await;
+}
+
+#[tokio::test]
+async fn without_a_replacer_replacing_is_refused() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let (worker, _) = check.simple(FakeChecker::answering(vec![heard(Heard::Mismatch, 0.5)]));
+    let worker = Arc::new(worker);
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert!(
+        worker
+            .replace_selected("bob", &["a.flac".to_string()])
+            .await
+            .is_err()
     );
 }

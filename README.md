@@ -650,6 +650,18 @@ and rests an hour when the shim stops answering. It needs library actions and Re
 someone on the allowed list to ask. Where it is is kept in `youtube-check.json` beside the
 settings, so a restart carries on; pressing the button again starts over.
 
+Besides the Review questions, the songs the check heard as another song or could not tell are
+kept (up to 2000, the least suspicious dropped first) in a list under the button, **Songs to look
+at**, worst first. Each shows how much of its sound differs from the preview (the right song
+measured under about 20 %, another song over about 38 %), whether the preview was the song's own
+title, artist and length ("preview not verified" when it was not), and a link to the reference to
+hear. Pick the songs you want, or "Pick the clearly wrong", and **Replace** them through Wrong
+song, one after the other (up to 50 a request, one batch at a time), **Keep** them or **Dismiss**
+them. Replace needs library actions on, Wrong song on, you on the allowlist and dry run off (in
+a dry run it only says what it would do); the old file goes to Recently removed, a song anyone
+starred or rated is left out, and a song Navidrome does not show yet is left out. Keep and
+Dismiss change no file. A song whose file changed since it was heard leaves the list.
+
 `LIBRARY_ACTIONS_DUPLICATES` adds a Duplicates playlist per allowed user: recordings the
 library holds more than once, side by side, the copy worth keeping first (lossless before
 lossy, then the higher bitrate). Two files are copies only when they carry the same

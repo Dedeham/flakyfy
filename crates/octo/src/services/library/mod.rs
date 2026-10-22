@@ -25,6 +25,7 @@ pub mod library_snapshot;
 pub mod library_tag_edits;
 pub mod library_walk;
 pub mod library_write_gate;
+pub mod library_youtube_check;
 pub mod missing_rows;
 pub mod navidrome_playlist_api;
 pub mod navidrome_song_list;

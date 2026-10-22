@@ -64,11 +64,14 @@ pub enum InconclusiveReason {
     SourceDisagreed,
     SoundsLikeAnother,
     LengthOff,
+    /// The library's YouTube check heard a song that sounds nothing like a YouTube preview that
+    /// can be believed: the song's title and artist, at its length.
+    DiffersFromYouTube,
 }
 
 impl InconclusiveReason {
     /// Every member, in declaration order.
-    pub const ALL: [InconclusiveReason; 9] = [
+    pub const ALL: [InconclusiveReason; 10] = [
         Self::None,
         Self::Disabled,
         Self::NotFingerprinted,
@@ -78,6 +81,7 @@ impl InconclusiveReason {
         Self::SourceDisagreed,
         Self::SoundsLikeAnother,
         Self::LengthOff,
+        Self::DiffersFromYouTube,
     ];
 
     /// The reason's name, which the notice queue stores.
@@ -92,6 +96,7 @@ impl InconclusiveReason {
             Self::SourceDisagreed => "SourceDisagreed",
             Self::SoundsLikeAnother => "SoundsLikeAnother",
             Self::LengthOff => "LengthOff",
+            Self::DiffersFromYouTube => "DiffersFromYouTube",
         }
     }
 }

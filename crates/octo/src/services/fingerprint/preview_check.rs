@@ -400,7 +400,7 @@ pub async fn check(
 }
 
 /// The preview's raw fingerprint, read through a temporary file that is removed afterwards.
-async fn fingerprint_preview(
+pub(crate) async fn fingerprint_preview(
     source: &dyn PreviewSource,
     fingerprinter: &AudioFingerprinter,
     video_id: &str,

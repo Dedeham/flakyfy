@@ -641,11 +641,13 @@ in `identity-sweep.json` beside the settings, so a restart carries on where it w
 
 "Check every song against YouTube" (Library actions, Review) compares each song already in the
 library with its YouTube preview, once, the way a new download is compared when AcoustID cannot
-place it. Songs downloaded before that check, or kept from before Octo, never had it. A song that
-sounds nothing like a preview whose title, artist and length are the song's becomes a Review
-question; one that may be another version, or has no preview, is left alone. Nothing is changed or
-removed. It goes `LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR` (default 30, 0 is off) songs an hour, one
-at a time and only while nothing is downloading, pauses while 50 library questions wait in Review,
+place it. Songs downloaded before that check, or kept from before Octo, never had it. A song
+AcoustID vouches for (by the tag check's last answer, or a lookup of its own) is passed over
+quickly. A song that sounds nothing like a preview whose title, artist and length are the song's
+becomes a Review question, or is added to an open question AcoustID could not settle, whose
+fingerprint is then never sent to AcoustID; one that may be another version, or has no preview, is
+left alone. Nothing is changed or removed. It compares `LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR`
+(default 30, 0 is off) songs an hour, one at a time and only while nothing is downloading, pauses while 50 library questions wait in Review,
 and rests an hour when the shim stops answering. It needs library actions and Review on and
 someone on the allowed list to ask. Where it is is kept in `youtube-check.json` beside the
 settings, so a restart carries on; pressing the button again starts over.

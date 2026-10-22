@@ -304,7 +304,7 @@ services:
       # Check this many library songs an hour against their audio (0 is off). What disagrees
       # shows in Library health; only stray spaces are taken off by itself.
       LibraryActions__TagCheckPerHour: ${LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR:-60}
-      # Songs an hour the one-time YouTube check looks at, once started from the dashboard. 0 is off.
+      # Songs an hour the one-time YouTube check compares, once started from the dashboard. 0 is off.
       LibraryActions__YoutubeCheckPerHour: ${LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR:-30}
       # Recordings the library holds more than once, side by side, the copy worth keeping first.
       # Octo only points them out; nothing is removed unless you remove it.

@@ -271,11 +271,11 @@ pub struct LibraryActionSettings {
     /// Environment variable: LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR
     pub tag_check_per_hour: i32,
 
-    /// How many library songs an hour the one-time YouTube check looks at, once a person starts it
-    /// from the dashboard (Library actions, "Check every song against YouTube"). Each is compared
-    /// with its YouTube preview the way a new download is; one that sounds nothing like a preview
-    /// that can be believed becomes a Review question, and nothing is ever changed or removed. 0
-    /// is off. Only while nothing is downloading.
+    /// How many library songs an hour the one-time YouTube check compares with their YouTube
+    /// preview, once a person starts it from the dashboard (Library actions, "Check every song
+    /// against YouTube"). Like a new download, a song AcoustID vouches for is passed over quickly;
+    /// one that sounds nothing like a preview that can be believed becomes a Review question, and
+    /// nothing is ever changed or removed. 0 is off. Only while nothing is downloading.
     /// Environment variable: LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR
     pub youtube_check_per_hour: i32,
 

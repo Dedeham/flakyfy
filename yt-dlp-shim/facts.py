@@ -120,6 +120,14 @@ def parse_range(value: Optional[str]) -> Optional[tuple[Optional[int], Optional[
     return start, end
 
 
+def range_start(value: Optional[str]) -> Optional[int]:
+    """The first byte a Content-Range covers ("bytes 5-9/1234" is 5), or None."""
+    if not value:
+        return None
+    match = re.match(r"\s*bytes\s+(\d+)-\d+/", value)
+    return int(match.group(1)) if match else None
+
+
 def range_end(value: Optional[str]) -> Optional[int]:
     """The last byte a Content-Range covers ("bytes 0-1/1234" is 1), or None."""
     if not value:

@@ -825,9 +825,15 @@ def _open_upstream(url: str, headers: dict, video_id: str):
 # googlevideo sends a range that spans at most 10 MiB at full speed and a wider one at about
 # 33 KB/s, so a wider range is asked for in pieces of this size.
 _UPSTREAM_PIECE = int(os.environ.get("UPSTREAM_PIECE_BYTES", str(8 * 1024 * 1024)))
-# A piece whose connection breaks is asked for again from where it stopped, this many times
-# in a row before the answer ends short.
+# A piece that breaks, or cannot be opened, is asked for again from where the answer stopped,
+# this many times in a row before the answer is cut off.
 _PIECE_RETRIES = 2
+# The wait before asking again for a piece that could not be opened.
+_PIECE_RETRY_WAIT = float(os.environ.get("UPSTREAM_PIECE_RETRY_WAIT", "0.5"))
+
+
+class _OtherFile(Exception):
+    """A piece answered from another file than the one the answer began with."""
 
 
 def _is_pieced(wanted) -> bool:
@@ -851,6 +857,7 @@ def _pieced_answer(video_id, url, upstream_headers, first, wanted, total, synthe
     status, length and Content-Range. A caller that sent no Range gets a plain 200."""
     start = wanted[0]
     last = total - 1 if wanted[1] is None else min(wanted[1], total - 1)
+    status = 200 if synthesized else 206
     _facts_put(video_id, {"size": total})
     current = {"url": url}
 
@@ -868,6 +875,14 @@ def _pieced_answer(video_id, url, upstream_headers, first, wanted, total, synthe
                 log.warning("stream %s: the piece from byte %d answered %d", video_id, pos, piece.status_code)
                 piece.close()
             return None
+        # A fresh URL can name another format of the video: a piece must go on with this file.
+        answered = piece.headers.get("Content-Range")
+        if (
+            stream_info.range_start(answered) != pos
+            or stream_info.total_from_content_range(answered) != total
+        ):
+            piece.close()
+            raise _OtherFile(f"stream {video_id}: the piece from byte {pos} is {answered!r}, not of {total} bytes")
         return piece
 
     @stream_with_context
@@ -878,15 +893,21 @@ def _pieced_answer(video_id, url, upstream_headers, first, wanted, total, synthe
         failures = 0
         _count("active_streams", 1)
         try:
-            while piece is not None:
+            while pos <= last and failures <= _PIECE_RETRIES:
+                if piece is None:
+                    piece = open_piece(pos)
+                    if piece is None:
+                        failures += 1
+                        time.sleep(_PIECE_RETRY_WAIT)
+                        continue
                 before = pos
                 try:
                     for chunk in piece.iter_content(chunk_size=64 * 1024):
                         if not chunk:
                             continue
                         if not logged:
-                            log.info("stream %s ttfb_ms=%.0f status=206 pieced",
-                                     video_id, (time.monotonic() - t_enter) * 1000.0)
+                            log.info("stream %s ttfb_ms=%.0f status=%d pieced",
+                                     video_id, (time.monotonic() - t_enter) * 1000.0, status)
                             logged = True
                         chunk = chunk[: last - pos + 1]
                         pos += len(chunk)
@@ -897,11 +918,15 @@ def _pieced_answer(video_id, url, upstream_headers, first, wanted, total, synthe
                     log.warning("stream %s: the piece broke at byte %d: %s", video_id, pos, e)
                 finally:
                     piece.close()
+                    piece = None
                 failures = 0 if pos > before else failures + 1
-                if pos > last or failures > _PIECE_RETRIES:
-                    break
-                piece = open_piece(pos)
+            if pos <= last:
+                # The headers promised every byte: the connection is ended, so the player knows
+                # at once instead of waiting on bytes that will not come.
+                raise ConnectionAbortedError(f"stream {video_id}: ended at byte {pos} of {last + 1}")
         finally:
+            if piece is not None:
+                piece.close()
             _count("active_streams", -1)
 
     headers = {
@@ -910,10 +935,12 @@ def _pieced_answer(video_id, url, upstream_headers, first, wanted, total, synthe
         "Cache-Control": "no-store",
         "Content-Length": str(last - start + 1),
     }
-    if synthesized:
-        return Response(generator(), headers=headers, status=200)
-    headers["Content-Range"] = f"bytes {start}-{last}/{total}"
-    return Response(generator(), headers=headers, status=206)
+    if not synthesized:
+        headers["Content-Range"] = f"bytes {start}-{last}/{total}"
+    if request.method == "HEAD":
+        first.close()
+        return Response(iter(()), headers=headers, status=status)
+    return Response(generator(), headers=headers, status=status)
 
 
 # --- YouTube Music (Octo's radio) -------------------------------------------------
@@ -1151,6 +1178,17 @@ def stream():
         return _pieced_answer(
             video_id, url, upstream_headers, upstream, wanted, total, synthesized_range, t_enter
         )
+    if pieced:
+        # The piece came back with no Content-Range to go on from: the range goes up as it came.
+        upstream.close()
+        upstream_headers["Range"] = incoming_range if incoming_range else "bytes=0-"
+        upstream = _open_upstream(url, upstream_headers, video_id)
+        if upstream is None or upstream.status_code not in (200, 206):
+            code = upstream.status_code if upstream is not None else "n/a"
+            if upstream is not None:
+                upstream.close()
+            log.warning("stream upstream %s for %s", code, video_id)
+            return jsonify(error="upstream_failed"), 502
 
     @stream_with_context
     def generator():
@@ -1202,6 +1240,9 @@ def stream():
         v = upstream.headers.get(h)
         if v is not None:
             headers[h] = v
+    if request.method == "HEAD":
+        upstream.close()
+        return Response(iter(()), headers=headers, status=response_status)
     return Response(generator(), headers=headers, status=response_status)
 
 

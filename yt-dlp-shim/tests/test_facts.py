@@ -163,3 +163,11 @@ def test_facts_refuses_an_id_that_is_not_a_video_id_without_running_yt_dlp(monke
     for bad in ("short", "dQw4w9WgXcQ%20--exec", "ytsearch1:x"):
         answer = app.app.test_client().get(f"/facts?id={bad}")
         assert answer.status_code == 400, bad
+
+
+@pytest.mark.parametrize(
+    "header,start",
+    [("bytes 5-9/1234", 5), ("bytes 131072-8519679/20112003", 131072), ("bytes */12345", None), (None, None)],
+)
+def test_the_first_byte_a_content_range_covers(header, start):
+    assert facts.range_start(header) == start

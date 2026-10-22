@@ -42,35 +42,53 @@ class GoogleVideo:
     def __init__(self, data=DATA):
         self.data = data
         self.asked = []
+        self.opened = []
         self.refuse_next_from = None
         self.break_next_from = None
+        # Opens of a piece from this byte that fail (no answer at all), how many times.
+        self.unreachable_from = {}
+        # The piece from this byte answers a plain 200 of the whole file.
+        self.whole_from = None
+        # Pieces from these bytes answer with no Content-Range.
+        self.no_range_from = set()
+        # A URL with this suffix serves another file, as a fresh resolve to another format can.
+        self.other_file_url = None
+        self.other_data = bytes(range(255, -1, -1)) * 8
 
     def open(self, url, headers, video_id):
         rng = headers["Range"]
         self.asked.append((url, rng))
+        data = self.other_data if self.other_file_url and url.endswith(self.other_file_url) else self.data
         spec = rng[len("bytes="):]
         first, _, last = spec.partition("-")
-        total = len(self.data)
+        total = len(data)
         if first == "":
             start, end = total - int(last), total - 1
         else:
             start = int(first)
             end = min(int(last), total - 1) if last else total - 1
+        if self.unreachable_from.get(start, 0) > 0:
+            self.unreachable_from[start] -= 1
+            return None
         if start >= total:
             return Piece(416, {"Content-Range": f"bytes */{total}"}, b"")
         if self.refuse_next_from == start:
             self.refuse_next_from = None
             return Piece(403, {}, b"")
+        if self.whole_from == start:
+            piece = Piece(200, {"Content-Type": "audio/mp4", "Content-Length": str(total)}, data)
+            self.opened.append(piece)
+            return piece
         break_after = None
         if self.break_next_from == start:
             self.break_next_from = None
             break_after = 13
-        headers = {
-            "Content-Type": "audio/mp4",
-            "Content-Range": f"bytes {start}-{end}/{total}",
-            "Content-Length": str(end - start + 1),
-        }
-        return Piece(206, headers, self.data[start:end + 1], break_after)
+        headers = {"Content-Type": "audio/mp4", "Content-Length": str(end - start + 1)}
+        if start not in self.no_range_from:
+            headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+        piece = Piece(206, headers, data[start:end + 1], break_after)
+        self.opened.append(piece)
+        return piece
 
 
 @pytest.fixture
@@ -83,6 +101,7 @@ def video(monkeypatch):
         return f"https://googlevideo.example/{len(resolved)}"
 
     monkeypatch.setattr(app, "_UPSTREAM_PIECE", PIECE)
+    monkeypatch.setattr(app, "_PIECE_RETRY_WAIT", 0)
     monkeypatch.setattr(app, "_resolve_url", resolve)
     monkeypatch.setattr(app, "_url_cache_evict_if", lambda video_id, url: None)
     monkeypatch.setattr(app, "_maybe_measure_loudness", lambda video_id, url: False)
@@ -169,3 +188,49 @@ def test_a_range_past_the_end_is_still_a_416_with_the_size(video):
     answer = get("bytes=5000-")
     assert answer.status_code == 416
     assert answer.headers["Content-Range"] == "bytes */1024"
+
+
+def test_a_piece_from_another_file_after_a_fresh_url_ends_the_connection(video):
+    # The fresh URL names another format: its bytes must never follow the first file's.
+    video.refuse_next_from = 300
+    video.other_file_url = "/2"
+    with pytest.raises(app._OtherFile):
+        get("bytes=0-").data
+
+
+def test_a_piece_that_cannot_be_opened_is_asked_for_again(video):
+    video.unreachable_from = {200: 2}
+    answer = get("bytes=0-")
+    assert answer.data == DATA
+    assert ranges(video).count("bytes=200-299") == 3
+
+
+def test_a_piece_that_never_opens_ends_the_connection_instead_of_a_short_body(video):
+    video.unreachable_from = {200: 10}
+    with pytest.raises(ConnectionAbortedError):
+        get("bytes=0-").data
+
+
+def test_a_piece_that_answers_the_whole_file_is_not_used(video):
+    video.whole_from = 500
+    with pytest.raises(ConnectionAbortedError):
+        get("bytes=0-").data
+    assert all(piece.closed for piece in video.opened)
+
+
+def test_with_no_content_range_on_the_first_piece_the_range_goes_up_as_it_came(video):
+    video.no_range_from = {0}
+    answer = get()
+    assert answer.status_code == 200
+    assert ranges(video)[:2] == ["bytes=0-99", "bytes=0-"]
+    # The second answer is the plain path's: no Content-Range here either, so its length stands.
+    assert answer.data == DATA
+
+
+def test_a_head_closes_the_piece_it_opened(video):
+    answer = app.app.test_client().head("/stream?id=vid-pieces", headers={"Range": "bytes=0-"})
+    assert answer.status_code == 206
+    assert answer.headers["Content-Length"] == "1024"
+    assert answer.headers["Content-Range"] == "bytes 0-1023/1024"
+    assert answer.data == b""
+    assert all(piece.closed for piece in video.opened)

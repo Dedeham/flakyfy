@@ -23,6 +23,13 @@ pub const CHART_SONGS: usize = 50;
 pub const ROOM_SONGS: usize = 100;
 /// The most lists the `Charts` setting takes besides the overall.
 pub const MAX_LISTS: usize = 14;
+/// The most countries a listener pins besides their own.
+pub const MAX_PINNED: usize = 3;
+/// Between a chart id and a pinned country in a list id (`34@jp`) and a playlist key
+/// (`chart:popular@jp`).
+pub const PIN_MARK: char = '@';
+/// Apple Music countries the country list has no English name for.
+const APPLE_ONLY_NAMES: &[(&str, &str)] = &[("xk", "Kosovo")];
 
 /// The US genre menu as read 2026-10-07: the English names Octo uses for these ids (Apple's
 /// chart pages name genres in the country's own language), and the menu while Apple's own
@@ -205,6 +212,85 @@ pub fn english_menu() -> Vec<ChartGenre> {
             name: (*name).into(),
         })
         .collect()
+}
+
+/// A list's id: the chart id for the listener's own country, `{chart}@{country}` for a pinned one.
+pub fn list_id(chart: &str, pinned: Option<&str>) -> String {
+    match pinned {
+        Some(country) => format!("{chart}{PIN_MARK}{country}"),
+        None => chart.to_string(),
+    }
+}
+
+/// A list id's chart and pinned country: `"34@jp"` -> `("34", Some("jp"))`, `"34"` -> `("34", None)`.
+pub fn split_list(list: &str) -> (&str, Option<&str>) {
+    match list.split_once(PIN_MARK) {
+        Some((chart, country)) if !country.is_empty() => (chart, Some(country)),
+        _ => (list, None),
+    }
+}
+
+/// The key a list's playlist id is made from: the chart's own key, with the pinned country after it.
+pub fn list_key(list: &str) -> String {
+    let (chart, pinned) = split_list(list);
+    match pinned {
+        Some(country) => format!("{}{PIN_MARK}{country}", playlist_key(chart)),
+        None => playlist_key(chart),
+    }
+}
+
+/// A list key's chart and pinned country: `chart:popular@jp` -> `("34", Some("jp"))`.
+pub fn list_from_key(key: &str) -> Option<(String, Option<String>)> {
+    let (base, pinned) = match key.split_once(PIN_MARK) {
+        Some((base, country)) if !country.is_empty() => (base, Some(country.to_string())),
+        _ => (key, None),
+    };
+    chart_from_key(base).map(|chart| (chart, pinned))
+}
+
+/// A country's English name, or its code in upper case when no name is known.
+pub fn country_name(code: &str) -> String {
+    let code = code.trim().to_ascii_lowercase();
+    crate::common::countries::english_name(&code)
+        .or_else(|| {
+            APPLE_ONLY_NAMES
+                .iter()
+                .find(|(c, _)| *c == code)
+                .map(|(_, name)| *name)
+        })
+        .map_or_else(|| code.to_ascii_uppercase(), str::to_string)
+}
+
+/// A pinned list's name: `Popular right now · Brazil`.
+pub fn pinned_name(name: &str, country: &str) -> String {
+    format!("{name} · {}", country_name(country))
+}
+
+/// Pinned countries as sent: comma-separated or repeated two-letter codes, lowercase, no
+/// repeats, never `home`, at most [`MAX_PINNED`]. Anything else is the caller's mistake, and the
+/// first such part comes back as the error.
+pub fn parse_pins<'a>(
+    parts: impl IntoIterator<Item = &'a str>,
+    home: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in parts.into_iter().flat_map(|p| p.split(',')) {
+        let code = part.trim().to_ascii_lowercase();
+        if code.is_empty() {
+            continue;
+        }
+        if !matches!(parse_country(&code), ChartCountry::Fixed(_)) {
+            return Err(part.trim().to_string());
+        }
+        if Some(code.as_str()) == home || out.contains(&code) {
+            continue;
+        }
+        out.push(code);
+    }
+    if out.len() > MAX_PINNED {
+        return Err(format!("at most {MAX_PINNED} countries"));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

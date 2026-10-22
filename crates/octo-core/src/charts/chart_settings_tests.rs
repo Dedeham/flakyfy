@@ -148,6 +148,56 @@ fn english_menu_starts_with_all_genres() {
 }
 
 #[test]
+fn list_ids_round_trip() {
+    assert_eq!(split_list(&list_id("34", Some("jp"))), ("34", Some("jp")));
+    assert_eq!(list_id("34", None), "34");
+    assert_eq!(split_list("34"), ("34", None));
+    assert_eq!(split_list("34@"), ("34@", None));
+}
+
+#[test]
+fn pinned_keys_keep_the_home_key_first() {
+    assert_eq!(list_key("34@jp"), "chart:popular@jp");
+    assert_eq!(list_key("new@br"), "chart:new@br");
+    assert_eq!(list_key("18"), "chart:genre:18");
+    assert_eq!(list_key("34"), "chart:popular");
+}
+
+#[test]
+fn list_keys_round_trip() {
+    assert_eq!(
+        list_from_key(&list_key("18@jp")),
+        Some(("18".into(), Some("jp".into())))
+    );
+    assert_eq!(list_from_key(&list_key("34")), Some(("34".into(), None)));
+    assert_eq!(list_from_key("chart:genre:pop@jp"), None);
+}
+
+#[test]
+fn pinned_names_say_the_country() {
+    assert_eq!(pinned_name("Top Pop", "jp"), "Top Pop · Japan");
+    assert_eq!(
+        pinned_name("Popular right now", "ae"),
+        "Popular right now · United Arab Emirates"
+    );
+    assert_eq!(pinned_name("Popular right now", "xk"), "Popular right now · Kosovo");
+    assert_eq!(country_name("zz"), "ZZ");
+}
+
+#[test]
+fn pins_parse() {
+    assert_eq!(parse_pins(["br, jp,BR"], Some("jp")), Ok(vec!["br".to_string()]));
+    assert_eq!(
+        parse_pins(["br", "kr"], None),
+        Ok(vec!["br".to_string(), "kr".to_string()])
+    );
+    assert_eq!(parse_pins(["usa"], None), Err("usa".to_string()));
+    assert!(parse_pins(["br,jp,kr,de"], None).is_err());
+    assert_eq!(parse_pins([""], None), Ok(Vec::new()));
+    assert_eq!(parse_pins([], None), Ok(Vec::new()));
+}
+
+#[test]
 fn apple_countries_are_sorted_two_letter_codes() {
     assert_eq!(APPLE_COUNTRIES.len(), 172);
     assert!(APPLE_COUNTRIES.windows(2).all(|w| w[0] < w[1]));

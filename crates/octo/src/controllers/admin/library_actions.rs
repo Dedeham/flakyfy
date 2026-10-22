@@ -378,6 +378,8 @@ async fn get_youtube_check(State(state): State<AppState>) -> Response {
         "alike": s.alike,
         "unsure": s.unsure,
         "noCopy": s.no_copy,
+        "listedWrong": s.listed_wrong,
+        "listedUnclear": s.listed_unclear,
         "open": s.open,
         "keeper": s.keeper,
         "perHour": s.per_hour,

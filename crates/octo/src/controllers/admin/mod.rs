@@ -43,6 +43,7 @@ pub mod tidy;
 pub mod trash;
 pub mod update;
 pub mod upgrades;
+pub mod youtube_check_songs;
 
 use axum::routing::{delete, get, post};
 
@@ -138,6 +139,7 @@ pub fn routes() -> RouteSet {
 pub fn library_and_job_routes() -> RouteSet {
     RouteSet::new()
         .merge(library_actions::routes())
+        .merge(youtube_check_songs::routes())
         .merge(trash::routes())
         .merge(health::routes())
         .merge(animated_art::routes())
@@ -174,6 +176,10 @@ mod admin_contract_tests;
 #[cfg(test)]
 #[path = "health_tags_tests.rs"]
 mod health_tags_tests;
+
+#[cfg(test)]
+#[path = "youtube_check_songs_tests.rs"]
+mod youtube_check_songs_tests;
 
 #[cfg(test)]
 #[path = "library_action_allow_download_tests.rs"]

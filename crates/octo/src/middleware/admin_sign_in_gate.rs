@@ -83,6 +83,8 @@ pub const LIBRARY_FILE_ROUTES: &[(&str, bool, &str)] = &[
     // The library actions' history and Allow downloading again.
     ("/api/admin/library-actions", true, SIGN_IN_FIRST),
     ("/api/admin/notices", false, SIGN_IN_FIRST),
+    // The YouTube check's list of songs, which names them and replaces them.
+    ("/api/admin/youtube-check/songs", true, SIGN_IN_FIRST),
     // Better quality: the lossy list and the upgrade queue, which replaces files.
     ("/api/admin/lossy", false, SIGN_IN_FIRST),
     ("/api/admin/upgrades", true, SIGN_IN_FIRST),

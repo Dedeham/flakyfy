@@ -3003,7 +3003,7 @@ async function loadYoutubeCheck() {
     } else if (s.finishedUtc) {
       parts.push(`Done: looked at ${s.done} songs. AcoustID vouches for ${s.known}; of the rest, ${s.asked} asked about, ${s.unsure} left alone as unclear, ${s.noCopy} with no preview to compare.`);
     } else {
-      parts.push('Compares each song in your library with its YouTube preview, once.');
+      parts.push('Compares the songs AcoustID cannot vouch for with their YouTube preview, once.');
     }
     if (s.running && s.reason && s.state !== 'Running') parts.push(s.reason);
     status.textContent = parts.join(' ');

@@ -781,6 +781,8 @@ input[type="number"].set-input { max-width: 160px; }
 .kr-note { margin-top: 0; }
 .set-ctrl { flex-shrink: 0; display: flex; align-items: center; gap: var(--s-m); }
 .set-row.is-disabled .set-info { opacity: 0.5; }
+/* Buttons at the end of a row, side by side and as tall as any other row's. */
+.set-buttons { display: flex; flex-shrink: 0; gap: var(--s-m); }
 .set-inline { display: flex; gap: var(--s-m); }
 .set-inline .set-input { flex: 1 1 auto; min-width: 0; }
 .set-inline .btn, .field-inline .btn { height: auto; min-height: var(--h-field); }
@@ -2479,6 +2481,9 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
   .page-header > .btn { margin-left: 52px; }
   .settings-card, .info-card, .callout { padding: var(--s-xl); }
   .set-row { padding: var(--s-l) 14px; }
+  /* A row with several buttons gives its words the full width and puts the buttons under them. */
+  .set-row:has(> .set-buttons > .btn:not([hidden]) ~ .btn:not([hidden])) { flex-wrap: wrap; gap: var(--s-l); }
+  .set-buttons { margin-left: auto; }
   .form-actions { padding: var(--s-l) 14px; }
   #raw-form .form-actions { margin: var(--s-xl) calc(-1 * var(--s-xl)) calc(-1 * var(--s-xl)); }
 }

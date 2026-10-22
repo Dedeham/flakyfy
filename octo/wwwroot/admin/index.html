@@ -2696,11 +2696,11 @@
               <button class="btn btn-ghost" type="button" id="review-sweep-recheck" data-recheck-octo><span>Re-check</span></button>
             </div>
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">YouTube check <span class="set-opt">songs an hour</span></div><div class="set-info-d">0 is off. Only while nothing is downloading.</div></div>
+              <div class="set-info"><div class="set-info-t">YouTube check <span class="set-opt">songs an hour</span></div><div class="set-info-d">Songs compared with YouTube. 0 is off. Only while nothing is downloading.</div></div>
               <input class="set-input" name="LibraryActions.YoutubeCheckPerHour" type="number" min="0" max="360" data-number="true" />
             </div>
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">Check every song against YouTube</div><div class="set-info-d" id="youtube-check-status">Compares each song in your library with its YouTube preview, once.</div><div class="set-info-more"><p>The same comparison a new download gets. A song that sounds nothing like a preview with its title, artist and length becomes a question in Review. Nothing is changed or removed, and nothing is uploaded.</p><p>Songs with no preview, or one that may be another version, are left alone, and a song is never asked twice. If the YouTube shim stops answering, the check rests an hour and carries on. Press the button again to forget the answers and compare everything anew.</p></div></div>
+              <div class="set-info"><div class="set-info-t">Check every song against YouTube</div><div class="set-info-d" id="youtube-check-status">Compares each song in your library with its YouTube preview, once.</div><div class="set-info-more"><p>The same comparison a new download gets: songs AcoustID already vouches for are passed over quickly, and the rest are compared with their YouTube preview. A song that sounds nothing like a preview with its title, artist and length becomes a question in Review, or is added to a question AcoustID left open. Nothing is changed or removed, and nothing is uploaded.</p><p>Songs with no preview, or one that may be another version, are left alone, and a song is never asked twice. If the YouTube shim stops answering, the check rests an hour and carries on. Press the button again to forget the answers and compare everything anew.</p></div></div>
               <button class="btn btn-ghost" type="button" id="youtube-check-pause" hidden><span>Pause</span></button>
               <button class="btn btn-ghost" type="button" id="youtube-check-start"><span>Check</span></button>
             </div>

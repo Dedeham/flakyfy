@@ -18,7 +18,7 @@ use octo_media::audio::{AudioFingerprinter, RawFingerprint};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
-use crate::services::you_tube::you_tube_resolver::{YouTubeHit, YouTubeResolver};
+use crate::services::you_tube::you_tube_resolver::{ShimStream, YouTubeHit, YouTubeResolver};
 
 /// Seconds one chromaprint item covers: a frame every 1365 samples at 11025 Hz.
 pub const ITEM_SECONDS: f64 = 4096.0 / 3.0 / 11025.0;
@@ -148,6 +148,11 @@ pub trait PreviewSource: Send + Sync {
 
     /// Saves the video's audio at `dest`. False when the shim could not send it.
     async fn fetch(&self, video_id: &str, dest: &Path) -> bool;
+
+    /// [`Self::fetch`] for work nobody waits on, in the shim's background lane where it has one.
+    async fn fetch_in_background(&self, video_id: &str, dest: &Path) -> bool {
+        self.fetch(video_id, dest).await
+    }
 }
 
 #[async_trait]
@@ -178,42 +183,52 @@ impl PreviewSource for YouTubeResolver {
     }
 
     async fn fetch(&self, video_id: &str, dest: &Path) -> bool {
-        let Some(opened) = self.open_stream(video_id, None).await else {
-            return false;
-        };
-        if opened.status_code != 200 {
-            debug!(
-                "shim /stream answered {} for preview {video_id}",
-                opened.status_code
-            );
-            return false;
+        save_preview(self.open_stream(video_id, None).await, video_id, dest).await
+    }
+
+    async fn fetch_in_background(&self, video_id: &str, dest: &Path) -> bool {
+        save_preview(self.open_stream_in_background(video_id).await, video_id, dest).await
+    }
+}
+
+/// Writes an opened preview to `dest`, at most [`MAX_PREVIEW_BYTES`] within [`FETCH_TIMEOUT`].
+/// False when nothing was opened, the shim refused, or nothing arrived.
+async fn save_preview(opened: Option<ShimStream>, video_id: &str, dest: &Path) -> bool {
+    let Some(opened) = opened else {
+        return false;
+    };
+    if opened.status_code != 200 {
+        debug!(
+            "shim /stream answered {} for preview {video_id}",
+            opened.status_code
+        );
+        return false;
+    }
+    let read = async {
+        let mut file = tokio::fs::File::create(dest).await?;
+        let mut body = opened.response.bytes_stream();
+        let mut written = 0usize;
+        while let Some(chunk) = body.next().await {
+            let chunk = chunk?;
+            let room = MAX_PREVIEW_BYTES.saturating_sub(written);
+            file.write_all(&chunk[..chunk.len().min(room)]).await?;
+            written += chunk.len().min(room);
+            if written >= MAX_PREVIEW_BYTES {
+                break;
+            }
         }
-        let read = async {
-            let mut file = tokio::fs::File::create(dest).await?;
-            let mut body = opened.response.bytes_stream();
-            let mut written = 0usize;
-            while let Some(chunk) = body.next().await {
-                let chunk = chunk?;
-                let room = MAX_PREVIEW_BYTES.saturating_sub(written);
-                file.write_all(&chunk[..chunk.len().min(room)]).await?;
-                written += chunk.len().min(room);
-                if written >= MAX_PREVIEW_BYTES {
-                    break;
-                }
-            }
-            file.flush().await?;
-            anyhow::Ok(written)
-        };
-        match tokio::time::timeout(FETCH_TIMEOUT, read).await {
-            Ok(Ok(written)) => written > 0,
-            Ok(Err(error)) => {
-                warn!("could not read preview {video_id} from the shim: {error}");
-                false
-            }
-            Err(_) => {
-                warn!("preview {video_id} took longer than {FETCH_TIMEOUT:?} to read from the shim");
-                false
-            }
+        file.flush().await?;
+        anyhow::Ok(written)
+    };
+    match tokio::time::timeout(FETCH_TIMEOUT, read).await {
+        Ok(Ok(written)) => written > 0,
+        Ok(Err(error)) => {
+            warn!("could not read preview {video_id} from the shim: {error}");
+            false
+        }
+        Err(_) => {
+            warn!("preview {video_id} took longer than {FETCH_TIMEOUT:?} to read from the shim");
+            false
         }
     }
 }
@@ -380,7 +395,8 @@ pub async fn check(
     else {
         return PreviewOutcome::Unavailable("the download could not be fingerprinted".into());
     };
-    let Some(heard) = fingerprint_preview(source, fingerprinter, &preview.video_id, timeout_seconds).await
+    let Some(heard) =
+        fingerprint_preview(source, fingerprinter, &preview.video_id, timeout_seconds, false).await
     else {
         return PreviewOutcome::Unavailable(format!("the shim did not send preview {}", preview.video_id));
     };
@@ -400,14 +416,21 @@ pub async fn check(
 }
 
 /// The preview's raw fingerprint, read through a temporary file that is removed afterwards.
+/// `background` fetches it in the shim's background lane.
 pub(crate) async fn fingerprint_preview(
     source: &dyn PreviewSource,
     fingerprinter: &AudioFingerprinter,
     video_id: &str,
     timeout_seconds: i32,
+    background: bool,
 ) -> Option<RawFingerprint> {
     let dest = preview_path();
-    let print = if source.fetch(video_id, &dest).await {
+    let fetched = if background {
+        source.fetch_in_background(video_id, &dest).await
+    } else {
+        source.fetch(video_id, &dest).await
+    };
+    let print = if fetched {
         fingerprinter
             .raw_fingerprint(&dest, PREVIEW_SECONDS, timeout_seconds)
             .await

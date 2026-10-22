@@ -382,10 +382,28 @@ impl YouTubeResolver {
     ///
     /// None on failure. The caller owns the returned response.
     pub async fn open_stream(&self, video_id: &str, range_header: Option<&str>) -> Option<ShimStream> {
+        self.open_stream_with(video_id, range_header, false).await
+    }
+
+    /// [`Self::open_stream`] of the whole video for work nobody waits on: the shim resolves it in
+    /// its background lane, so a play never queues behind it.
+    pub async fn open_stream_in_background(&self, video_id: &str) -> Option<ShimStream> {
+        self.open_stream_with(video_id, None, true).await
+    }
+
+    async fn open_stream_with(
+        &self,
+        video_id: &str,
+        range_header: Option<&str>,
+        background: bool,
+    ) -> Option<ShimStream> {
         if video_id.trim().is_empty() {
             return None;
         }
-        let url = format!("{}/stream?id={}", self.base_url, escape(video_id));
+        let mut url = format!("{}/stream?id={}", self.base_url, escape(video_id));
+        if background {
+            url.push_str("&bg=1");
+        }
         let mut request = self.stream_client.get(&url);
         if let Some(range) = range_header.filter(|r| !r.is_empty()) {
             request = request.header(reqwest::header::RANGE, range);

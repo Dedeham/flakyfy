@@ -1,15 +1,17 @@
 //! The one-time YouTube check of the library (`<config>/youtube-check.json`).
 //!
-//! Every song already in the library is compared with its YouTube preview, once, after a person
-//! starts it from the dashboard, the way a new download is ([`preview_check`]). A song that sounds
-//! nothing like a preview that can be believed becomes a Review question; nothing is ever changed
-//! or removed. It goes a few songs an hour, only while nothing
+//! Every song already in the library that AcoustID cannot vouch for is compared with its YouTube
+//! preview, once, after a person starts it from the dashboard, the way a new download is
+//! ([`preview_check`]). A song AcoustID confirms, by the library tag check's last answer or a
+//! lookup of its own, is passed over quickly. A song that sounds nothing like a preview that can
+//! be believed becomes a Review question, or adds that to an open question AcoustID could not
+//! settle; nothing is ever changed or removed. It goes a few songs an hour, only while nothing
 //! is downloading, only of whoever keeps the library, and carries on where it stopped after a
 //! restart: the files are walked once in order and the cursor is the only memory a run needs. The
 //! walk and the tags are read off the runtime's threads, and no song may take longer than
 //! [`LibraryYoutubeCheck::CHECK_TIMEOUT`]. A shim that could not answer is not an answer and is
-//! tried again, but not for ever: a song that cannot be answered after two rests is counted as
-//! having no copy.
+//! tried again, but not for ever: a song that cannot be answered after two rests, while the shim
+//! itself answers, is counted as having no copy.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -21,7 +23,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::FutureExt;
 use octo_core::common::Clock;
-use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::json::datetime;
 use octo_core::models::domain::Song;
 use octo_core::settings::SettingsStore;
@@ -29,10 +30,13 @@ use octo_media::audio::AudioFingerprinter;
 use octo_media::tags::TagFile;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::library_review_sweep_worker::LibraryReviewSweepWorker;
+use super::IReviewSweepVerifier;
+use super::library_identity_sweep::{IdentitySweepStore, stamp_of};
+use super::library_review_sweep_worker::{LibraryReviewSweepWorker, Outcome};
 use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::{NoticeOrigin, NoticeQueue};
 use super::quality_upgrade_worker::compare_ordinal;
@@ -44,6 +48,19 @@ use crate::services::fingerprint::preview_check::{
 use crate::services::library::library_walk;
 use crate::services::state_file;
 use crate::services::you_tube::YouTubeResolver;
+
+/// What AcoustID says of one library file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcoustIdAnswer {
+    /// It is the song its tags say: no second opinion needed. `stored` when the tag check said so.
+    Confirmed { stored: bool },
+    /// It could not be asked this time (its lane was full, or it did not answer).
+    NoAnswer,
+    /// fpcalc cannot read the file, so there is nothing to compare either.
+    Unreadable,
+    /// AcoustID cannot vouch for it, or doubts it, or there is no AcoustID to ask.
+    Unsettled,
+}
 
 /// What the preview says of one library file.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,6 +79,11 @@ pub enum Compared {
 pub trait YoutubeChecker: Send + Sync {
     /// The file of `song` against the song's YouTube preview.
     async fn check(&self, path: &Path, song: &Song) -> Compared;
+
+    /// Whether the shim answers at all, so a song is never given up on for an outage.
+    async fn shim_answers(&self) -> bool {
+        true
+    }
 }
 
 /// [`hear`] with the app's fingerprinter, shim and settings.
@@ -116,10 +138,15 @@ impl YoutubeChecker for AppYoutubeChecker {
         )
         .await
     }
+
+    async fn shim_answers(&self) -> bool {
+        self.youtube.busy().await.is_some()
+    }
 }
 
 /// The file at `path` against `preview`, as [`preview_check::check`] compares a download, with a
-/// shim that did not send the preview told apart from there being nothing to compare.
+/// shim that did not send the preview told apart from there being nothing to compare. The preview
+/// is fetched in the shim's background lane, so a play never waits behind it.
 pub async fn hear(
     source: &dyn PreviewSource,
     fingerprinter: &AudioFingerprinter,
@@ -135,7 +162,8 @@ pub async fn hear(
         return Compared::NoCopy;
     };
     let Some(heard) =
-        preview_check::fingerprint_preview(source, fingerprinter, &preview.video_id, timeout_seconds).await
+        preview_check::fingerprint_preview(source, fingerprinter, &preview.video_id, timeout_seconds, true)
+            .await
     else {
         return Compared::Unavailable;
     };
@@ -146,8 +174,21 @@ pub async fn hear(
         return Compared::NoCopy;
     };
     let trusted = preview_check::trustworthy(request, &preview);
+    let verdict = preview_check::judge(&comparison, trusted);
+    info!(
+        "YouTube check: '{} - {}' against video {}: {:.3} of its bits differ, {verdict:?}{}",
+        request.artist,
+        request.title,
+        preview.video_id,
+        comparison.bit_error,
+        if trusted {
+            ""
+        } else {
+            " (a preview that may not be the song)"
+        }
+    );
     Compared::Heard {
-        heard: preview_check::judge(&comparison, trusted),
+        heard: verdict,
         bit_error: comparison.bit_error,
     }
 }
@@ -181,6 +222,9 @@ pub struct YoutubeCheckState {
     /// Songs with no preview to compare with, or no names to look one up by.
     #[serde(default)]
     pub no_copy: i32,
+    /// Songs AcoustID confirms, so not compared with YouTube.
+    #[serde(default)]
+    pub known: i32,
     #[serde(default, with = "datetime::utc_option")]
     pub started_utc: Option<DateTime<Utc>>,
     #[serde(default, with = "datetime::utc_option")]
@@ -300,6 +344,7 @@ pub struct YoutubeCheckStatus {
     pub alike: i32,
     pub unsure: i32,
     pub no_copy: i32,
+    pub known: i32,
     pub open: usize,
     pub keeper: Option<String>,
     pub per_hour: i32,
@@ -319,11 +364,21 @@ pub struct LibraryYoutubeCheck {
     /// With Family on, the check keeps to the shared library: a member's own songs are never
     /// asked about.
     scope: Option<ScopeResolver>,
+    /// The library tag check's answers, read first: a song it heard AcoustID confirm, unchanged
+    /// since, needs no lookup of its own.
+    identities: Option<Arc<IdentitySweepStore>>,
+    /// AcoustID, asked about a song the tag check has not confirmed. None, or not ready (no key,
+    /// downloads not checked), compares every song with YouTube.
+    acoustid: Option<Arc<dyn IReviewSweepVerifier>>,
 
     files: Mutex<Option<Arc<Vec<String>>>>,
     /// Changes when a run starts, so work in flight for the last one drops its result.
     generation: AtomicI32,
     unavailable_in_a_row: AtomicI32,
+    /// Lookups in a row AcoustID did not answer for the song at the cursor.
+    lookup_misses: AtomicI32,
+    /// Start and Carry on cut a rest short.
+    wake: Notify,
     /// The song YouTube could not be asked about, and how many rests it has cost.
     stuck: Mutex<(String, i32)>,
     hold: Mutex<(String, Option<String>)>,
@@ -342,6 +397,14 @@ impl LibraryYoutubeCheck {
     pub const CHECK_TIMEOUT: Duration = Duration::from_secs(300);
     pub const IDLE_CHECK: Duration = Duration::from_secs(60);
     pub const BUSY_CHECK: Duration = Duration::from_secs(30);
+    /// The rest after a song AcoustID confirmed through its own lookup: the hourly number counts
+    /// songs compared with YouTube, and a lookup is a fingerprint and one AcoustID request.
+    pub const KNOWN_STEP: Duration = Duration::from_secs(10);
+    /// The rest after a song the tag check already confirmed: no work was done for it.
+    pub const STORED_STEP: Duration = Duration::from_secs(1);
+    /// Lookups AcoustID may miss for one song (its lane was full) before the song is compared
+    /// with YouTube anyway.
+    pub const MAX_LOOKUP_MISSES: i32 = 3;
 
     pub fn new(
         store: Arc<YoutubeCheckStore>,
@@ -361,9 +424,13 @@ impl LibraryYoutubeCheck {
             music_root,
             clock,
             scope: None,
+            identities: None,
+            acoustid: None,
             files: Mutex::new(None),
             generation: AtomicI32::new(0),
             unavailable_in_a_row: AtomicI32::new(0),
+            lookup_misses: AtomicI32::new(0),
+            wake: Notify::new(),
             stuck: Mutex::new((String::new(), 0)),
             hold: Mutex::new(("Idle".to_string(), None)),
         }
@@ -371,6 +438,18 @@ impl LibraryYoutubeCheck {
 
     pub fn with_library_scope(mut self, scope: ScopeResolver) -> Self {
         self.scope = Some(scope);
+        self
+    }
+
+    /// Songs AcoustID confirms are passed over: by the tag check's answers in `identities`, else
+    /// by a lookup through `acoustid`.
+    pub fn with_acoustid(
+        mut self,
+        identities: Arc<IdentitySweepStore>,
+        acoustid: Arc<dyn IReviewSweepVerifier>,
+    ) -> Self {
+        self.identities = Some(identities);
+        self.acoustid = Some(acoustid);
         self
     }
 
@@ -399,6 +478,7 @@ impl LibraryYoutubeCheck {
         self.generation.fetch_add(1, Ordering::SeqCst);
         *self.files.lock() = None;
         self.unavailable_in_a_row.store(0, Ordering::SeqCst);
+        self.lookup_misses.store(0, Ordering::SeqCst);
         *self.stuck.lock() = (String::new(), 0);
         // Said at once: the worker may be resting, and the page must not say "not started".
         self.hold(
@@ -415,11 +495,15 @@ impl LibraryYoutubeCheck {
             };
         });
         self.store.flush();
+        self.wake.notify_one();
     }
 
     pub fn set_paused(&self, paused: bool) {
         self.store.update(|s| s.paused = paused);
         self.store.flush();
+        if !paused {
+            self.wake.notify_one();
+        }
     }
 
     /// The worker loop until the host stops, then a last flush.
@@ -427,6 +511,7 @@ impl LibraryYoutubeCheck {
         // Never alongside startup, which already works the disk and Navidrome.
         tokio::select! {
             () = tokio::time::sleep(Duration::from_secs(120)) => {}
+            () = self.wake.notified() => {}
             () = stopping.cancelled() => {
                 self.store.flush();
                 return Ok(());
@@ -443,6 +528,7 @@ impl LibraryYoutubeCheck {
             };
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
+                () = self.wake.notified() => {}
                 () = stopping.cancelled() => {
                     self.store.flush();
                     return Ok(());
@@ -535,10 +621,9 @@ impl LibraryYoutubeCheck {
         let interval = Duration::from_secs_f64(3600.0 / f64::from(per_hour));
         let cursor = self.store.read(|s| s.cursor.clone());
         let view = self.shared_view();
-        let reviewed = self.notices.reviewed_paths();
+        let settled = self.notices.settled_paths();
         let looked = root.clone();
-        let next =
-            tokio::task::spawn_blocking(move || next_target(&files, &looked, &cursor, view, &reviewed));
+        let next = tokio::task::spawn_blocking(move || next_target(&files, &looked, &cursor, view, &settled));
         let Ok(next) = next.await else {
             return Self::IDLE_CHECK;
         };
@@ -578,20 +663,42 @@ impl LibraryYoutubeCheck {
         };
         let song = swept.song;
         // A song with no artist and title tag has no names to look its preview up by.
-        let answer = if swept.tagged {
-            let checked = self.checker.check(Path::new(&full), &song);
-            match tokio::time::timeout(Self::CHECK_TIMEOUT, checked).await {
-                Ok(answer) => answer,
-                Err(_) => {
-                    warn!(
-                        "The YouTube check of {target} took longer than {:?}",
-                        Self::CHECK_TIMEOUT
+        let answer = if !swept.tagged {
+            Compared::NoCopy
+        } else {
+            match self.acoustid_answer(&full, &song).await {
+                AcoustIdAnswer::Confirmed { stored } => {
+                    self.lookup_misses.store(0, Ordering::SeqCst);
+                    return self.count_known(generation, target, stored);
+                }
+                AcoustIdAnswer::NoAnswer
+                    if self.lookup_misses.fetch_add(1, Ordering::SeqCst) + 1 < Self::MAX_LOOKUP_MISSES =>
+                {
+                    return self.hold(
+                        "Running",
+                        Some("AcoustID did not answer; trying that song again."),
+                        Self::KNOWN_STEP,
                     );
-                    Compared::Unavailable
+                }
+                AcoustIdAnswer::Unreadable => {
+                    self.lookup_misses.store(0, Ordering::SeqCst);
+                    Compared::NoCopy
+                }
+                AcoustIdAnswer::NoAnswer | AcoustIdAnswer::Unsettled => {
+                    self.lookup_misses.store(0, Ordering::SeqCst);
+                    let checked = self.checker.check(Path::new(&full), &song);
+                    match tokio::time::timeout(Self::CHECK_TIMEOUT, checked).await {
+                        Ok(answer) => answer,
+                        Err(_) => {
+                            warn!(
+                                "The YouTube check of {target} took longer than {:?}",
+                                Self::CHECK_TIMEOUT
+                            );
+                            Compared::Unavailable
+                        }
+                    }
                 }
             }
-        } else {
-            Compared::NoCopy
         };
         // Start was pressed meanwhile: this answer belongs to the last run.
         if generation != self.generation.load(Ordering::SeqCst) {
@@ -612,7 +719,8 @@ impl LibraryYoutubeCheck {
                 }
                 stuck.1
             };
-            if rests < Self::MAX_RESTS_PER_SONG {
+            // An outage is never the song's fault: only a shim that answers can give up on one.
+            if rests < Self::MAX_RESTS_PER_SONG || !self.checker.shim_answers().await {
                 warn!(
                     "YouTube could not be asked {in_a_row} times in a row; the YouTube check rests an hour"
                 );
@@ -622,7 +730,7 @@ impl LibraryYoutubeCheck {
                     Self::REST_WHEN_UNAVAILABLE,
                 );
             }
-            // Two rests on the same song: it is the song, not YouTube. Counted as having no copy.
+            // Two rests on the same song with the shim answering: it is the song, not YouTube.
             warn!("The YouTube check gives up on {target}: it could not be compared after {rests} rests");
             *self.stuck.lock() = (String::new(), 0);
         } else {
@@ -634,19 +742,17 @@ impl LibraryYoutubeCheck {
         match answer {
             Compared::Heard { heard, bit_error } => match heard {
                 Heard::Mismatch => {
-                    let question = VerificationResult {
-                        verdict: VerificationVerdict::Inconclusive,
-                        reason: InconclusiveReason::DiffersFromYouTube,
-                        evidence: Some(format!("{}% of its bits differ", (bit_error * 100.0).round())),
-                        ..Default::default()
-                    };
-                    asked = self.notices.add_review_from(
-                        keeper,
-                        &full,
-                        &song,
-                        &question,
-                        NoticeOrigin::LibrarySweep,
-                    );
+                    // An open question AcoustID could not settle about this file hears it first.
+                    asked = self.notices.add_finding(&full, Self::FINDING)
+                        || self
+                            .notices
+                            .add_library_question(keeper, &full, &song, Self::QUESTION);
+                    if asked {
+                        info!(
+                            "Asking {keeper} about '{} - {}' from the library: it sounds nothing like the song on YouTube ({bit_error:.3} of its bits differ)",
+                            song.artist, song.title
+                        );
+                    }
                 }
                 Heard::Match => alike = 1,
                 Heard::Unclear => unsure = 1,
@@ -662,6 +768,72 @@ impl LibraryYoutubeCheck {
             s.no_copy += no_copy;
         });
         self.hold("Running", None, interval)
+    }
+
+    /// What a library question about a song YouTube heard as another says.
+    pub const QUESTION: &str = "Sounds nothing like the song on YouTube";
+    /// What is added to an open question AcoustID could not settle.
+    pub const FINDING: &str = "it sounds nothing like the song on YouTube";
+
+    /// What AcoustID says of the song: the tag check's answer when the file is unchanged since,
+    /// else a lookup of its own, in AcoustID's background lane.
+    async fn acoustid_answer(&self, full: &str, song: &Song) -> AcoustIdAnswer {
+        if self.confirmed_by_tag_check(full).await {
+            return AcoustIdAnswer::Confirmed { stored: true };
+        }
+        let Some(verifier) = self.acoustid.as_ref().filter(|v| v.is_ready()) else {
+            return AcoustIdAnswer::Unsettled;
+        };
+        let lookup = verifier.verify(full, Some(&song.artist), Some(&song.title));
+        let Ok(verdict) = tokio::time::timeout(Self::CHECK_TIMEOUT, lookup).await else {
+            return AcoustIdAnswer::NoAnswer;
+        };
+        match LibraryReviewSweepWorker::classify(verdict).0 {
+            Outcome::Fine => AcoustIdAnswer::Confirmed { stored: false },
+            Outcome::LookupFailed => AcoustIdAnswer::NoAnswer,
+            Outcome::NotFingerprinted | Outcome::Undecodable => AcoustIdAnswer::Unreadable,
+            Outcome::Ask => AcoustIdAnswer::Unsettled,
+        }
+    }
+
+    /// The tag check heard AcoustID confirm this file, and the file has not changed since.
+    async fn confirmed_by_tag_check(&self, full: &str) -> bool {
+        let Some(identities) = self.identities.clone() else {
+            return false;
+        };
+        let file = full.to_string();
+        tokio::task::spawn_blocking(move || {
+            let Some(stamp) = stamp_of(&file) else {
+                return false;
+            };
+            identities.read(|state| {
+                state.songs.values().any(|checked| {
+                    checked.recording_id.as_deref().is_some_and(|id| !id.is_empty())
+                        && checked.stamp == stamp
+                        && get_full_path(&checked.path) == file
+                })
+            })
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    /// Counts a song AcoustID confirmed and moves on.
+    fn count_known(&self, generation: i32, target: &str, stored: bool) -> Duration {
+        if generation != self.generation.load(Ordering::SeqCst) {
+            return Duration::ZERO;
+        }
+        self.store.update(|s| {
+            s.cursor = target.to_string();
+            s.done += 1;
+            s.known += 1;
+        });
+        let step = if stored {
+            Self::STORED_STEP
+        } else {
+            Self::KNOWN_STEP
+        };
+        self.hold("Running", None, step)
     }
 
     /// What the dashboard shows.
@@ -684,6 +856,7 @@ impl LibraryYoutubeCheck {
             alike: s.alike,
             unsure: s.unsure,
             no_copy: s.no_copy,
+            known: s.known,
             open: self.notices.open_count(NoticeOrigin::LibrarySweep),
             keeper: LibraryReviewSweepWorker::keeper(actions, current.subsonic.admin_username.as_deref()),
             per_hour: actions.effective_youtube_check_per_hour(),
@@ -694,18 +867,18 @@ impl LibraryYoutubeCheck {
 }
 
 /// The next file after `cursor` to check. A file that is gone, outside the shared library or
-/// already asked about is passed over. Reads the disk, so it runs off the runtime's threads.
+/// already settled in Review is passed over. Reads the disk, so it runs off the runtime's threads.
 fn next_target(
     files: &[String],
     root: &str,
     cursor: &str,
     view: Option<ScopeView>,
-    reviewed: &HashSet<String>,
+    settled: &HashSet<String>,
 ) -> Option<String> {
     files[first_after(files, cursor)..].iter().find_map(|relative| {
         let full = full_path(root, relative);
         let there = std::fs::metadata(&full).is_ok_and(|m| m.is_file());
-        (there && LibraryYoutubeCheck::in_shared(view.as_ref(), &full) && !reviewed.contains(&full))
+        (there && LibraryYoutubeCheck::in_shared(view.as_ref(), &full) && !settled.contains(&full))
             .then(|| relative.clone())
     })
 }

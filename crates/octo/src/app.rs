@@ -2539,7 +2539,8 @@ impl LibraryJobs {
                 )),
             ))),
         );
-        // Walks the library once, when a person starts it, and keeps to the shared library.
+        // Walks the library once, when a person starts it, and keeps to the shared library. A song
+        // AcoustID confirms, by the tag check's answer or the review sweep's lookup, is passed over.
         let resolver = navidrome.navidrome_song_path_resolver.clone();
         let library_youtube_check = Arc::new(
             LibraryYoutubeCheck::new(
@@ -2555,7 +2556,11 @@ impl LibraryJobs {
                 Box::new(move || resolver.music_root()),
                 Clock::system(),
             )
-            .with_library_scope(navidrome.library_scope.clone()),
+            .with_library_scope(navidrome.library_scope.clone())
+            .with_acoustid(
+                stores.identity_sweep_store.clone(),
+                fingerprint_sweep_verifier.clone(),
+            ),
         );
         LibraryJobs {
             upgrade_worker,

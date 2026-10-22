@@ -2998,10 +2998,10 @@ async function loadYoutubeCheck() {
     const parts = [];
     if (s.running) {
       parts.push(`${youtubeCheckStates[s.state] || s.state}.`);
-      parts.push(`Compared ${s.position} of ${s.total} songs, ${s.asked} asked about, ${s.open} waiting for an answer.`);
+      parts.push(`Looked at ${s.position} of ${s.total} songs: AcoustID vouches for ${s.known}, ${s.asked} asked about, ${s.open} waiting for an answer.`);
       if (s.keeper) parts.push(`Asking ${s.keeper}.`);
     } else if (s.finishedUtc) {
-      parts.push(`Done: compared ${s.done} songs, ${s.asked} asked about, ${s.unsure} left alone as unclear, ${s.noCopy} with no preview to compare.`);
+      parts.push(`Done: looked at ${s.done} songs. AcoustID vouches for ${s.known}; of the rest, ${s.asked} asked about, ${s.unsure} left alone as unclear, ${s.noCopy} with no preview to compare.`);
     } else {
       parts.push('Compares each song in your library with its YouTube preview, once.');
     }
@@ -3036,7 +3036,7 @@ async function youtubeCheckPost(button, path, message) {
 
 document.getElementById('youtube-check-start')?.addEventListener('click', async (event) => {
   const button = event.currentTarget;
-  if (!(await askConfirm('Compare every song with YouTube?', 'Each song is compared with its YouTube preview, a few an hour. A song that sounds nothing like it becomes a question in Review. Nothing is changed or removed. Earlier answers are forgotten.', 'Check'))) return;
+  if (!(await askConfirm('Compare every song with YouTube?', 'Songs AcoustID cannot vouch for are compared with their YouTube preview, a few an hour. A song that sounds nothing like it becomes a question in Review. Nothing is changed or removed. Earlier answers are forgotten.', 'Check'))) return;
   youtubeCheckPost(button, '/api/admin/youtube-check/start', 'Checking.');
 });
 document.getElementById('youtube-check-pause')?.addEventListener('click', (event) => {

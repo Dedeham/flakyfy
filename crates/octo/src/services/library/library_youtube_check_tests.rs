@@ -1,13 +1,17 @@
 //! The one-time YouTube check asks about a song that sounds nothing like a believed YouTube preview
-//! and does nothing else, goes only when it should, answers each song once, never takes a failure
+//! and does nothing else, passes over what AcoustID confirms, adds its finding to a question
+//! AcoustID left open, goes only when it should, answers each song once, never takes a failure
 //! of the shim for an answer, and never waits on one song for ever.
 
 use std::collections::VecDeque;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 
+use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::settings::{AppSettings, LibraryActionSettings, NoticeKind, SubsonicSettings};
 
 use super::*;
+use crate::services::library::library_identity_sweep::CheckedSong;
+use crate::services::library::notice_queue::NoticeState;
 
 /// Answers one by one from a script, and remembers which files it was asked about.
 #[derive(Default)]
@@ -15,6 +19,7 @@ struct FakeChecker {
     script: Mutex<VecDeque<Compared>>,
     asked: Mutex<Vec<String>>,
     hang: AtomicBool,
+    shim_down: AtomicBool,
 }
 
 impl FakeChecker {
@@ -23,6 +28,7 @@ impl FakeChecker {
             script: Mutex::new(answers.into()),
             asked: Mutex::new(Vec::new()),
             hang: AtomicBool::new(false),
+            shim_down: AtomicBool::new(false),
         })
     }
 
@@ -51,6 +57,79 @@ impl YoutubeChecker for FakeChecker {
             None if self.hang.load(Ordering::SeqCst) => std::future::pending().await,
             None => Compared::NoCopy,
         }
+    }
+
+    async fn shim_answers(&self) -> bool {
+        !self.shim_down.load(Ordering::SeqCst)
+    }
+}
+
+/// AcoustID's answers, one by one from a script (Confirmed past its end), counting lookups.
+struct FakeVerifier {
+    ready: bool,
+    script: Mutex<VecDeque<VerificationResult>>,
+    lookups: AtomicUsize,
+}
+
+impl FakeVerifier {
+    fn answering(answers: Vec<VerificationResult>) -> Arc<Self> {
+        Arc::new(FakeVerifier {
+            ready: true,
+            script: Mutex::new(answers.into()),
+            lookups: AtomicUsize::new(0),
+        })
+    }
+
+    fn without_a_key() -> Arc<Self> {
+        Arc::new(FakeVerifier {
+            ready: false,
+            script: Mutex::new(VecDeque::new()),
+            lookups: AtomicUsize::new(0),
+        })
+    }
+
+    fn lookups(&self) -> usize {
+        self.lookups.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl IReviewSweepVerifier for FakeVerifier {
+    fn is_ready(&self) -> bool {
+        self.ready
+    }
+
+    async fn verify(&self, _: &str, _: Option<&str>, _: Option<&str>) -> VerificationResult {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
+        self.script.lock().pop_front().unwrap_or_else(confirmed)
+    }
+
+    async fn isrc_agrees(&self, _: &VerificationResult, _: &str) -> Option<bool> {
+        None
+    }
+}
+
+fn confirmed() -> VerificationResult {
+    VerificationResult {
+        verdict: VerificationVerdict::Confirmed,
+        recording_id: Some("rec-1".into()),
+        ..Default::default()
+    }
+}
+
+fn unsettled(reason: InconclusiveReason) -> VerificationResult {
+    VerificationResult {
+        verdict: VerificationVerdict::Inconclusive,
+        reason,
+        ..Default::default()
+    }
+}
+
+fn sounds_like_another() -> VerificationResult {
+    VerificationResult {
+        verdict: VerificationVerdict::Mismatch,
+        recording_id: Some("rec-other".into()),
+        ..Default::default()
     }
 }
 
@@ -198,12 +277,10 @@ async fn a_song_that_sounds_nothing_like_its_preview_is_asked_about_and_one_that
     let question = &questions[0];
     assert!(question.local_path.ends_with("a-wrong.flac"));
     assert_eq!(question.origin, NoticeOrigin::LibrarySweep);
-    assert_eq!(question.cause, InconclusiveReason::DiffersFromYouTube);
-    assert!(
-        question.reason.contains("41% of its bits differ"),
-        "{}",
-        question.reason
-    );
+    // A cause every earlier release reads, so going back a release keeps the queue.
+    assert_eq!(question.cause, InconclusiveReason::SoundsLikeAnother);
+    assert_eq!(question.reason, "Sounds nothing like the song on YouTube");
+    assert!(question.fingerprint.is_none());
     let (asked, alike, done) = worker.store().read(|s| (s.asked, s.alike, s.done));
     assert_eq!((asked, alike, done), (1, 1, 2));
 }
@@ -429,13 +506,13 @@ async fn fifty_open_questions_pause_it() {
 }
 
 #[tokio::test]
-async fn a_song_already_asked_about_is_not_asked_again() {
+async fn a_song_with_an_open_question_acoustid_settled_is_not_compared() {
     let check = Check::new();
     let path = check.tagged("a.flac");
     let checker = FakeChecker::answering(vec![]);
     let notices = Arc::new(NoticeQueue::new());
     let question = VerificationResult {
-        reason: InconclusiveReason::NoEntry,
+        reason: InconclusiveReason::SoundsLikeAnother,
         ..Default::default()
     };
     notices.add_review_from(
@@ -638,6 +715,290 @@ async fn an_answer_from_a_run_started_over_meanwhile_is_dropped() {
 
     assert!(notices.for_user("bob", NoticeKind::Review).is_empty());
     assert_eq!(worker.store().read(|s| (s.done, s.asked)), (0, 0));
+}
+
+// ---- A second opinion on what AcoustID left open -----------------------------------------
+
+#[tokio::test]
+async fn an_open_question_acoustid_could_not_settle_gets_the_finding_and_loses_its_fingerprint() {
+    let check = Check::new();
+    let path = check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![heard(Heard::Mismatch, 0.44)]);
+    let notices = Arc::new(NoticeQueue::new());
+    let download = VerificationResult {
+        verdict: VerificationVerdict::Inconclusive,
+        reason: InconclusiveReason::NoEntry,
+        fingerprint: Some("AQAAx".into()),
+        duration_seconds: 200,
+        ..Default::default()
+    };
+    assert!(notices.add_review("alice", &path, &Song::default(), &download));
+    let worker = check.worker(
+        checker.clone(),
+        notices.clone(),
+        settings_of(60),
+        Arc::new(FakeActivity::default()),
+    );
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert_eq!(checker.asked(), ["a.flac"]);
+    // No second question: the open one took the finding.
+    assert!(notices.for_user("bob", NoticeKind::Review).is_empty());
+    let question = &notices.for_user("alice", NoticeKind::Review)[0];
+    assert_eq!(
+        question.reason,
+        "AcoustID has never heard this recording, and it sounds nothing like the song on YouTube"
+    );
+    assert_eq!(question.cause, InconclusiveReason::NoEntry);
+    // A Keep can no longer send AcoustID a sound YouTube heard as another song.
+    assert!(question.fingerprint.is_none());
+    assert_eq!(worker.store().read(|s| s.asked), 1);
+}
+
+#[tokio::test]
+async fn a_question_someone_answered_is_not_compared_again() {
+    let check = Check::new();
+    let path = check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![]);
+    let notices = Arc::new(NoticeQueue::new());
+    notices.add_review(
+        "alice",
+        &path,
+        &Song::default(),
+        &unsettled(InconclusiveReason::NoEntry),
+    );
+    notices.resolve(&NoticeQueue::review_key("alice", &path), NoticeState::Kept);
+    let worker = check.worker(
+        checker.clone(),
+        notices,
+        settings_of(60),
+        Arc::new(FakeActivity::default()),
+    );
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert!(checker.asked().is_empty());
+}
+
+// ---- AcoustID first ----------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_song_acoustid_confirms_is_not_compared_with_youtube() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![]);
+    let verifier = FakeVerifier::answering(vec![confirmed()]);
+    let (worker, _) = check.simple(checker.clone());
+    let worker = worker.with_acoustid(Arc::new(IdentitySweepStore::new(None)), verifier.clone());
+
+    worker.start();
+    let wait = worker.tick().await;
+
+    assert_eq!(wait, LibraryYoutubeCheck::KNOWN_STEP);
+    assert!(checker.asked().is_empty());
+    assert_eq!(verifier.lookups(), 1);
+    assert_eq!(worker.store().read(|s| (s.known, s.done)), (1, 1));
+    assert_eq!(worker.status().known, 1);
+}
+
+#[tokio::test]
+async fn a_song_the_tag_check_confirmed_needs_no_lookup_until_it_changes() {
+    let check = Check::new();
+    let path = check.tagged("a.flac");
+    let identities = Arc::new(IdentitySweepStore::new(None));
+    identities.update(|s| {
+        s.songs.insert(
+            "nd-1".into(),
+            CheckedSong {
+                stamp: stamp_of(&path).expect("a stamp"),
+                path: path.clone(),
+                recording_id: Some("rec-1".into()),
+                ..Default::default()
+            },
+        );
+    });
+    let checker = FakeChecker::answering(vec![heard(Heard::Match, 0.05)]);
+    let verifier = FakeVerifier::answering(vec![unsettled(InconclusiveReason::NoEntry)]);
+    let (worker, _) = check.simple(checker.clone());
+    let worker = worker.with_acoustid(identities.clone(), verifier.clone());
+
+    worker.start();
+    let wait = worker.tick().await;
+
+    assert_eq!(wait, LibraryYoutubeCheck::STORED_STEP);
+    assert_eq!(verifier.lookups(), 0);
+    assert!(checker.asked().is_empty());
+
+    // The file changed since the tag check heard it: AcoustID is asked again.
+    identities.update(|s| s.songs.get_mut("nd-1").expect("kept").stamp = "1:2".into());
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert_eq!(verifier.lookups(), 1);
+    assert_eq!(checker.asked(), ["a.flac"]);
+}
+
+#[tokio::test]
+async fn songs_acoustid_cannot_vouch_for_are_compared() {
+    let check = Check::new();
+    for name in ["a.flac", "b.flac", "c.flac"] {
+        check.tagged(name);
+    }
+    let checker = FakeChecker::answering(vec![]);
+    let verifier = FakeVerifier::answering(vec![
+        unsettled(InconclusiveReason::NoEntry),
+        unsettled(InconclusiveReason::BelowThreshold),
+        sounds_like_another(),
+    ]);
+    let (worker, _) = check.simple(checker.clone());
+    let worker = worker.with_acoustid(Arc::new(IdentitySweepStore::new(None)), verifier);
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert_eq!(checker.asked(), ["a.flac", "b.flac", "c.flac"]);
+    assert_eq!(worker.store().read(|s| s.known), 0);
+}
+
+#[tokio::test]
+async fn without_an_acoustid_key_every_song_is_compared() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![]);
+    let verifier = FakeVerifier::without_a_key();
+    let (worker, _) = check.simple(checker.clone());
+    let worker = worker.with_acoustid(Arc::new(IdentitySweepStore::new(None)), verifier.clone());
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert_eq!(checker.asked(), ["a.flac"]);
+    assert_eq!(verifier.lookups(), 0);
+}
+
+#[tokio::test]
+async fn a_lookup_acoustid_did_not_answer_is_tried_again_before_youtube() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![]);
+    let missed = unsettled(InconclusiveReason::LookupFailed);
+    let verifier = FakeVerifier::answering(vec![missed.clone(), missed.clone(), missed]);
+    let (worker, _) = check.simple(checker.clone());
+    let worker = worker.with_acoustid(Arc::new(IdentitySweepStore::new(None)), verifier.clone());
+
+    worker.start();
+    for _ in 1..LibraryYoutubeCheck::MAX_LOOKUP_MISSES {
+        assert_eq!(worker.tick().await, LibraryYoutubeCheck::KNOWN_STEP);
+        assert!(checker.asked().is_empty());
+    }
+    worker.tick().await;
+
+    assert_eq!(verifier.lookups(), 3);
+    assert_eq!(checker.asked(), ["a.flac"]);
+}
+
+#[tokio::test]
+async fn a_file_fpcalc_cannot_read_is_not_sent_to_youtube() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![]);
+    let verifier = FakeVerifier::answering(vec![unsettled(InconclusiveReason::NotFingerprinted)]);
+    let (worker, _) = check.simple(checker.clone());
+    let worker = worker.with_acoustid(Arc::new(IdentitySweepStore::new(None)), verifier);
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert!(checker.asked().is_empty());
+    assert_eq!(worker.store().read(|s| s.no_copy), 1);
+}
+
+// ---- Outages and waking --------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_outage_never_gives_up_on_a_song() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let mut script = vec![Compared::Unavailable; 10];
+    script.push(heard(Heard::Match, 0.05));
+    let checker = FakeChecker::answering(script);
+    checker.shim_down.store(true, Ordering::SeqCst);
+    let (worker, _) = check.simple(checker.clone());
+
+    worker.start();
+    for _ in 0..10 {
+        worker.tick().await;
+    }
+    assert_eq!(worker.status().state, "Waiting");
+    assert_eq!(worker.store().read(|s| s.done), 0);
+    run_to_the_end(&worker).await;
+
+    assert_eq!(checker.asked().len(), 11);
+    assert_eq!(worker.store().read(|s| (s.no_copy, s.alike)), (0, 1));
+}
+
+/// Waits, on the paused clock, until `done` holds or ten seconds have gone.
+async fn within_ten_seconds(done: impl Fn() -> bool) -> bool {
+    for _ in 0..100 {
+        if done() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    done()
+}
+
+#[tokio::test(start_paused = true)]
+async fn start_cuts_the_startup_wait_short() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![heard(Heard::Match, 0.05)]);
+    let (worker, _) = check.simple(checker.clone());
+    let worker = Arc::new(worker);
+    let stopping = CancellationToken::new();
+    let running = tokio::spawn(worker.clone().run(stopping.clone()));
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    worker.start();
+
+    assert!(within_ten_seconds(|| !checker.asked().is_empty()).await);
+    stopping.cancel();
+    running.await.expect("the loop ends").expect("cleanly");
+}
+
+#[tokio::test(start_paused = true)]
+async fn start_cuts_an_hours_rest_short() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![Compared::Unavailable; 5]);
+    let (worker, _) = check.simple(checker.clone());
+    let worker = Arc::new(worker);
+    let stopping = CancellationToken::new();
+    worker.start();
+    let running = tokio::spawn(worker.clone().run(stopping.clone()));
+    let resting = || {
+        worker
+            .status()
+            .reason
+            .is_some_and(|reason| reason.contains("not answering"))
+    };
+    for _ in 0..100 {
+        if resting() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+    assert!(resting(), "{:?}", worker.status());
+    assert_eq!(checker.asked().len(), 5);
+
+    worker.start();
+
+    assert!(within_ten_seconds(|| checker.asked().len() == 6).await);
+    stopping.cancel();
+    running.await.expect("the loop ends").expect("cleanly");
 }
 
 // ---- The comparison with a real preview -----------------------------------------------

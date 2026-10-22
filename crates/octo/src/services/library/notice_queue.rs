@@ -10,7 +10,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::common::{PathHelper, dotnet};
 use octo_core::fingerprint::verification::{
-    InconclusiveReason, VerificationResult, threshold_percent, whole_percent,
+    InconclusiveReason, VerificationResult, VerificationVerdict, threshold_percent, whole_percent,
 };
 use octo_core::json::datetime;
 use octo_core::models::domain::Song;
@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use super::duplicate_scan_worker::{DuplicateGroup, LibraryTrack};
+use super::navidrome_song_path_resolver::get_full_path;
 use crate::services::framework::DotnetDictionary;
 use crate::services::state_file;
 
@@ -397,38 +398,65 @@ impl NoticeQueue {
         verdict: &VerificationResult,
         origin: NoticeOrigin,
     ) -> bool {
+        let reason = match verdict.reason {
+            InconclusiveReason::NoEntry => "AcoustID has never heard this recording".to_string(),
+            InconclusiveReason::BelowThreshold => "AcoustID was not sure what this is".to_string(),
+            InconclusiveReason::SourceDisagreed => {
+                format!("AcoustID thinks this is {}", verdict.describe())
+            }
+            InconclusiveReason::SoundsLikeAnother => {
+                format!("Sounds like {}, not what its tags say", verdict.describe())
+            }
+            InconclusiveReason::LengthOff => format!(
+                "It runs {}, but the recording it matched runs {}",
+                clock(verdict.duration_seconds),
+                clock(
+                    verdict
+                        .r#match
+                        .as_ref()
+                        .and_then(|m| m.duration_seconds)
+                        .unwrap_or(0)
+                )
+            ),
+            _ => "Octo could not check this download".to_string(),
+        };
+        self.insert_review(username, local_path, song, verdict, origin, reason)
+    }
+
+    /// Ask `keeper` about a library file a check heard as another song than its tags say, in that
+    /// check's own words. Stored as [`InconclusiveReason::SoundsLikeAnother`], a cause every
+    /// earlier release reads, so going back a release never sets the queue aside.
+    pub fn add_library_question(&self, keeper: &str, local_path: &str, song: &Song, reason: &str) -> bool {
+        let question = VerificationResult {
+            verdict: VerificationVerdict::Inconclusive,
+            reason: InconclusiveReason::SoundsLikeAnother,
+            ..Default::default()
+        };
+        self.insert_review(
+            keeper,
+            local_path,
+            song,
+            &question,
+            NoticeOrigin::LibrarySweep,
+            reason.to_string(),
+        )
+    }
+
+    fn insert_review(
+        &self,
+        username: &str,
+        local_path: &str,
+        song: &Song,
+        verdict: &VerificationResult,
+        origin: NoticeOrigin,
+        reason: String,
+    ) -> bool {
         let key = Self::review_key(username, local_path);
         {
             let mut entries = self.entries.lock();
             if entries.contains_key(&key) {
                 return false;
             }
-            let reason = match verdict.reason {
-                InconclusiveReason::NoEntry => "AcoustID has never heard this recording".to_string(),
-                InconclusiveReason::BelowThreshold => "AcoustID was not sure what this is".to_string(),
-                InconclusiveReason::SourceDisagreed => {
-                    format!("AcoustID thinks this is {}", verdict.describe())
-                }
-                InconclusiveReason::SoundsLikeAnother => {
-                    format!("Sounds like {}, not what its tags say", verdict.describe())
-                }
-                InconclusiveReason::LengthOff => format!(
-                    "It runs {}, but the recording it matched runs {}",
-                    clock(verdict.duration_seconds),
-                    clock(
-                        verdict
-                            .r#match
-                            .as_ref()
-                            .and_then(|m| m.duration_seconds)
-                            .unwrap_or(0)
-                    )
-                ),
-                InconclusiveReason::DiffersFromYouTube => format!(
-                    "Sounds nothing like its YouTube preview ({})",
-                    verdict.evidence.as_deref().unwrap_or("not the same song")
-                ),
-                _ => "Octo could not check this download".to_string(),
-            };
             let sweep = origin == NoticeOrigin::LibrarySweep;
             let score = verdict.shown_score().map(whole_percent);
             entries.set(
@@ -543,6 +571,58 @@ impl NoticeQueue {
             .filter(|entry| entry.kind == NoticeKind::Review)
             .map(|entry| entry.local_path.clone())
             .collect()
+    }
+
+    /// Files a second opinion has nothing to add to: a Review question someone answered, or an
+    /// open one about something other than a sound AcoustID could not place. Full paths.
+    pub fn settled_paths(&self) -> HashSet<String> {
+        self.entries
+            .lock()
+            .values()
+            .filter(|entry| entry.kind == NoticeKind::Review)
+            .filter(|entry| !entry.is_open() || !Self::awaits_second_opinion(entry.cause))
+            .map(|entry| get_full_path(&entry.local_path))
+            .collect()
+    }
+
+    /// AcoustID could not place the sound, so another check may still say what it is.
+    fn awaits_second_opinion(cause: InconclusiveReason) -> bool {
+        matches!(
+            cause,
+            InconclusiveReason::NoEntry | InconclusiveReason::BelowThreshold
+        )
+    }
+
+    /// Adds `finding` to every open question about the file at `full_path` that AcoustID could
+    /// not place, and forgets its fingerprint, so a Keep never tells AcoustID that a sound another
+    /// check heard as a different song is this one. True when a question took it.
+    pub fn add_finding(&self, full_path: &str, finding: &str) -> bool {
+        let mut added = false;
+        {
+            let mut entries = self.entries.lock();
+            let keys: Vec<String> = entries.keys().cloned().collect();
+            for key in keys {
+                let Some(entry) = entries.get(&key) else {
+                    continue;
+                };
+                if entry.kind != NoticeKind::Review
+                    || !entry.is_open()
+                    || !Self::awaits_second_opinion(entry.cause)
+                    || get_full_path(&entry.local_path) != full_path
+                {
+                    continue;
+                }
+                let mut entry = entry.clone();
+                entry.reason = format!("{}, and {finding}", entry.reason);
+                entry.fingerprint = None;
+                entries.set(key, entry);
+                added = true;
+            }
+        }
+        if added {
+            self.mark_dirty();
+        }
+        added
     }
 
     pub fn open_count(&self, origin: NoticeOrigin) -> usize {

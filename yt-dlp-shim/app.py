@@ -1139,7 +1139,10 @@ def stream():
         abort(400, "missing id")
     t_enter = time.monotonic()
 
-    url = _resolve_url(video_id)
+    # Work nobody waits on (bg=1, such as Octo's library check) resolves in the background
+    # lane, so a play never queues behind it.
+    bg = _is_bg()
+    url = _resolve_url(video_id, bg)
     if not url:
         return jsonify(error="no_audio_url"), 502
 
@@ -1196,7 +1199,7 @@ def stream():
         )
         upstream.close()
         _url_cache_evict_if(video_id, url)
-        url = _resolve_url(video_id)
+        url = _resolve_url(video_id, bg)
         upstream = _open_upstream(url, upstream_headers, video_id) if url else None
         # A freshly resolved URL that is refused again is not an expiry; the
         # most common remaining cause is a stale cached player.
@@ -1208,7 +1211,7 @@ def stream():
             if _maybe_self_update(f"stream {video_id}: 403 survived a cache purge"):
                 upstream.close()
                 _url_cache_evict_if(video_id, url)
-                url = _resolve_url(video_id)
+                url = _resolve_url(video_id, bg)
                 upstream = _open_upstream(url, upstream_headers, video_id) if url else None
 
     # A range past the end is the caller's mistake, not an upstream failure: pass the 416 and

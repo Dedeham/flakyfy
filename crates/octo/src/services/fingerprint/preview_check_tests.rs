@@ -240,6 +240,16 @@ fn a_right_file_against_a_live_take_is_unclear() {
     assert_eq!(judge(&comparison, false), Heard::Unclear, "{comparison:?}");
 }
 
+/// A skit over one loop: few different numbers, but a new one at nearly every item, so every
+/// stretch is compared and the right file matches its preview.
+#[test]
+fn a_right_file_built_on_one_loop_matches_its_preview() {
+    let pair = fixture!("loop-skit.json");
+    let comparison = compare(&pair.file, &pair.preview).expect("enough audio");
+    assert!(comparison.bit_error < 0.05, "{comparison:?}");
+    assert_eq!(judge(&comparison, true), Heard::Match);
+}
+
 /// The water drops against a preview that may not be the song stay a question for a person.
 #[test]
 fn a_mismatch_against_a_preview_that_may_not_be_the_song_is_unclear() {
@@ -343,6 +353,15 @@ fn a_silent_file_is_not_the_song() {
 #[test]
 fn a_silent_preview_says_nothing() {
     assert_eq!(compare(&sound(1, 120.0), &tone(200.0)), None);
+}
+
+/// A download that is all held tone against a preview that opens on the same tone could be the
+/// same recording, so it is not refused.
+#[test]
+fn a_quiet_download_says_nothing_against_a_preview_as_quiet_where_they_line_up() {
+    let mut preview = tone(60.0);
+    preview.extend(sound(1, 180.0));
+    assert_eq!(compare(&tone(120.0), &preview), None);
 }
 
 /// A song built on one short loop: few different numbers, but a new one at nearly every item.

@@ -286,8 +286,9 @@ fn informative_windows(items: &[u32], window: usize) -> Vec<bool> {
 /// preview's, over every offset from the preview [`MAX_LAG_SECONDS`] behind to
 /// [`MAX_LEAD_SECONDS`] ahead. None when either is shorter than the stretch, or when the preview
 /// has no stretch with sound in it to say what the download should be. Only stretches with sound
-/// in both count, so a silent gap or a held tone in each never passes for the same song; a
-/// download with no such stretch against a preview that has one is as different as it gets.
+/// in both count, so a silent gap or a held tone in each never passes for the same song. A
+/// download with no such stretch is as different as it gets from a preview with sound at every
+/// place the two could line up, and says nothing against one as quiet as it somewhere.
 pub fn compare(file: &[u32], preview: &[u32]) -> Option<Comparison> {
     let window = (WINDOW_SECONDS / ITEM_SECONDS).round() as usize;
     if file.len() < window || preview.len() < window {
@@ -302,7 +303,15 @@ pub fn compare(file: &[u32], preview: &[u32]) -> Option<Comparison> {
         return None;
     }
     if !file_ok.contains(&true) {
-        return Some(Comparison {
+        // A preview just as quiet where they line up (a long held note, a silent intro) may be
+        // the same recording.
+        let sound_everywhere = (-lag..=lead).all(|shift| {
+            let start = (-shift).max(0);
+            let end = file_len.min(preview_len - shift);
+            end - start < window as isize
+                || (start + shift..=end - window as isize + shift).all(|at| preview_ok[at as usize])
+        });
+        return sound_everywhere.then_some(Comparison {
             bit_error: 0.5,
             offset_seconds: 0.0,
         });

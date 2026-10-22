@@ -86,7 +86,7 @@ enum Reason {
     Upcoming,
     /// It is kept ready in a mix, after everything that plays soon.
     Mix,
-    /// It is in a playlist kept ready, after the mixes.
+    /// It is in a playlist kept ready, with the mixes kept ready.
     Kept,
 }
 
@@ -207,6 +207,24 @@ impl PrefetchService {
             .queued
             .iter()
             .map(|job| job.external_id.clone())
+            .collect()
+    }
+
+    /// The songs waiting to be fetched, in order, with the listeners each is for and whether it
+    /// goes to the prefetch folder.
+    #[cfg(test)]
+    pub(crate) fn queued_jobs(&self) -> Vec<(String, Vec<String>, bool)> {
+        self.state
+            .lock()
+            .queued
+            .iter()
+            .map(|job| {
+                (
+                    job.external_id.clone(),
+                    job.listeners.clone(),
+                    job.kind == Kind::Ahead,
+                )
+            })
             .collect()
     }
 
@@ -379,12 +397,26 @@ impl PrefetchService {
                     }
                     continue;
                 }
-                if let Some(job) = state.queued.iter_mut().find(|j| j.key() == key) {
-                    if !job.is_for(user) {
+                if let Some(at) = state.queued.iter().position(|j| j.key() == key) {
+                    if state.queued[at].reason > Reason::Upcoming {
+                        // Kept ready, and now coming up: it moves up to the songs that play soon.
+                        if let Some(mut job) = state.queued.remove(at) {
+                            job.reason = Reason::Upcoming;
+                            job.kind = kind;
+                            if !job.is_for(user) {
+                                job.listeners.push(user.to_string());
+                            }
+                            let to = state
+                                .queued
+                                .iter()
+                                .position(|j| j.reason > Reason::Upcoming)
+                                .unwrap_or(state.queued.len());
+                            state.queued.insert(to, job);
+                        }
+                    } else if let Some(job) = state.queued.get_mut(at)
+                        && !job.is_for(user)
+                    {
                         job.listeners.push(user.to_string());
-                    }
-                    if job.reason > Reason::Upcoming {
-                        job.reason = Reason::Upcoming;
                     }
                     continue;
                 }
@@ -412,11 +444,9 @@ impl PrefetchService {
     /// listener's outside song ids. Songs queued for playlists kept ready before and not asked for
     /// now leave the queue. A listener whose plays keep no copies gets none.
     pub async fn keep_ready(&self, songs: Vec<(String, Vec<String>)>) {
-        let kind = if self.parts.settings.current().subsonic.download_on_play {
-            Kind::AsPlay
-        } else {
-            Kind::Ahead
-        };
+        // Into the prefetch folder, under its space and days, even with DownloadOnPlay on: a song
+        // kept ready is not a song played.
+        let kind = Kind::Ahead;
         let mut fresh = Vec::new();
         for (user, ids) in songs {
             if !self.may_keep_copies(&user, None) {
@@ -640,8 +670,8 @@ impl PrefetchService {
             self.parts
                 .store
                 .sweep(settings.effective_keep_days(), settings.effective_cache_bytes());
-            if let Some(copies) = self.copies.get() {
-                copies.sweep();
+            if let Some(copies) = self.copies.get().cloned() {
+                let _ = tokio::task::spawn_blocking(move || copies.sweep()).await;
             }
         }
         if !settings.enabled {
@@ -675,7 +705,10 @@ impl PrefetchService {
             return;
         }
         for job in state.queued.iter_mut() {
-            job.listeners.retain(|l| !idle.contains(&user_key(l)));
+            // A song kept ready keeps the listener it is for, whose library it goes to.
+            if job.reason == Reason::Upcoming {
+                job.listeners.retain(|l| !idle.contains(&user_key(l)));
+            }
         }
         state
             .queued
@@ -720,7 +753,9 @@ impl PrefetchService {
         if self.paused(settings).await.is_some() {
             return false;
         }
-        let cap = settings.effective_cache_bytes();
+        // The space also holds the preview copies kept for playlists kept ready.
+        let kept = self.copies.get().map_or(0, |copies| copies.kept_bytes());
+        let cap = settings.effective_cache_bytes().saturating_sub(kept);
         if self.parts.store.over(cap) {
             self.parts.store.sweep(settings.effective_keep_days(), cap);
             if self.parts.store.over(cap) {

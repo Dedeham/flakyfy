@@ -51,7 +51,7 @@ async fn clear_prefetch(State(state): State<AppState>) -> Response {
 /// app anyone's (`asked`, else the first person), a listener's app only its own. Nobody else, and
 /// the words they are refused with.
 fn whose(
-    state: &AppState,
+    people: &[String],
     caller: Option<&AdminCaller>,
     asked: Option<String>,
 ) -> Result<String, &'static str> {
@@ -61,7 +61,7 @@ fn whose(
     match caller.kind {
         AdminCallerKind::Dashboard | AdminCallerKind::NavidromeAdmin => Ok(asked
             .filter(|user| !user.trim().is_empty())
-            .or_else(|| people(state).into_iter().next())
+            .or_else(|| people.first().cloned())
             .unwrap_or_default()),
         AdminCallerKind::Listener => caller
             .user
@@ -75,18 +75,24 @@ fn whose(
     }
 }
 
-/// The people whose lists can be chosen: everyone Octo has recorded plays of.
-fn people(state: &AppState) -> Vec<String> {
-    state
-        .listening
-        .people()
-        .into_iter()
-        .map(|(_, name)| name)
-        .collect()
+/// The people whose lists can be chosen: everyone Octo has recorded plays of, and everyone who
+/// chose lists. Reading the plays is blocking file work.
+async fn people(state: &AppState) -> Vec<String> {
+    let listening = state.listening.clone();
+    let mut names: Vec<String> =
+        tokio::task::spawn_blocking(move || listening.people().into_iter().map(|(_, name)| name).collect())
+            .await
+            .unwrap_or_default();
+    for user in state.keep_ready.chosen_users() {
+        if !names.iter().any(|name| name.eq_ignore_ascii_case(&user)) {
+            names.push(user);
+        }
+    }
+    names
 }
 
 /// One person's playlists kept ready, with the people a dashboard may choose from.
-async fn answer(state: &AppState, caller: Option<&AdminCaller>, user: &str) -> Response {
+async fn answer(state: &AppState, caller: Option<&AdminCaller>, user: &str, people: Vec<String>) -> Response {
     let mut view = serde_json::to_value(state.keep_ready.view(user).await).unwrap_or(Value::Null);
     let everyone = caller.is_some_and(|c| {
         matches!(
@@ -94,11 +100,7 @@ async fn answer(state: &AppState, caller: Option<&AdminCaller>, user: &str) -> R
             AdminCallerKind::Dashboard | AdminCallerKind::NavidromeAdmin
         )
     });
-    view["people"] = json!(if everyone {
-        people(state)
-    } else {
-        vec![user.to_string()]
-    });
+    view["people"] = json!(if everyone { people } else { vec![user.to_string()] });
     ok(&view)
 }
 
@@ -110,11 +112,12 @@ async fn get_keep_ready(
     RawQuery(query): RawQuery,
 ) -> Response {
     let caller = caller_of(&caller);
-    let user = match whose(&state, caller, query_value(query.as_deref(), "user")) {
+    let people = people(&state).await;
+    let user = match whose(&people, caller, query_value(query.as_deref(), "user")) {
         Ok(user) => user,
         Err(words) => return error_json(StatusCode::FORBIDDEN, words),
     };
-    answer(&state, caller, &user).await
+    answer(&state, caller, &user, people).await
 }
 
 /// `PUT /api/admin/prefetch/keep-ready` with `{"user", "lists", "mostPlayed"}`: saves what that
@@ -125,7 +128,8 @@ async fn put_keep_ready(State(state): State<AppState>, caller: Caller, body: Byt
         Ok(choice) => choice,
         Err(_) => return error_json(StatusCode::BAD_REQUEST, "Send the lists to keep ready."),
     };
-    let user = match whose(&state, caller, choice.user.clone()) {
+    let people = people(&state).await;
+    let user = match whose(&people, caller, choice.user.clone()) {
         Ok(user) if !user.trim().is_empty() => user,
         Ok(_) => return error_json(StatusCode::BAD_REQUEST, "Name the person whose lists these are."),
         Err(words) => return error_json(StatusCode::FORBIDDEN, words),
@@ -141,5 +145,5 @@ async fn put_keep_ready(State(state): State<AppState>, caller: Caller, body: Byt
         );
     }
     info!("Playlists kept ready for {user} changed");
-    answer(&state, caller, &user).await
+    answer(&state, caller, &user, people).await
 }

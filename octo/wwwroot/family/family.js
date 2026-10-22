@@ -268,6 +268,7 @@
   function navFor(s) {
     var you = s.managed ? ['overview', 'listening', 'devices', 'requests', 'saved', 'library', 'ready', 'quality', 'account'] : ['overview', 'devices', 'quality'];
     if (s.managed && !s.familyEnabled) you.splice(you.indexOf('listening'), 1);
+    if (s.managed && !s.familyEnabled) you.splice(you.indexOf('ready'), 1);
     if (s.managed && s.familyEnabled && s.importPlaylists) you.splice(you.indexOf('library') + 1, 0, 'import');
     var family = [];
     if (s.familyEnabled) {
@@ -1007,28 +1008,31 @@
     var picked = function () {
       return view.lists.filter(function (list) { return list.picked; }).map(function (list) { return list.id; });
     };
-    var save = async function (lists, mostPlayed) {
-      var r = await api('PUT', '/me/keep-ready', { lists: lists, mostPlayed: mostPlayed });
-      if (!r.ok) F.toast(F.errorOf(r), true);
-      else view = r.data;
-      draw();
+    // Saves go one at a time, each from the choices as the clicks so far left them.
+    var saving = Promise.resolve();
+    var save = function () {
+      saving = saving.then(async function () {
+        var r = await api('PUT', '/me/keep-ready', { lists: picked(), mostPlayed: view.mostPlayed });
+        if (!r.ok) F.toast(F.errorOf(r), true);
+        else view = r.data;
+        draw();
+      });
     };
     var draw = function () {
       var most = switchControl(view.mostPlayed, 'Also the playlists I play most', function () {
-        save(picked(), most.input.checked);
+        view.mostPlayed = most.input.checked;
+        save();
       });
       var rows = view.lists.map(function (list) {
         return el('button', {
           type: 'button',
           class: 'kr-list',
           'aria-pressed': list.picked ? 'true' : 'false',
+          'data-id': list.id,
           onclick: function () {
-            var lists = picked();
-            var at = lists.indexOf(list.id);
-            if (at >= 0) lists.splice(at, 1);
-            else lists.push(list.id);
-            this.setAttribute('aria-pressed', at >= 0 ? 'false' : 'true');
-            save(lists, view.mostPlayed);
+            list.picked = !list.picked;
+            this.setAttribute('aria-pressed', list.picked ? 'true' : 'false');
+            save();
           }
         },
         el('span', { class: 'kr-check', 'aria-hidden': 'true' }, F.icon('check')),
@@ -1041,6 +1045,9 @@
       if (!view.enabled) note = 'Your family’s server keeps nothing ready right now. Ask the person who runs it to turn on Download songs ahead.';
       else if (!view.lists.length) note = 'None of your playlists can hold songs that aren’t in your library yet. Imported playlists streamed without downloading, mixes and charts show up here.';
       else if (view.mostPlayed && !view.listeningOn) note = 'Finding the playlists you play most needs Listening on.';
+      // The row that had the focus keeps it through the redraw.
+      var focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('.kr-list');
+      var focusedId = focused ? focused.getAttribute('data-id') : null;
       F.clear(main);
       F.append(main, [
         pageHeader('stack', 'Ready to play', 'Playlists you pick start right away in any app, even songs that aren’t in your library yet.'),
@@ -1050,6 +1057,10 @@
           note ? el('div', { class: 'set-row kr-note-row' }, el('span', { class: 'set-info-d kr-note', role: 'status' }, note)) : null
         ])
       ]);
+      if (focusedId) {
+        var again = main.querySelector('.kr-list[data-id="' + CSS.escape(focusedId) + '"]');
+        if (again) again.focus();
+      }
     };
     draw();
   }

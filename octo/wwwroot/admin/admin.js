@@ -1323,6 +1323,7 @@ function keepReadyRow(list) {
   const row = document.createElement('button');
   row.type = 'button';
   row.className = 'kr-list';
+  row.dataset.id = list.id;
   row.setAttribute('aria-pressed', String(!!list.picked));
   row.innerHTML = `<span class="kr-check">${icon('i-check')}</span>`
     + `<span class="kr-text"><span class="kr-name">${esc(list.name)}</span>`
@@ -1370,8 +1371,11 @@ async function loadKeepReady(user = keepReadyUser) {
   card.classList.toggle('off', !view.enabled);
   mostRow.hidden = !keepReadyUser;
   most.checked = !!view.mostPlayed;
+  // The row that had the focus keeps it through the redraw.
+  const focused = document.activeElement?.closest?.('.kr-list')?.dataset.id;
   lists.replaceChildren(...view.lists.map(keepReadyRow));
   lists.hidden = view.lists.length === 0;
+  if (focused) [...lists.children].find(row => row.dataset.id === focused)?.focus();
 
   let text = '';
   if (!keepReadyUser) text = 'Playlists show up here once someone has played something.';
@@ -1383,29 +1387,36 @@ async function loadKeepReady(user = keepReadyUser) {
   say(text);
 }
 
-async function saveKeepReady(change, source) {
+// Saves go one at a time, each from the choices as the clicks so far left them, so a quick
+// second click never sends a list without the first.
+let keepReadySaving = Promise.resolve();
+
+function saveKeepReady(change, source) {
   const view = keepReadyView;
   if (!view) return;
-  let picked = view.lists.filter(list => list.picked).map(list => list.id);
   if (change.toggle) {
-    picked = picked.includes(change.toggle)
-      ? picked.filter(id => id !== change.toggle)
-      : [...picked, change.toggle];
-    source?.setAttribute('aria-pressed', String(picked.includes(change.toggle)));
+    const list = view.lists.find(item => item.id === change.toggle);
+    if (list) list.picked = !list.picked;
+    source?.setAttribute('aria-pressed', String(!!list?.picked));
   }
-  const mostPlayed = change.mostPlayed ?? view.mostPlayed;
-  try {
-    const r = await api('/api/admin/prefetch/keep-ready', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: keepReadyUser, lists: picked, mostPlayed }),
-    });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
-  } catch (error) {
-    note(source, `Could not save: ${error.message}`, 'error');
-  }
-  await loadKeepReady(keepReadyUser);
+  if (change.mostPlayed !== undefined) view.mostPlayed = change.mostPlayed;
+  const user = keepReadyUser;
+  keepReadySaving = keepReadySaving.then(async () => {
+    const lists = view.lists.filter(list => list.picked).map(list => list.id);
+    try {
+      const r = await api('/api/admin/prefetch/keep-ready', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user, lists, mostPlayed: view.mostPlayed }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    } catch (error) {
+      // On the card's first row, which the redraw keeps.
+      note(document.querySelector('#keep-ready-card > .set-row'), `Could not save: ${error.message}`, 'error');
+    }
+    if (keepReadyView === view) await loadKeepReady(user);
+  });
 }
 
 document.getElementById('keep-ready-person')?.addEventListener('change', event => {

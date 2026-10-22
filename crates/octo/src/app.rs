@@ -742,6 +742,7 @@ fn keep_ready_service(
         registry: stores.external_id_registry.clone(),
         mixes: mixes.clone(),
         charts: charts.clone(),
+        family: stores.family_store.clone(),
         family_playlists: stores.family_playlists.clone(),
         listening: stores.listening.clone(),
         metadata: metadata.clone(),

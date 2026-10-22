@@ -7,14 +7,14 @@ use std::time::Duration as StdDuration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use octo_core::common::Clock;
 use octo_core::settings::{AppSettings, PrefetchSettings, SettingsStore};
 use parking_lot::Mutex;
 
 use super::keep_ready::{
     KeepFlac, KeepReadyService, KeepReadySources, KeepReadyStore, ListSongs, Picks, UnknownList,
-    first_and_random, most_played,
+    first_and_random, most_played, week_seed,
 };
 use super::preview_copies::{PreviewCopies, PreviewSource, WholePreview};
 
@@ -81,7 +81,7 @@ fn most_played_is_the_top_three_lists_with_at_least_three_plays() {
 #[test]
 fn a_list_is_kept_from_its_start_and_at_random_each_song_once() {
     let songs = ids("s", 200);
-    let picked = first_and_random(&songs, 50, 50);
+    let picked = first_and_random(&songs, 50, 50, 7);
     assert_eq!(picked.len(), 100);
     assert_eq!(picked[..50], songs[..50]);
     let unique: HashSet<&String> = picked.iter().collect();
@@ -89,9 +89,25 @@ fn a_list_is_kept_from_its_start_and_at_random_each_song_once() {
     assert!(picked[50..].iter().all(|id| songs[50..].contains(id)));
 
     let short = ids("t", 30);
-    assert_eq!(first_and_random(&short, 50, 50), short);
+    assert_eq!(first_and_random(&short, 50, 50, 7), short);
     let doubled: Vec<String> = ["x", "x", "y"].map(String::from).to_vec();
-    assert_eq!(first_and_random(&doubled, 50, 50), ["x", "y"]);
+    assert_eq!(first_and_random(&doubled, 50, 50, 7), ["x", "y"]);
+}
+
+#[test]
+fn the_songs_a_list_keeps_at_random_change_once_a_week() {
+    let songs = ids("s", 200);
+    let monday = Utc.with_ymd_and_hms(2026, 10, 19, 8, 0, 0).unwrap();
+    let friday = Utc.with_ymd_and_hms(2026, 10, 23, 22, 0, 0).unwrap();
+    let next_week = Utc.with_ymd_and_hms(2026, 10, 26, 8, 0, 0).unwrap();
+    let pick = |at| first_and_random(&songs, 5, 20, week_seed("oi-weekly", at));
+    assert_eq!(pick(monday), pick(friday), "the same all week");
+    assert_ne!(pick(monday), pick(next_week), "new ones the next week");
+    assert_ne!(
+        first_and_random(&songs, 5, 20, week_seed("oi-other", monday)),
+        pick(monday),
+        "each list its own"
+    );
 }
 
 /// Lists, plays and videos as a test sets them.
@@ -119,7 +135,7 @@ impl KeepReadySources for FakeSources {
         self.recording
     }
 
-    fn listeners(&self) -> Vec<String> {
+    async fn listeners(&self) -> Vec<String> {
         self.plays.lock().keys().cloned().collect()
     }
 
@@ -127,11 +143,8 @@ impl KeepReadySources for FakeSources {
         id.starts_with("out")
     }
 
-    async fn videos(&self, ids: &[String]) -> HashMap<String, String> {
-        let videos = self.videos.lock();
-        ids.iter()
-            .filter_map(|id| videos.get(id).map(|v| (id.clone(), v.clone())))
-            .collect()
+    async fn find_video(&self, id: &str) -> Option<String> {
+        self.videos.lock().get(id).cloned()
     }
 
     fn known_video(&self, id: &str) -> Option<String> {
@@ -143,6 +156,8 @@ impl KeepReadySources for FakeSources {
 struct FakeFlac {
     queued: Mutex<Vec<(String, Vec<String>)>>,
     ready: Mutex<HashSet<String>>,
+    /// The bytes the songs fetched ahead take.
+    bytes: Mutex<u64>,
 }
 
 #[async_trait]
@@ -156,7 +171,7 @@ impl KeepFlac for FakeFlac {
     }
 
     fn flac_bytes(&self) -> u64 {
-        0
+        *self.bytes.lock()
     }
 }
 
@@ -180,6 +195,7 @@ struct World {
     sources: Arc<FakeSources>,
     flac: Arc<FakeFlac>,
     copies: Arc<PreviewCopies>,
+    now: Arc<Mutex<DateTime<Utc>>>,
     _dir: tempfile::TempDir,
 }
 
@@ -199,10 +215,13 @@ fn world(enabled: bool, recording: bool) -> World {
         ..Default::default()
     });
     let flac = Arc::new(FakeFlac::default());
+    let now = Arc::new(Mutex::new(Utc.with_ymd_and_hms(2026, 10, 21, 12, 0, 0).unwrap()));
+    let read = Arc::clone(&now);
+    let clock = Clock::new(move || *read.lock());
     let copies = PreviewCopies::new(
         dir.path().join("previews"),
         Arc::new(TinyPreviews),
-        Clock::system(),
+        clock.clone(),
         || 0,
     );
     let service = KeepReadyService::new(
@@ -211,13 +230,14 @@ fn world(enabled: bool, recording: bool) -> World {
         sources.clone(),
         flac.clone(),
         copies.clone(),
-        Clock::system(),
+        clock,
     );
     World {
         service,
         sources,
         flac,
         copies,
+        now,
         _dir: dir,
     }
 }
@@ -422,4 +442,74 @@ async fn songs_without_a_video_are_left_for_the_next_pass() {
     wait_for(&world.copies, 2).await;
     let view = world.service.view("sam").await;
     assert_eq!((view.lists[0].outside, view.lists[0].previews_ready), (3, 2));
+}
+
+#[tokio::test]
+async fn copies_already_made_stay_held_when_the_space_is_full() {
+    let world = world(true, true);
+    let kept = songs_with_videos(&world, "k", 3, 0);
+    world.sources.lists.lock().insert(
+        "sam".into(),
+        vec![list("oi-kept", kept), list("oi-new", ids("out-n", 0))],
+    );
+    world
+        .service
+        .choose("sam", vec!["oi-kept".into()], false)
+        .await
+        .unwrap();
+    world.service.pass().await;
+    wait_for(&world.copies, 3).await;
+    assert_eq!(world.copies.kept_bytes(), 3_000);
+
+    // Later, the songs fetched ahead fill the space, and a new list is picked.
+    *world.now.lock() += chrono::Duration::minutes(150);
+    *world.flac.bytes.lock() = u64::MAX;
+    let fresh = songs_with_videos(&world, "n", 2, 0);
+    world.sources.lists.lock().insert(
+        "sam".into(),
+        vec![list("oi-kept", ids("out-k", 3)), list("oi-new", fresh)],
+    );
+    world
+        .service
+        .choose("sam", vec!["oi-kept".into(), "oi-new".into()], false)
+        .await
+        .unwrap();
+    world.service.pass().await;
+    tokio::time::sleep(StdDuration::from_millis(100)).await;
+
+    // No room for the new list's copies, but the kept list's are held again, past their first hold.
+    assert_eq!(world.copies.sizes().0, 3, "nothing new copied");
+    *world.now.lock() += chrono::Duration::minutes(60);
+    assert_eq!(world.copies.kept_bytes(), 3_000, "still held");
+}
+
+#[tokio::test]
+async fn a_picked_list_hidden_for_now_stays_picked() {
+    let world = world(true, true);
+    world.sources.lists.lock().insert(
+        "sam".into(),
+        vec![list("oi-a", ids("out-a", 1)), list("oc-chart", ids("out-c", 1))],
+    );
+    world
+        .service
+        .choose("sam", vec!["oi-a".into(), "oc-chart".into()], true)
+        .await
+        .unwrap();
+    // The chart is not made again yet after a restart.
+    world
+        .sources
+        .lists
+        .lock()
+        .insert("sam".into(), vec![list("oi-a", ids("out-a", 1))]);
+    assert!(
+        world
+            .service
+            .choose("sam", vec!["oi-a".into(), "oc-chart".into()], false)
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        world.service.choose("sam", vec!["oi-zzz".into()], false).await,
+        Err(UnknownList("oi-zzz".into()))
+    );
 }

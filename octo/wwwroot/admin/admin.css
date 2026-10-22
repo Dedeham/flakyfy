@@ -2743,6 +2743,12 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .chart-choice { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
 .chart-status { padding: 8px 16px 12px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
 .chart-status-note { margin-top: 4px; color: var(--text-faint); }
+.charts-people-ctrl { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-m); }
+.charts-pins { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-m); }
+.charts-people-ctrl .set-input { min-width: 12rem; }
+@media (max-width: 640px) {
+  .charts-people-ctrl, .charts-pins, .charts-people-ctrl .set-input { width: 100%; }
+}
 
 /* ── Animated art card ── */
 .art-card { margin-top: var(--s-l); }

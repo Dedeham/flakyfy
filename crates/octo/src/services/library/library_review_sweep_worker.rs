@@ -400,6 +400,13 @@ pub enum AutoReplace {
     Ask,
 }
 
+/// What the song's YouTube preview said of a file it sounds nothing like, for deciding whether to
+/// replace it: the share of differing bits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PreviewWitness {
+    pub bit_error: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ReviewSweepState {
@@ -802,6 +809,11 @@ impl LibraryReviewSweepWorker {
     pub const RECHECK_PER_HOUR: i32 = 60;
     /// After this many failed replacements in a UTC day, the rest of the day's are asked about.
     pub const MAX_FAILED_REPLACEMENTS_PER_DAY: i32 = 3;
+    /// The share of differing bits from which a song its YouTube preview says is another one is
+    /// replaced instead of asked about. Right files against a believed preview measured at most
+    /// 0.11, an official video with re-mastered sound 0.37; another song 0.41 to 0.47 and noise 0.38
+    /// to 0.48. Between the preview's own line and this, it stays a question.
+    pub const PREVIEW_REPLACE_FROM: f64 = 0.42;
 
     const DONE: &'static str = "Every song has been checked. New or changed ones are looked for later.";
     const RECHECKING: &'static str = "Re-checking Octo's downloads.";
@@ -1155,6 +1167,7 @@ impl LibraryReviewSweepWorker {
         // settles it, one that sounds nothing like it is a better question, and anything else
         // stays the question it was.
         let mut waiting_for = "AcoustID";
+        let mut witness: Option<PreviewWitness> = None;
         let (outcome, question) = if outcome == Outcome::Ask
             && question.reason == InconclusiveReason::NoEntry
             && file.tagged
@@ -1189,17 +1202,22 @@ impl LibraryReviewSweepWorker {
                     heard: Heard::Mismatch,
                     comparison,
                     ..
-                } => (
-                    Outcome::Ask,
-                    VerificationResult {
-                        reason: InconclusiveReason::DiffersFromYouTube,
-                        evidence: Some(format!(
-                            "{}% of its bits differ",
-                            (comparison.bit_error * 100.0).round()
-                        )),
-                        ..question
-                    },
-                ),
+                } => {
+                    witness = Some(PreviewWitness {
+                        bit_error: comparison.bit_error,
+                    });
+                    (
+                        Outcome::Ask,
+                        VerificationResult {
+                            reason: InconclusiveReason::DiffersFromYouTube,
+                            evidence: Some(format!(
+                                "{}% of its bits differ",
+                                (comparison.bit_error * 100.0).round()
+                            )),
+                            ..question
+                        },
+                    )
+                }
                 // The shim found the song's video but did not send it: tried again, and asked about
                 // as before once it failed as often as an AcoustID lookup may.
                 PreviewOutcome::NotSent(why) => {
@@ -1273,6 +1291,7 @@ impl LibraryReviewSweepWorker {
                 &self.settings.current(),
                 step.keeper,
                 self.store.read(|s| s.today(self.clock.now())),
+                witness,
             ) == AutoReplace::Replace
             && self.replace(step.keeper, &path, &file, &question).await;
         let asked = !replaced
@@ -1454,13 +1473,14 @@ impl LibraryReviewSweepWorker {
     /// Whether a file the sweep would ask about is replaced through Wrong song instead: no dry
     /// run, the keeper on the allowlist, Wrong song on, the day's cap and breaker not reached,
     /// and either `ReviewSweepAutoReplace` on with AcoustID clearly hearing another song, or
-    /// `ReviewSweepAutoReplacePreview` on with the song's YouTube preview clearly not matching.
+    /// `ReviewSweepAutoReplacePreview` on with the song's YouTube preview clearly not matching (at least [`Self::PREVIEW_REPLACE_FROM`] of its bits differ).
     pub fn decide(
         question: &VerificationResult,
         file: &SweptFile,
         settings: &AppSettings,
         keeper: &str,
         today: Today,
+        witness: Option<PreviewWitness>,
     ) -> AutoReplace {
         let actions = &settings.library_actions;
         let wrong_song_on = actions
@@ -1476,7 +1496,8 @@ impl LibraryReviewSweepWorker {
             && Self::clearly_another_song(question, file, &settings.soulseek);
         let by_preview = actions.review_sweep_auto_replace_preview
             && file.tagged
-            && question.reason == InconclusiveReason::DiffersFromYouTube;
+            && question.reason == InconclusiveReason::DiffersFromYouTube
+            && witness.is_some_and(|witness| witness.bit_error >= Self::PREVIEW_REPLACE_FROM);
         if may && (by_acoustid || by_preview) {
             AutoReplace::Replace
         } else {

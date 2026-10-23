@@ -1054,7 +1054,14 @@ fn classify_then_decide_replaces_only_a_confident_other_song() {
     let decide = |verdict: VerificationResult, title: &str| {
         let (outcome, question) = LibraryReviewSweepWorker::classify(verdict);
         assert_eq!(outcome, Outcome::Ask);
-        LibraryReviewSweepWorker::decide(&question, &file_titled(title), &settings, "bob", Today::default())
+        LibraryReviewSweepWorker::decide(
+            &question,
+            &file_titled(title),
+            &settings,
+            "bob",
+            Today::default(),
+            None,
+        )
     };
     assert_eq!(decide(heard_as("Roads", 0.97), "Teardrop"), AutoReplace::Replace);
     // Another take, a remaster or a guest credit of the same song stays a question.
@@ -1092,7 +1099,7 @@ fn decide_keeps_to_the_switch_dry_run_allowlist_and_the_day() {
     let (_, question) = LibraryReviewSweepWorker::classify(heard_as("Roads", 0.97));
     let file = file_titled("Teardrop");
     let decide = |actions: LibraryActionSettings, keeper: &str, today: Today| {
-        LibraryReviewSweepWorker::decide(&question, &file, &app_settings(actions), keeper, today)
+        LibraryReviewSweepWorker::decide(&question, &file, &app_settings(actions), keeper, today, None)
     };
     assert_eq!(
         decide(replacing(60), "bob", Today::default()),
@@ -2318,6 +2325,7 @@ async fn preview_says_wrong(
     settings: LibraryActionSettings,
     replacer: Arc<FakeReplacer>,
     isrc: Option<&str>,
+    bit_error: f64,
 ) -> (Sweep, Arc<LibraryReviewSweepWorker>, Arc<NoticeQueue>) {
     let sweep = Sweep::new();
     for name in names {
@@ -2325,7 +2333,7 @@ async fn preview_says_wrong(
     }
     let queue = Arc::new(NoticeQueue::new());
     let worker = sweep.worker(
-        FakeVerifier::never_heard(Some(compared(Heard::Mismatch, 0.5))),
+        FakeVerifier::never_heard(Some(compared(Heard::Mismatch, bit_error))),
         Options {
             queue: Some(queue.clone()),
             settings: Some(settings),
@@ -2344,7 +2352,7 @@ async fn a_song_the_preview_says_is_another_is_replaced_and_leaves_a_note_when_s
     let replacer = FakeReplacer::ending(LibraryActionState::Applied);
 
     let (_sweep, _, queue) =
-        preview_says_wrong(&["a.flac"], replacing_by_preview(60), replacer.clone(), None).await;
+        preview_says_wrong(&["a.flac"], replacing_by_preview(60), replacer.clone(), None, 0.5).await;
 
     assert_eq!(
         replacer.requests(),
@@ -2383,7 +2391,7 @@ async fn the_preview_replaces_nothing_with_its_own_switch_off_or_in_a_dry_run() 
     for settings in [off, dry] {
         let replacer = FakeReplacer::ending(LibraryActionState::Applied);
 
-        let (_sweep, _, queue) = preview_says_wrong(&["a.flac"], settings, replacer.clone(), None).await;
+        let (_sweep, _, queue) = preview_says_wrong(&["a.flac"], settings, replacer.clone(), None, 0.5).await;
 
         assert!(replacer.requests().is_empty());
         let entries = queue.for_user("bob", NoticeKind::Review);
@@ -2401,7 +2409,7 @@ async fn a_starred_song_one_with_unreadable_marks_and_one_with_an_isrc_stay_ques
         (FakeReplacer::marked(Some(false)), Some("GBAAA0000001")),
     ] {
         let (_sweep, _, queue) =
-            preview_says_wrong(&["a.flac"], replacing_by_preview(60), replacer.clone(), isrc).await;
+            preview_says_wrong(&["a.flac"], replacing_by_preview(60), replacer.clone(), isrc, 0.5).await;
 
         assert!(replacer.requests().is_empty());
         assert_eq!(queue.for_user("bob", NoticeKind::Review).len(), 1);
@@ -2417,7 +2425,7 @@ async fn the_preview_shares_the_days_limit_and_a_failed_replacement_stays_a_ques
     let replacer = FakeReplacer::ending(LibraryActionState::Applied);
 
     let (_sweep, _, queue) =
-        preview_says_wrong(&["a.flac", "b.flac"], one_a_day, replacer.clone(), None).await;
+        preview_says_wrong(&["a.flac", "b.flac"], one_a_day, replacer.clone(), None, 0.5).await;
 
     assert_eq!(replacer.requests().len(), 1);
     let open = queue
@@ -2429,11 +2437,39 @@ async fn the_preview_shares_the_days_limit_and_a_failed_replacement_stays_a_ques
 
     let failing = FakeReplacer::ending(LibraryActionState::Failed);
     let (_sweep, _, queue) =
-        preview_says_wrong(&["a.flac"], replacing_by_preview(60), failing.clone(), None).await;
+        preview_says_wrong(&["a.flac"], replacing_by_preview(60), failing.clone(), None, 0.5).await;
     assert_eq!(failing.requests().len(), 1);
     let entries = queue.for_user("bob", NoticeKind::Review);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].state, NoticeState::Waiting);
+}
+
+#[tokio::test]
+async fn a_preview_just_over_its_line_is_asked_about_and_one_clearly_over_is_replaced() {
+    let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+    let (_sweep, _, queue) = preview_says_wrong(
+        &["a.flac"],
+        replacing_by_preview(60),
+        replacer.clone(),
+        None,
+        0.40,
+    )
+    .await;
+    assert!(replacer.requests().is_empty());
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].state, NoticeState::Waiting);
+
+    let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+    let (_sweep, _, _queue) = preview_says_wrong(
+        &["a.flac"],
+        replacing_by_preview(60),
+        replacer.clone(),
+        None,
+        0.42,
+    )
+    .await;
+    assert_eq!(replacer.requests().len(), 1);
 }
 
 #[tokio::test]

@@ -116,7 +116,7 @@ _last_cache_purge = 0.0
 # In-memory LRU cache of search-query -> json result. Cuts repeat searches
 # from a 3-8s yt-dlp invocation to a dict lookup. Bounded so we never grow
 # without limit. The cache is best-effort; restarts wipe it.
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 _SEARCH_CACHE_LOCK = threading.Lock()
 _SEARCH_CACHE: "OrderedDict[str, dict]" = OrderedDict()
 _SEARCH_CACHE_MAX = int(os.environ.get("SEARCH_CACHE_MAX", "1024"))
@@ -419,13 +419,14 @@ def search():
     hint_str = request.args.get("duration", "").strip()
     duration_hint = int(hint_str) if hint_str.isdigit() else None
     bg = _is_bg()
+    skip = tuple(s for s in request.args.get("skip", "").split(",") if s)
 
-    cache_key = f"{q.lower()}|{duration_hint or ''}"
+    cache_key = f"{q.lower()}|{duration_hint or ''}|{','.join(sorted(skip))}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return jsonify(**cached)
 
-    payload = _search_with_hint(q, duration_hint, bg) if duration_hint is not None else _search_single(q, bg)
+    payload = _search_with_hint(q, duration_hint, bg, skip) if duration_hint is not None or skip else _search_single(q, bg)
     if payload is None:
         return jsonify(error="search_failed"), 502
     if not payload.get("video_id"):
@@ -479,7 +480,21 @@ def _search_single(q: str, bg: bool = False) -> Optional[dict]:
     return _with_facts(payload)
 
 
-_LIVE = re.compile(r"\b(live|unplugged|in concert|concert|bootleg)\b", re.IGNORECASE)
+# Words that make a video another take of a song than the plain studio one.
+_TAKE = re.compile(
+    r"\b(live|unplugged|in concert|concert|bootleg|remix(?:ed)?|rmx|sped[\s-]*up|speed[\s-]*up|slowed|"
+    r"nightcore|daycore|reverb|8d|karaoke|instrumental|cover|acapella|a cappella|acoustic|demo|mashup|"
+    r"bass boosted|lo[\s-]?fi|\d+\s*hours?)\b",
+    re.IGNORECASE,
+)
+# Spellings of one take word that count as the same word.
+_TAKE_SPELLINGS = {"remixed": "remix", "rmx": "remix", "speedup": "spedup", "acappella": "acapella",
+                   "inconcert": "concert"}
+# A bracketed clause: "(feat. Drake)", "[Official Video]", "(Radio Edit)".
+_BRACKETED = re.compile(r"[(\[][^)\]]*[)\]]")
+# Words a video's title may leave out without being another song.
+_FILLER = {"feat", "ft", "featuring", "with", "x", "and", "the", "a", "an", "of", "vs",
+           "official", "video", "audio", "lyrics", "lyric", "music", "topic", "prod"}
 
 
 def _words(text: str) -> set:
@@ -489,32 +504,57 @@ def _words(text: str) -> set:
     return set(re.findall(r"\w+", plain.casefold()))
 
 
-def _rank_by_length(candidates: list, q: str, duration_hint: int) -> list:
-    """The video whose title and channel name every word of the query first, then the closest
-    length, and a live take never beats a studio one unless the query asks for live itself.
+def _takes(text: str) -> Counter:
+    """The other-take words a title or a query carries, each spelling counted as one word."""
+    found = Counter()
+    for match in _TAKE.finditer(text or ""):
+        word = re.sub(r"[\s-]+", "", match.group(1).casefold())
+        if word.endswith(("hour", "hours")):
+            word = "hours"
+        found[_TAKE_SPELLINGS.get(word, word)] += 1
+    return found
 
-    Length alone let another artist's song win whenever it ran closer: "KILLY - Killamonjaro"
-    at the catalog's 179 s took "SUMMER CEM x BILLA JOE x DARDAN x EZHEL - KILLY MANJARO
-    EUROMIX" (171 s) over KILLY's own video (161 s). Words the videos all lack, such as a title
-    in another script, say nothing, and the length decides as before. A live video of a song is
-    usually within seconds of the studio length, so length alone picked it as often as not. All
-    of them live: the closest still plays."""
-    wants_live = bool(_LIVE.search(q))
-    wanted = _words(q)
+
+def _query_words(q: str) -> tuple:
+    """The query's core words (bracketed clauses and any " - " tail taken off) and its extra
+    words (the rest), filler left out of both."""
+    core_text = re.split(r"\s+-\s+", _BRACKETED.sub(" ", q), maxsplit=1)[0]
+    core = _words(core_text) - _FILLER
+    return core, _words(q) - _FILLER - core
+
+
+def _rank_by_length(candidates: list, q: str, duration_hint: Optional[int]) -> list:
+    """Ranks search candidates for the query, best first: the video whose title and channel name
+    the query's core words (artist and title), then the one that is no other take than the query
+    asks for (live, remix, sped up, cover...), then the one naming its extra words (a featured
+    artist, an edit), then the closest length.
+
+    Take words are counted, so a title that holds one ("Live Forever") is not held against a
+    video saying it once. A word no video has adds the same to every key, so a title in another
+    script leaves the order to the rest. Without a length hint, ties keep YouTube's order.
+    Candidates without a duration sort last."""
+    core, extra = _query_words(q)
+    asked = _takes(q)
 
     def key(r: dict):
-        named = _words(r.get("title") or "") | _words(r.get("channel") or "")
-        missing = len(wanted - named)
-        live = 0 if wants_live or not _LIVE.search(r.get("title") or "") else 1
-        length = abs((r.get("duration") or 0) - duration_hint) if r.get("duration") else float("inf")
-        return (missing, live, length)
+        title = r.get("title") or ""
+        named = _words(title) | _words(r.get("channel") or "")
+        other = sum((_takes(title) - asked).values())
+        if not r.get("duration"):
+            length = float("inf")
+        elif duration_hint is None:
+            length = 0
+        else:
+            length = abs(r["duration"] - duration_hint)
+        return (len(core - named), other, len(extra - named), length)
 
     return sorted(candidates, key=key)
 
 
-def _search_with_hint(q: str, duration_hint: int, bg: bool = False) -> Optional[dict]:
+def _search_with_hint(q: str, duration_hint: Optional[int], bg: bool = False, skip: tuple = ()) -> Optional[dict]:
     """Duration hint present: pick the closest-length of 5 flat candidates
     (cheap, no per-video extraction), then resolve the winner's URL once.
+    Videos in `skip` are left out.
 
     Note this path costs TWO gated yt-dlp runs per track (search5 then resolve),
     where the no-hint path gets both from one extraction.
@@ -540,11 +580,11 @@ def _search_with_hint(q: str, duration_hint: int, bg: bool = False) -> Optional[
             candidates.append(json.loads(ln))
         except json.JSONDecodeError:
             pass
+    candidates = [c for c in candidates if c.get("id") not in skip]
     if not candidates:
         return {}
-    # The video that names the query's words wins, then the closest duration, live
-    # takes last; candidates without a duration sort last so a hint never drags us
-    # onto an entry we can't length-match.
+    # Ranked by the words they name, then other takes, then length; candidates without a duration
+    # sort last so a hint never drags us onto an entry we can't length-match.
     candidates = _rank_by_length(candidates, q, duration_hint)
     payload = _payload_from(candidates[0])
     if payload.get("video_id"):
@@ -636,7 +676,8 @@ def meta():
     duration_hint = int(hint_str) if hint_str.isdigit() else None
     bg = _is_bg()
 
-    key = _norm_q(q)
+    # The ranking's version leads the key, so a lookup answered by an older ranking is searched again.
+    key = "v2|" + _norm_q(q)
     # Hot front: exact repeat within this process.
     with _META_CACHE_LOCK:
         c = _META_CACHE.get(key)
@@ -652,7 +693,7 @@ def meta():
         return jsonify(**persisted)
 
     if duration_hint is not None:
-        out = _run([f"ytsearch5:{q}", "--flat-playlist", "--print", "%(.{id,title,duration})j"],
+        out = _run([f"ytsearch5:{q}", "--flat-playlist", "--print", "%(.{id,title,duration,channel})j"],
                    timeout=20, label="meta5", bg=bg)
         cands = []
         for ln in (out or "").strip().split("\n"):

@@ -646,7 +646,14 @@ impl SoulseekDownloadService {
         };
         let outcome = self
             .verification
-            .hear_against_preview(self.youtube.as_ref(), path, &request, verdict, length_known)
+            .hear_against_preview(
+                self.youtube.as_ref(),
+                path,
+                &request,
+                verdict,
+                length_known,
+                false,
+            )
             .await;
         let PreviewOutcome::Compared {
             heard,
@@ -655,7 +662,7 @@ impl SoulseekDownloadService {
             preview,
         } = outcome
         else {
-            if let PreviewOutcome::Unavailable(why) = outcome {
+            if let PreviewOutcome::Unavailable(why) | PreviewOutcome::NotSent(why) = outcome {
                 info!("no preview check for '{artist} - {title}': {why}");
             }
             return None;

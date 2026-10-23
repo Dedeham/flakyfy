@@ -415,8 +415,61 @@ async fn a_shim_that_cannot_send_the_preview_leaves_the_file_alone() {
     let shim = DownShim {
         fetches: AtomicUsize::new(0),
     };
-    let outcome = check(&shim, &AudioFingerprinter::new(), &path, &request(Some(174)), 30).await;
-    assert!(matches!(outcome, PreviewOutcome::Unavailable(_)), "{outcome:?}");
+    let outcome = check(
+        &shim,
+        &AudioFingerprinter::new(),
+        &path,
+        &request(Some(174)),
+        30,
+        false,
+    )
+    .await;
+    assert!(matches!(outcome, PreviewOutcome::NotSent(_)), "{outcome:?}");
+    assert_eq!(shim.fetches.load(Ordering::Relaxed), 1);
+}
+
+/// A shim that counts which lane its preview was asked for in.
+#[derive(Default)]
+struct CountingShim {
+    fetches: AtomicUsize,
+    background_fetches: AtomicUsize,
+}
+
+#[async_trait]
+impl PreviewSource for CountingShim {
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Option<PreviewFacts> {
+        Some(facts("One Dance", Some("Drake"), Some(174)))
+    }
+
+    async fn fetch(&self, _video_id: &str, _dest: &Path) -> bool {
+        self.fetches.fetch_add(1, Ordering::Relaxed);
+        false
+    }
+
+    async fn fetch_in_background(&self, _video_id: &str, _dest: &Path) -> bool {
+        self.background_fetches.fetch_add(1, Ordering::Relaxed);
+        false
+    }
+}
+
+/// Work nobody waits on fetches its preview in the shim's background lane, and a play's in the
+/// foreground.
+#[tokio::test]
+async fn the_background_lane_is_used_only_when_asked_for() {
+    let shim = CountingShim::default();
+    let fingerprinter = AudioFingerprinter::new();
+    assert!(
+        fingerprint_preview(&shim, &fingerprinter, "vid", 30, true)
+            .await
+            .is_none()
+    );
+    assert_eq!(shim.background_fetches.load(Ordering::Relaxed), 1);
+    assert_eq!(shim.fetches.load(Ordering::Relaxed), 0);
+    assert!(
+        fingerprint_preview(&shim, &fingerprinter, "vid", 30, false)
+            .await
+            .is_none()
+    );
     assert_eq!(shim.fetches.load(Ordering::Relaxed), 1);
 }
 

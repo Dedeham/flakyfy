@@ -127,9 +127,12 @@ pub struct PreviewRequest<'a> {
 pub enum PreviewOutcome {
     /// The verdict did not leave the question to the preview, or Octo is not checking downloads.
     NotAsked,
-    /// Nothing to compare with: no video, the shim did not send it, or fpcalc could not read one
-    /// of the two. The download is judged as it was before.
+    /// Nothing to compare with: no video, or fpcalc could not read one of the two. The download is judged
+    /// as it was before.
     Unavailable(String),
+    /// The song's video was found but the shim did not send it. Nothing is said about the file;
+    /// asking again later may get it.
+    NotSent(String),
     Compared {
         heard: Heard,
         comparison: Comparison,
@@ -377,14 +380,16 @@ pub fn judge(comparison: &Comparison, trusted: bool) -> Heard {
     }
 }
 
-/// Compares the download at `path` with the song's preview. Every failure is
-/// [`PreviewOutcome::Unavailable`], which changes nothing about the file.
+/// Compares the download at `path` with the song's preview, fetched in the shim's background lane
+/// when `background` is true. Every failure is [`PreviewOutcome::Unavailable`] or
+/// [`PreviewOutcome::NotSent`], which change nothing about the file.
 pub async fn check(
     source: &dyn PreviewSource,
     fingerprinter: &AudioFingerprinter,
     path: &Path,
     request: &PreviewRequest<'_>,
     timeout_seconds: i32,
+    background: bool,
 ) -> PreviewOutcome {
     let Some(mut preview) = source.find(request).await else {
         return PreviewOutcome::Unavailable("no YouTube video for the song".into());
@@ -395,10 +400,16 @@ pub async fn check(
     else {
         return PreviewOutcome::Unavailable("the download could not be fingerprinted".into());
     };
-    let Some(heard) =
-        fingerprint_preview(source, fingerprinter, &preview.video_id, timeout_seconds, false).await
+    let Some(heard) = fingerprint_preview(
+        source,
+        fingerprinter,
+        &preview.video_id,
+        timeout_seconds,
+        background,
+    )
+    .await
     else {
-        return PreviewOutcome::Unavailable(format!("the shim did not send preview {}", preview.video_id));
+        return PreviewOutcome::NotSent(format!("the shim did not send preview {}", preview.video_id));
     };
     if preview.seconds.is_none_or(|s| s <= 0) {
         preview.seconds = Some(heard.seconds.round() as i32);

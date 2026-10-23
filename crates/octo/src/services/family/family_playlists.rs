@@ -337,6 +337,31 @@ pub fn remove_shown(
     Ok(stored.len())
 }
 
+/// Removes the entries at these places of the stored playlist (places past its end are left
+/// alone). Answers how many went.
+pub fn remove_stored(
+    store: &FamilyPlaylistStore,
+    caller: &FamilyCaller,
+    id: &str,
+    stored: &[usize],
+) -> Result<usize, PlaylistError> {
+    let playlist = find(store, caller, id).ok_or(PlaylistError::NotFound)?;
+    if !may_edit(caller) {
+        return Err(PlaylistError::NotAllowed(CANNOT_EDIT));
+    }
+    let mut places: Vec<usize> = stored
+        .iter()
+        .copied()
+        .filter(|at| *at < playlist.entries.len())
+        .collect();
+    places.sort_unstable();
+    places.dedup();
+    if !places.is_empty() {
+        store.remove_indexes(id, &places);
+    }
+    Ok(places.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,6 +578,36 @@ mod tests {
             .map(|e| e.library_id.or(e.outside_id))
             .collect();
         assert_eq!(left, vec![Some("a1".into()), Some("o1".into())]);
+    }
+
+    #[test]
+    fn removal_by_stored_place_ignores_repeats_and_places_past_the_end() {
+        let store = FamilyPlaylistStore::in_memory();
+        let list = create(&store, &owner(), "Road trip", false, now()).expect("made");
+        let alex = caller("alex", Preset::Member);
+        add(
+            &store,
+            &NoPlaylistAddRequests,
+            &alex,
+            &list.id,
+            vec![outside("o0"), outside("o1"), outside("o2")],
+            now(),
+        )
+        .expect("added");
+        let kid = caller("kid", Preset::Kid);
+        assert_eq!(
+            remove_stored(&store, &kid, &list.id, &[0]),
+            Err(PlaylistError::NotAllowed(CANNOT_EDIT))
+        );
+        assert_eq!(remove_stored(&store, &alex, &list.id, &[2, 2, 9]), Ok(1));
+        let left: Vec<Option<String>> = store
+            .get(&list.id)
+            .expect("there")
+            .entries
+            .into_iter()
+            .map(|e| e.outside_id)
+            .collect();
+        assert_eq!(left, vec![Some("o0".into()), Some("o1".into())]);
     }
 
     #[test]

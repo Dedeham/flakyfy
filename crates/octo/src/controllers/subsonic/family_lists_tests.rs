@@ -628,6 +628,70 @@ async fn index_maps_from_viewer_list() {
 }
 
 #[tokio::test]
+async fn removal_skips_an_entry_octo_cannot_read() {
+    let f = fixture(true).await;
+    let id = f.playlist(
+        false,
+        vec![
+            library("s-missing", SHARED_SCOPE, None),
+            outside(OUTSIDE),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    // Navidrome refuses the first entry's song, so alex is shown the other two.
+    let list = f.json("alex", &format!("getPlaylist?id={id}")).await;
+    assert_eq!(ids(&list["playlist"]["entry"]), [OUTSIDE, "s-clean"], "{list}");
+    let answer = f
+        .json(
+            "alex",
+            &format!("updatePlaylist?playlistId={id}&songIndexToRemove=1"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    let left: Vec<Option<String>> = f
+        .entries(&id)
+        .into_iter()
+        .map(|e| e.library_id.or(e.outside_id))
+        .collect();
+    assert_eq!(left, [Some("s-missing".to_string()), Some(OUTSIDE.to_string())]);
+}
+
+#[tokio::test]
+async fn removal_counts_over_a_clean_only_listeners_answer() {
+    let f = fixture(true).await;
+    // The kid profile hears clean songs only; here it may also edit family playlists.
+    let mut editor = f.state.family_store.member("kid").expect("a member");
+    editor.edits.insert("familyPlaylistsEdit".into(), json!(true));
+    f.state.family_store.upsert_member(editor);
+    let id = f.playlist(
+        false,
+        vec![
+            outside(OUTSIDE_EXPLICIT),
+            outside(OUTSIDE),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    let list = f.json("kid", &format!("getPlaylist?id={id}")).await;
+    assert_eq!(ids(&list["playlist"]["entry"]), [OUTSIDE, "s-clean"], "{list}");
+    let answer = f
+        .json(
+            "kid",
+            &format!("updatePlaylist?playlistId={id}&songIndexToRemove=1"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    let left: Vec<Option<String>> = f
+        .entries(&id)
+        .into_iter()
+        .map(|e| e.library_id.or(e.outside_id))
+        .collect();
+    assert_eq!(
+        left,
+        [Some(OUTSIDE_EXPLICIT.to_string()), Some(OUTSIDE.to_string())]
+    );
+}
+
+#[tokio::test]
 async fn kid_cannot_edit() {
     let f = fixture(true).await;
     let id = f.playlist(false, vec![outside(OUTSIDE)]);

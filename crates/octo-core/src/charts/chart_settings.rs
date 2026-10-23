@@ -266,13 +266,22 @@ pub fn pinned_name(name: &str, country: &str) -> String {
     format!("{name} · {}", country_name(country))
 }
 
+/// Why pinned countries as sent cannot be saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinsError {
+    /// More than [`MAX_PINNED`] countries.
+    TooMany,
+    /// A part that is no two-letter country code, as sent.
+    NotACountry(String),
+}
+
 /// Pinned countries as sent: comma-separated or repeated two-letter codes, lowercase, no
-/// repeats, never `home`, at most [`MAX_PINNED`]. Anything else is the caller's mistake, and the
-/// first such part comes back as the error.
+/// repeats, never `home`, at most [`MAX_PINNED`]. Anything else is the caller's mistake: the
+/// first part that is no country, or too many countries.
 pub fn parse_pins<'a>(
     parts: impl IntoIterator<Item = &'a str>,
     home: Option<&str>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, PinsError> {
     let mut out: Vec<String> = Vec::new();
     for part in parts.into_iter().flat_map(|p| p.split(',')) {
         let code = part.trim().to_ascii_lowercase();
@@ -280,7 +289,7 @@ pub fn parse_pins<'a>(
             continue;
         }
         if !matches!(parse_country(&code), ChartCountry::Fixed(_)) {
-            return Err(part.trim().to_string());
+            return Err(PinsError::NotACountry(part.trim().to_string()));
         }
         if Some(code.as_str()) == home || out.contains(&code) {
             continue;
@@ -288,7 +297,7 @@ pub fn parse_pins<'a>(
         out.push(code);
     }
     if out.len() > MAX_PINNED {
-        return Err(format!("at most {MAX_PINNED} countries"));
+        return Err(PinsError::TooMany);
     }
     Ok(out)
 }

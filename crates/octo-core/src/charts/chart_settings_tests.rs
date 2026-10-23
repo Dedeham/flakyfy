@@ -194,8 +194,16 @@ fn pins_parse() {
         parse_pins(["br", "kr"], None),
         Ok(vec!["br".to_string(), "kr".to_string()])
     );
-    assert_eq!(parse_pins(["usa"], None), Err("usa".to_string()));
-    assert!(parse_pins(["br,jp,kr,de"], None).is_err());
+    assert_eq!(
+        parse_pins(["usa"], None),
+        Err(PinsError::NotACountry("usa".to_string()))
+    );
+    assert_eq!(parse_pins(["br,jp,kr,de"], None), Err(PinsError::TooMany));
+    assert_eq!(
+        parse_pins(["br", "jp", "kr", "x1"], None),
+        Err(PinsError::NotACountry("x1".to_string())),
+        "a part that is no country is named, however many were sent"
+    );
     assert_eq!(parse_pins([""], None), Ok(Vec::new()));
     assert_eq!(parse_pins([], None), Ok(Vec::new()));
 }

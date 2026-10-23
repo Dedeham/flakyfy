@@ -208,6 +208,11 @@ async fn listeners_put_refuses_an_unknown_country_and_a_fourth_pin() {
     )
     .await;
     let nobody = put_people(&app, serde_json::json!({"user": " ", "country": "br"})).await;
+    let bad_of_four = put_people(
+        &app,
+        serde_json::json!({"user": "anna", "pinned": ["jp", "kr", "de", "x1"]}),
+    )
+    .await;
 
     assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
     assert!(unknown.text().contains("no charts for zz"), "{}", unknown.text());
@@ -215,6 +220,12 @@ async fn listeners_put_refuses_an_unknown_country_and_a_fourth_pin() {
     assert_eq!(four.status, StatusCode::BAD_REQUEST);
     assert!(four.text().contains("at most 3"), "{}", four.text());
     assert_eq!(nobody.status, StatusCode::BAD_REQUEST);
+    assert_eq!(bad_of_four.status, StatusCode::BAD_REQUEST);
+    assert!(
+        bad_of_four.text().contains("no charts for x1"),
+        "the code that is no country is named: {}",
+        bad_of_four.text()
+    );
     assert!(state.top_songs.listeners().all().is_empty());
 }
 

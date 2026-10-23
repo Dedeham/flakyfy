@@ -8,7 +8,9 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Response;
-use octo_core::charts::chart_settings::{self, ChartCountry, MAX_PINNED, OVERALL, genre_name, parse_country};
+use octo_core::charts::chart_settings::{
+    self, ChartCountry, MAX_PINNED, OVERALL, PinsError, genre_name, parse_country,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::info;
@@ -204,13 +206,13 @@ pub async fn put_listeners(State(state): State<AppState>, caller: Caller, body: 
     };
     let pinned = match chart_settings::parse_pins(choice.pinned.iter().map(String::as_str), home.as_deref()) {
         Ok(pinned) => pinned,
-        Err(_) if choice.pinned.len() > MAX_PINNED => {
+        Err(PinsError::TooMany) => {
             return error_json(
                 StatusCode::BAD_REQUEST,
                 &format!("Pin at most {MAX_PINNED} countries."),
             );
         }
-        Err(part) => {
+        Err(PinsError::NotACountry(part)) => {
             return error_json(
                 StatusCode::BAD_REQUEST,
                 &format!("Apple Music has no charts for {part}."),

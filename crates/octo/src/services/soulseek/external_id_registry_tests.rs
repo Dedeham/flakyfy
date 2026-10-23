@@ -557,25 +557,45 @@ fn a_re_pin_and_a_size_are_written_down_and_outlive_a_restart() {
 }
 
 #[test]
-fn unpinning_a_video_forgets_it_and_only_that_one() {
+fn refusing_a_video_unpins_it_and_keeps_it_out() {
     let registry = ExternalIdRegistry::in_memory();
     let id = registry.register(song("KILLY", "Killamonjaro"));
     assert!(registry.set_you_tube_id(&id, "summer-cem"));
 
-    // Another video than the pinned one changes nothing.
-    assert!(!registry.unpin_video(&id, "killy"));
-    assert_eq!(
-        registry
-            .lookup(&id)
-            .expect("known")
-            .snapshot()
-            .you_tube_id
-            .as_deref(),
-        Some("summer-cem")
-    );
+    assert!(registry.refuse_video(&id, "summer-cem"));
+    let snapshot = registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(snapshot.you_tube_id, None);
+    assert!(snapshot.refuses_video("summer-cem"));
 
-    assert!(registry.unpin_video(&id, "summer-cem"));
-    assert_eq!(registry.lookup(&id).expect("known").snapshot().you_tube_id, None);
-    assert!(!registry.unpin_video(&id, "summer-cem"));
-    assert!(!registry.unpin_video("no-such-id", "summer-cem"));
+    assert!(!registry.set_you_tube_id(&id, "summer-cem"));
+    assert!(!registry.pin_video(&id, "summer-cem", false));
+    assert!(!registry.refuse_video("no-such-id", "x"));
+}
+
+#[test]
+fn registering_the_same_song_again_keeps_its_refused_videos() {
+    let registry = ExternalIdRegistry::in_memory();
+    let id = registry.register(song("KILLY", "Killamonjaro"));
+    assert!(registry.refuse_video(&id, "summer-cem"));
+
+    let again = registry.register(song("KILLY", "Killamonjaro"));
+    assert_eq!(again, id);
+    assert!(registry.lookup(&id).expect("known").snapshot().refuses_video("summer-cem"));
+    assert!(!registry.set_you_tube_id(&id, "summer-cem"));
+}
+
+#[test]
+fn a_refused_video_outlives_a_restart() {
+    let (_dir, path) = temp_path("octo-ids.json");
+    let first = ExternalIdRegistry::new(Some(&path));
+    let id = first.register(song("KILLY", "Killamonjaro"));
+    first.flush();
+    assert!(first.refuse_video(&id, "summer-cem"));
+    first.flush();
+    drop(first);
+
+    let reopened = ExternalIdRegistry::new(Some(&path));
+    let routing = reopened.lookup(&id).expect("restored");
+    assert!(routing.lock().refuses_video("summer-cem"));
+    assert!(!reopened.set_you_tube_id(&id, "summer-cem"));
 }

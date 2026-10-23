@@ -195,9 +195,13 @@ impl ExternalIdRegistry {
                     p.album.clone(),
                 )
             };
-            let (prev_video, prev_stream) = {
+            let (prev_video, prev_stream, prev_refused) = {
                 let p = previous.lock();
-                (p.you_tube_id.clone().filter(|v| !v.is_empty()), p.stream_facts())
+                (
+                    p.you_tube_id.clone().filter(|v| !v.is_empty()),
+                    p.stream_facts(),
+                    p.refused_videos.clone(),
+                )
             };
             let mut r = routing.lock();
             // A song row mints an album routing with no Deezer id (`convert_song_to_json`), and
@@ -239,6 +243,10 @@ impl ExternalIdRegistry {
                     .is_some_and(|album| !album.trim().is_empty())
             {
                 r.album = prev_album;
+            }
+            // And the videos found to be another song: a fresh mint must not take one again.
+            if !prev_refused.is_empty() {
+                r.keep_refused_videos(&prev_refused);
             }
             // And the video a play or a lookup pinned, with what is known of its stream: a
             // search mints the song again with no video, and the size a client was told has to
@@ -385,7 +393,8 @@ impl ExternalIdRegistry {
 
     /// Pins `video` for playback on the song under `short_id`, written down at the next flush.
     /// `replace` false keeps a different video that is already pinned. Pinning another video
-    /// forgets the old one's stream facts. True when the song now plays `video`.
+    /// forgets the old one's stream facts. True when the song now plays `video`. False for a
+    /// video the song refuses.
     pub fn pin_video(&self, short_id: &str, video: &str, replace: bool) -> bool {
         if short_id.is_empty() || video.is_empty() {
             return false;
@@ -395,6 +404,9 @@ impl ExternalIdRegistry {
         };
         let changed = {
             let mut r = routing.lock();
+            if r.refuses_video(video) {
+                return false;
+            }
             if !replace
                 && r.you_tube_id
                     .as_deref()
@@ -410,16 +422,16 @@ impl ExternalIdRegistry {
         true
     }
 
-    /// Forgets `video` as the song under `short_id`'s, so the next play or download looks again.
-    /// True when it was the song's video.
-    pub fn unpin_video(&self, short_id: &str, video: &str) -> bool {
+    /// Refuses `video` for the song under `short_id`: unpinned with what was learned from it, and
+    /// never pinned for it again. True when anything changed.
+    pub fn refuse_video(&self, short_id: &str, video: &str) -> bool {
         if short_id.is_empty() || video.is_empty() {
             return false;
         }
         let Some(routing) = self.lru.lock().by_id.get(short_id).map(|(r, _)| r.clone()) else {
             return false;
         };
-        let changed = routing.lock().unpin_video(video);
+        let changed = routing.lock().refuse_video(video);
         if changed {
             self.dirty.store(true, Ordering::SeqCst);
         }

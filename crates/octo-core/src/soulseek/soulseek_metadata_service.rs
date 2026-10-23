@@ -108,12 +108,19 @@ pub struct SoulseekRouting {
 
     /// ReplayGain track peak (linear) of the pinned video's audio, measured with the gain.
     pub track_peak: Option<f64>,
+
+    /// Videos found to be another song than this one, newest last, so neither a play nor a
+    /// download takes them again. At most [`Self::MAX_REFUSED_VIDEOS`].
+    pub refused_videos: Vec<String>,
 }
 
 /// The gain and peak are plain measured numbers, never NaN, so equality is total.
 impl Eq for SoulseekRouting {}
 
 impl SoulseekRouting {
+    /// How many refused videos a song remembers; the oldest goes first.
+    pub const MAX_REFUSED_VIDEOS: usize = 5;
+
     pub fn has_you_tube(&self) -> bool {
         self.you_tube_id.as_deref().is_some_and(|id| !id.is_empty())
     }
@@ -145,9 +152,10 @@ impl SoulseekRouting {
     }
 
     /// Pins `video` for playback. A video other than the pinned one forgets the old one's
-    /// stream facts, which describe a different stream. True when the pin changed.
+    /// stream facts, which describe a different stream. A refused video is never pinned. True
+    /// when the pin changed.
     pub fn pin_video(&mut self, video: &str) -> bool {
-        if self.you_tube_id.as_deref() == Some(video) {
+        if self.you_tube_id.as_deref() == Some(video) || self.refuses_video(video) {
             return false;
         }
         self.you_tube_id = Some(video.to_string());
@@ -161,11 +169,19 @@ impl SoulseekRouting {
         true
     }
 
-    /// Forgets `video` as the song's video, and what was known of its stream. False when the
-    /// song plays another video, or none.
+    /// Forgets `video` as the song's video, what was known of its stream, and a length learned
+    /// from it. False when the song plays another video, or none.
     pub fn unpin_video(&mut self, video: &str) -> bool {
         if self.you_tube_id.as_deref() != Some(video) {
             return false;
+        }
+        // A length learned from this video goes with it; one from the catalog or a file stays.
+        if self.shown_duration_source == LengthSource::Video {
+            if self.duration.is_some() && self.duration == self.shown_duration {
+                self.duration = None;
+            }
+            self.shown_duration = None;
+            self.shown_duration_source = LengthSource::None;
         }
         self.you_tube_id = None;
         self.stream_size = None;
@@ -176,6 +192,41 @@ impl SoulseekRouting {
         self.track_gain = None;
         self.track_peak = None;
         true
+    }
+
+    /// Unpins `video` and remembers it as another song than this one, so it is never pinned
+    /// again. True when anything changed.
+    pub fn refuse_video(&mut self, video: &str) -> bool {
+        if video.is_empty() {
+            return false;
+        }
+        let unpinned = self.unpin_video(video);
+        if self.refuses_video(video) {
+            return unpinned;
+        }
+        self.refused_videos.push(video.to_string());
+        if self.refused_videos.len() > Self::MAX_REFUSED_VIDEOS {
+            self.refused_videos.remove(0);
+        }
+        true
+    }
+
+    /// Whether `video` was found to be another song than this one.
+    pub fn refuses_video(&self, video: &str) -> bool {
+        self.refused_videos.iter().any(|v| v == video)
+    }
+
+    /// Takes `others` into the refused videos, oldest first, keeping each once and at most
+    /// [`Self::MAX_REFUSED_VIDEOS`].
+    pub fn keep_refused_videos(&mut self, others: &[String]) {
+        let mut all: Vec<String> = others.to_vec();
+        for video in std::mem::take(&mut self.refused_videos) {
+            if !all.contains(&video) {
+                all.push(video);
+            }
+        }
+        let excess = all.len().saturating_sub(Self::MAX_REFUSED_VIDEOS);
+        self.refused_videos = all.split_off(excess);
     }
 
     pub fn has_artist_title(&self) -> bool {
@@ -216,6 +267,7 @@ impl Serialize for SoulseekRouting {
             self.stream_bit_rate.is_some(),
             self.track_gain.is_some(),
             self.track_peak.is_some(),
+            !self.refused_videos.is_empty(),
         ]
         .into_iter()
         .filter(|known| *known)
@@ -267,6 +319,9 @@ impl Serialize for SoulseekRouting {
         if let Some(peak) = &self.track_peak {
             s.serialize_field("TrackPeak", peak)?;
         }
+        if !self.refused_videos.is_empty() {
+            s.serialize_field("RefusedVideos", &self.refused_videos)?;
+        }
         if from_file {
             s.serialize_field(SHOWN_FROM_FILE, &true)?;
         }
@@ -295,6 +350,82 @@ mod tests {
         assert!(routing.unpin_video("wrong"));
         assert_eq!(routing.you_tube_id, None);
         assert_eq!((routing.stream_size, routing.track_gain), (None, None));
+    }
+
+    #[test]
+    fn unpinning_forgets_a_length_learned_from_the_video() {
+        let mut routing = SoulseekRouting {
+            you_tube_id: Some("v".into()),
+            shown_duration: Some(153),
+            shown_duration_source: LengthSource::Video,
+            duration: Some(153),
+            ..Default::default()
+        };
+        assert!(routing.unpin_video("v"));
+        assert_eq!(routing.shown_duration, None);
+        assert_eq!(routing.shown_duration_source, LengthSource::None);
+        assert_eq!(routing.duration, None);
+
+        let mut catalog = SoulseekRouting {
+            you_tube_id: Some("v".into()),
+            shown_duration: Some(179),
+            shown_duration_source: LengthSource::Deezer,
+            duration: Some(179),
+            ..Default::default()
+        };
+        assert!(catalog.unpin_video("v"));
+        assert_eq!(catalog.shown_duration, Some(179));
+        assert_eq!(catalog.shown_duration_source, LengthSource::Deezer);
+        assert_eq!(catalog.duration, Some(179));
+    }
+
+    #[test]
+    fn a_refused_video_is_never_pinned_again() {
+        let mut routing = SoulseekRouting {
+            you_tube_id: Some("v".into()),
+            ..Default::default()
+        };
+        assert!(routing.refuse_video("v"));
+        assert_eq!(routing.you_tube_id, None);
+        assert!(routing.refuses_video("v"));
+        assert!(!routing.pin_video("v"));
+        assert_eq!(routing.you_tube_id, None);
+        assert!(routing.pin_video("w"));
+    }
+
+    #[test]
+    fn refused_videos_keep_each_once_and_the_newest_five() {
+        let mut routing = SoulseekRouting::default();
+        for video in ["a", "a", "b", "c", "d", "e", "f"] {
+            routing.refuse_video(video);
+        }
+        assert_eq!(routing.refused_videos, ["b", "c", "d", "e", "f"]);
+    }
+
+    #[test]
+    fn keeping_refused_videos_merges_oldest_first() {
+        let mut routing = SoulseekRouting {
+            refused_videos: vec!["c".into()],
+            ..Default::default()
+        };
+        routing.keep_refused_videos(&["a".into(), "b".into(), "c".into()]);
+        assert_eq!(routing.refused_videos, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn refused_videos_are_written_only_when_there_are_some() {
+        let none = serde_json::to_value(SoulseekRouting::default()).unwrap();
+        assert!(none.get("RefusedVideos").is_none());
+
+        let routing = SoulseekRouting {
+            refused_videos: vec!["v".into()],
+            ..Default::default()
+        };
+        let json = crate::json::to_string(&routing);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["RefusedVideos"], serde_json::json!(["v"]));
+        let back: SoulseekRouting = serde_json::from_str(&json).expect("reads back");
+        assert_eq!(back.refused_videos, ["v"]);
     }
 
     #[test]

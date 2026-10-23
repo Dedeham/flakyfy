@@ -224,10 +224,24 @@ impl YouTubeResolver {
         duration_hint: Option<i32>,
         background: bool,
     ) -> Option<YouTubeHit> {
+        self.search_skipping(query, duration_hint, background, &[]).await
+    }
+
+    /// [`Self::search`], leaving the videos in `skip` out of the shim's candidates.
+    pub async fn search_skipping(
+        &self,
+        query: &str,
+        duration_hint: Option<i32>,
+        background: bool,
+        skip: &[String],
+    ) -> Option<YouTubeHit> {
         if query.trim().is_empty() {
             return None;
         }
-        let url = self.query_url("search", query, duration_hint, background);
+        let mut url = self.query_url("search", query, duration_hint, background);
+        if !skip.is_empty() {
+            url.push_str(&format!("&skip={}", escape(&skip.join(","))));
+        }
         let outcome: anyhow::Result<Option<YouTubeHit>> = async {
             let resp = self.search_client.get(&url).send().await?;
             if !resp.status().is_success() {
@@ -620,6 +634,30 @@ mod tests {
             })
         );
         assert!(resolver.search("  ", None, false).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn search_names_the_videos_to_leave_out_only_when_there_are_some() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"abc"}"#))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        resolver
+            .search_skipping("Song", Some(200), false, &["a".to_string(), "b".to_string()])
+            .await
+            .expect("a hit");
+        resolver.search("Song", Some(200), false).await.expect("a hit");
+
+        let requests = shim.received_requests().await.expect("recorded");
+        let queries: Vec<String> = requests
+            .iter()
+            .map(|r| r.url.query().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(queries.len(), 2);
+        assert!(queries[0].contains("skip=a%2Cb"), "{}", queries[0]);
+        assert!(!queries[1].contains("skip"), "{}", queries[1]);
     }
 
     #[tokio::test]

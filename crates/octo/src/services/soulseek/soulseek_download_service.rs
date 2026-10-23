@@ -492,15 +492,24 @@ impl SoulseekDownloadService {
 
         let r = routing.snapshot();
         let (artist, title) = names(&r);
-        let mut video_id = r.you_tube_id.clone().filter(|v| !v.is_empty());
+        let mut video_id = r
+            .you_tube_id
+            .clone()
+            .filter(|v| !v.is_empty() && !r.refuses_video(v));
         if video_id.is_none() {
             // YouTube Music's row for the song first, as a play picks: its title, artist and
-            // length are the song's. Else the shim's search.
-            let hit = match self.youtube.music_song(&artist, &title, r.duration).await {
+            // length are the song's. Else the shim's search. A video refused for the song is
+            // never taken.
+            let hit = match self
+                .youtube
+                .music_song(&artist, &title, r.duration)
+                .await
+                .filter(|h| !r.refuses_video(&h.video_id))
+            {
                 Some(row) => Some(row),
                 None => self
                     .youtube
-                    .search(&format!("{artist} {title}"), r.duration, false)
+                    .search_skipping(&format!("{artist} {title}"), r.duration, false, &r.refused_videos)
                     .await
                     .filter(|h| !h.video_id.is_empty()),
             };
@@ -603,7 +612,7 @@ impl SoulseekDownloadService {
                     verdict.heard(),
                 );
                 let _ = std::fs::remove_file(&path);
-                self.id_registry.unpin_video(&track_key, &video_id);
+                self.id_registry.refuse_video(&track_key, &video_id);
                 return Err(file_not_found(format!(
                     "AcoustID identified YouTube's video for '{artist} - {title}' as {}",
                     verdict.describe()
@@ -2307,12 +2316,21 @@ impl DownloadBackend for SoulseekDownloadService {
         };
 
         let r = routing.snapshot();
-        let mut video_id = r.you_tube_id.clone().filter(|v| !v.is_empty());
+        let mut video_id = r
+            .you_tube_id
+            .clone()
+            .filter(|v| !v.is_empty() && !r.refuses_video(v));
         if video_id.is_none() && r.has_artist_title() {
             let (artist, title) = names(&r);
             // YouTube Music's row for the song first: one quick search, and the stream is
             // resolved as it opens. Else the shim's yt-dlp search, which resolves both at once.
-            let hit = match self.youtube.music_song(&artist, &title, r.duration).await {
+            // A video refused for the song is never taken.
+            let music_hit = self
+                .youtube
+                .music_song(&artist, &title, r.duration)
+                .await
+                .filter(|h| !r.refuses_video(&h.video_id));
+            let hit = match music_hit {
                 Some(hit) => {
                     debug!(
                         "play of '{artist} - {title}': video {} from YouTube Music",
@@ -2323,7 +2341,7 @@ impl DownloadBackend for SoulseekDownloadService {
                 None => {
                     let hit = self
                         .youtube
-                        .search(&format!("{artist} {title}"), r.duration, false)
+                        .search_skipping(&format!("{artist} {title}"), r.duration, false, &r.refused_videos)
                         .await
                         .filter(|h| !h.video_id.is_empty());
                     if let Some(hit) = &hit {

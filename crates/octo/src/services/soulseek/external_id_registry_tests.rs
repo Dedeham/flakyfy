@@ -580,7 +580,13 @@ fn registering_the_same_song_again_keeps_its_refused_videos() {
 
     let again = registry.register(song("KILLY", "Killamonjaro"));
     assert_eq!(again, id);
-    assert!(registry.lookup(&id).expect("known").snapshot().refuses_video("summer-cem"));
+    assert!(
+        registry
+            .lookup(&id)
+            .expect("known")
+            .snapshot()
+            .refuses_video("summer-cem")
+    );
     assert!(!registry.set_you_tube_id(&id, "summer-cem"));
 }
 

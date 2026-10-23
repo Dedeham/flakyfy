@@ -864,11 +864,39 @@ async fn info_for_outside_ids_carries_the_catalog_picture_in_both_formats() {
     let _ = Album::default();
 }
 
+/// Navidrome as the radio-off relay meets it: its own envelope in the asked format on one
+/// slash, its web app on a doubled one.
+fn navidrome_similar(request: &wiremock::Request) -> ResponseTemplate {
+    let path = request.url.path();
+    if path.starts_with("//") {
+        return ResponseTemplate::new(200).set_body_raw("<!DOCTYPE html>", "text/html");
+    }
+    let key = if path.to_ascii_lowercase().contains("getsimilarsongs2") {
+        "similarSongs2"
+    } else {
+        "similarSongs"
+    };
+    let json = request
+        .url
+        .query_pairs()
+        .any(|(name, value)| name == "f" && value == "json");
+    if json {
+        json_reply(ok_json(&format!(r#""{key}":{{"song":[{{"id":"nd-1"}}]}}"#)))
+    } else {
+        ResponseTemplate::new(200).set_body_raw(
+            format!(
+                "<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"ok\" version=\"1.16.1\"><{key}><song id=\"nd-1\"></song></{key}></subsonic-response>"
+            ),
+            "application/xml",
+        )
+    }
+}
+
 #[tokio::test]
-async fn similar_songs_need_an_id_and_relay_their_own_path_with_radio_off() {
+async fn similar_songs_need_an_id_and_relay_their_own_endpoint_with_radio_off() {
     let server = MockServer::builder().start().await;
     Mock::given(any())
-        .respond_with(json_reply(ok_json(r#""similarSongs2":{}"#)))
+        .respond_with(navidrome_similar)
         .mount(&server)
         .await;
     // Radio is on by default, and since 2026.10.05 it answers without a Last.fm key (ListenBrainz
@@ -891,11 +919,54 @@ async fn similar_songs_need_an_id_and_relay_their_own_path_with_radio_off() {
         "Missing id parameter"
     );
 
-    get(&app, "/rest/GetSimilarSongs2.view?id=x&f=json").await;
-    let asked = server.received_requests().await.unwrap();
-    assert_eq!(asked.len(), 1);
-    // The path's own leading slash after the server's: `{Url}//rest/...`, as the client spelled it.
-    assert_eq!(asked[0].url.path(), "//rest/GetSimilarSongs2.view");
+    // v1 in JSON: Navidrome's own similarSongs, not its web app.
+    let v1_json = get(&app, "/rest/getSimilarSongs?id=x&f=json").await;
+    assert_eq!(v1_json.status, StatusCode::OK);
+    assert!(
+        v1_json
+            .header("content-type")
+            .unwrap_or("")
+            .starts_with("application/json"),
+        "{:?}",
+        v1_json.header("content-type")
+    );
+    assert_eq!(
+        v1_json.json()["subsonic-response"]["similarSongs"]["song"][0]["id"],
+        "nd-1"
+    );
+    // v1 in XML.
+    let v1_xml = get(&app, "/rest/getSimilarSongs.view?id=x").await.body;
+    assert!(v1_xml.contains("<similarSongs>"), "{v1_xml}");
+    assert!(!v1_xml.contains("<!DOCTYPE"), "{v1_xml}");
+    // v2, spelled as a client may spell it.
+    let v2 = get(&app, "/rest/GetSimilarSongs2.view?id=x&f=json").await.json();
+    assert_eq!(v2["subsonic-response"]["similarSongs2"]["song"][0]["id"], "nd-1");
+
+    let asked: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|request| request.url.path().to_string())
+        .collect();
+    // One slash after the server's address, the endpoint as the client spelled it.
+    assert_eq!(
+        asked,
+        [
+            "/rest/getSimilarSongs",
+            "/rest/getSimilarSongs.view",
+            "/rest/GetSimilarSongs2.view"
+        ]
+    );
+
+    // An outside song: Navidrome never saw it, so Octo answers the empty radio itself.
+    let outside = get(&app, "/rest/getSimilarSongs2?id=ext-deezer-song-1&f=json")
+        .await
+        .json();
+    assert_eq!(outside["subsonic-response"]["status"], "ok");
+    let outside_xml = get(&app, "/rest/getSimilarSongs?id=ext-deezer-song-1").await.body;
+    assert!(outside_xml.contains("similarSongs"), "{outside_xml}");
+    assert_eq!(server.received_requests().await.unwrap().len(), 3);
 }
 
 #[tokio::test]

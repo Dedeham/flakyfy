@@ -1207,10 +1207,14 @@ impl LibraryReviewSweepWorker {
                     preview: facts,
                     ..
                 } => {
-                    witness = Some(PreviewWitness {
-                        bit_error: comparison.bit_error,
-                        album_agrees: Self::preview_album_agrees(facts.album.as_deref(), &song.album),
-                    });
+                    // The re-check of Octo's own downloads only ever asks: each was already held to a
+                    // preview found at the catalog's length when it arrived.
+                    if lane == Lane::Library {
+                        witness = Some(PreviewWitness {
+                            bit_error: comparison.bit_error,
+                            album_agrees: Self::preview_album_agrees(facts.album.as_deref(), &song.album),
+                        });
+                    }
                     (
                         Outcome::Ask,
                         VerificationResult {

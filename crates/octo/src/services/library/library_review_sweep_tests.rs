@@ -1753,6 +1753,37 @@ async fn the_recheck_replaces_and_asks_like_the_sweep() {
     assert_eq!(replacer.requests().len(), 1);
 }
 
+/// A preview that says a download is another song is only asked about on the re-check, even with
+/// the preview's replacing on.
+#[tokio::test]
+async fn the_recheck_of_octo_s_downloads_asks_and_never_replaces_by_preview() {
+    let sweep = Sweep::new();
+    let mine = sweep.teardrop("a.flac");
+    let queue = Arc::new(NoticeQueue::new());
+    let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+    let worker = sweep.worker(
+        FakeVerifier::never_heard(Some(compared(Heard::Mismatch, 0.5))),
+        Options {
+            queue: Some(queue.clone()),
+            settings: Some(replacing_by_preview(60)),
+            octo_downloads: vec![mine],
+            replacer: Some(replacer.clone()),
+            ..Default::default()
+        },
+    );
+    worker.recheck_octo().await;
+    worker.tick().await;
+    worker.tick().await;
+
+    assert!(replacer.requests().is_empty());
+    let open = queue
+        .for_user("bob", NoticeKind::Review)
+        .iter()
+        .filter(|entry| entry.state == NoticeState::Waiting)
+        .count();
+    assert_eq!(open, 1);
+}
+
 /// The Verify card offers a re-check once MinMatchScore differs from the last re-check's (85
 /// before the first), until a re-check runs with it.
 #[tokio::test]

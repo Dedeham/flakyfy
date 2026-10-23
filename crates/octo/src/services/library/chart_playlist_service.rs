@@ -452,21 +452,16 @@ impl ChartPlaylistService {
     }
 
     /// What decides whether a made list still holds: outside songs shown or not, which of them
-    /// the listener's explicit filter and Skip covers and instrumentals let through, and whose charts they
-    /// are (the listener's own country; a pinned list names its country in its id).
-    async fn rule(&self, username: &str) -> String {
+    /// the listener's explicit filter and Skip covers and instrumentals let through, and whose
+    /// chart it is: the listener's own country for their own lists, so a new own country makes
+    /// those again, and the pinned country for a pinned one, which a new own country leaves be.
+    fn rule(&self, username: &str, list: &str, home: Option<&str>) -> String {
         let settings = self.inner.settings.current();
-        let subsonic = settings.subsonic.clone();
         let skip_covers_and_instrumentals = settings.soulseek.skip_covers_and_instrumentals;
-        let country = self
-            .inner
-            .top_songs
-            .country_of(username)
-            .await
-            .unwrap_or_else(|| "auto".into());
+        let country = split_list(list).1.or(home).unwrap_or("auto");
         format!(
-            "{}|{:?}|{country}{}",
-            subsonic.enable_search_discovery,
+            "{}|{:?}{}|{country}",
+            settings.subsonic.enable_search_discovery,
             self.explicit_filter_for(username),
             if skip_covers_and_instrumentals {
                 "|skip-covers-and-instrumentals"
@@ -489,38 +484,50 @@ impl ChartPlaylistService {
         let user = user_key(username);
         let now = self.inner.clock.now();
         let period = period_index(now, REFRESH_HOURS);
-        let rule = self.rule(username).await;
+        let home = self.inner.top_songs.country_of(username).await;
         // Only the lists each country has: a genre it lacks is never made, and must not make the
         // others due on every request.
         let on = self.charts_for(username).await;
-        let waiting: Vec<String> = self
-            .inner
-            .failed_at
-            .lock()
-            .iter()
-            .filter(|((who, _), at)| *who == user && now - **at < RETRY_AFTER_FAILURE)
-            .map(|((_, list), _)| list.clone())
-            .collect();
+        // Every list that is on, whatever a country's menu says just now: a menu not known for a
+        // moment must not let a made list go.
+        let kept = self.lists_for(username);
+        let waiting: Vec<String> = {
+            let mut failed = self.inner.failed_at.lock();
+            failed.retain(|(who, list), at| {
+                now - *at < RETRY_AFTER_FAILURE && (*who != user || kept.contains(list))
+            });
+            failed
+                .keys()
+                .filter(|(who, _)| *who == user)
+                .map(|(_, list)| list.clone())
+                .collect()
+        };
         let (any_made, due) = {
             let mut made = self.inner.made.lock();
             // A list turned off, or a country unpinned, is let go; a list still on is kept even
             // while it is due.
             if let Some(mine) = made.get_mut(&user) {
-                mine.retain(|list, _| on.iter().any(|(l, _)| l == list));
+                mine.retain(|list, _| kept.contains(list));
             }
             let mine = made.get(&user);
             let any_made = mine.is_some_and(|m| {
                 on.iter()
                     .any(|(l, _)| m.get(l).is_some_and(|x| !x.entries.is_empty()))
             });
-            let due: Vec<(String, String)> = on
+            let due: Vec<(String, String, String)> = on
                 .iter()
-                .filter(|(list, _)| {
-                    mine.and_then(|m| m.get(list))
-                        .is_none_or(|m| m.period != period || m.rule != rule || !m.whole)
-                        && !waiting.contains(list)
+                .filter(|(list, _)| !waiting.contains(list))
+                .map(|(list, name)| {
+                    (
+                        list.clone(),
+                        name.clone(),
+                        self.rule(username, list, home.as_deref()),
+                    )
                 })
-                .cloned()
+                .filter(|(list, _, rule)| {
+                    mine.and_then(|m| m.get(list))
+                        .is_none_or(|m| m.period != period || m.rule != *rule || !m.whole)
+                })
                 .collect();
             (any_made, due)
         };
@@ -534,23 +541,23 @@ impl ChartPlaylistService {
             .collect();
         let this = self.clone();
         let name = username.to_string();
-        let building = self.inner.builds.run(&user, async move {
-            this.make(&name, sign_in, period, rule, due).await
-        });
+        let building = self
+            .inner
+            .builds
+            .run(&user, async move { this.make(&name, sign_in, period, due).await });
         (any_made, Some(building))
     }
 
-    /// Make these lists of the listener, one after another: each chart, each song matched
-    /// against their library by the rule radio uses to play a library copy, the rest kept as
-    /// outside songs when they may be shown. A list that could not be made whole waits a few
-    /// minutes before it is tried again, on its own.
+    /// Make these lists of the listener (id, name and the rule each is made under), one after
+    /// another: each chart, each song matched against their library by the rule radio uses to
+    /// play a library copy, the rest kept as outside songs when they may be shown. A list that
+    /// could not be made whole waits a few minutes before it is tried again, on its own.
     async fn make(
         &self,
         username: &str,
         auth: Parameters,
         period: i64,
-        rule: String,
-        lists: Vec<(String, String)>,
+        lists: Vec<(String, String, String)>,
     ) -> bool {
         let user = user_key(username);
         let settings = self.inner.settings.current();
@@ -561,7 +568,7 @@ impl ChartPlaylistService {
         let mut any = false;
         let mut trouble_with: Vec<String> = Vec::new();
         let mut whole: Vec<String> = Vec::new();
-        for (list_id, name) in lists {
+        for (list_id, name, rule) in lists {
             let chart = split_list(&list_id).0.to_string();
             let country = self.country_for(username, &list_id).await;
             let list = self.inner.top_songs.chart_in(country, &chart).await;
@@ -659,7 +666,7 @@ impl ChartPlaylistService {
                 period,
                 made_utc: now,
                 changed_utc,
-                rule: rule.clone(),
+                rule,
                 whole: unanswered == 0,
                 name,
                 hash,

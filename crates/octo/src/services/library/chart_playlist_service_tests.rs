@@ -859,3 +859,58 @@ async fn countries_listeners_chose_are_warmed_too() {
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn a_menu_not_known_for_a_moment_keeps_the_made_lists() {
+    let lists = Lists::new("18").await;
+    lists.library(Vec::new()).await;
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    assert!(!lists.service.outside_songs("alice", "18").is_empty());
+    let searched = lists.searches().await;
+
+    // The country's menu comes back without the genre for a while, then with it again.
+    let without: Vec<_> = octo_core::charts::chart_settings::english_menu()
+        .into_iter()
+        .filter(|g| g.id != "18")
+        .collect();
+    lists.top_songs.set_menu("us", without);
+    let listed = lists.service.list("alice", &auth()).await;
+    assert_eq!(listed.len(), 1, "not listed while the menu lacks it");
+    assert!(!lists.service.outside_songs("alice", "18").is_empty(), "but kept");
+    lists
+        .top_songs
+        .set_menu("us", octo_core::charts::chart_settings::english_menu());
+
+    let listed = lists.service.list("alice", &auth()).await;
+    assert_eq!(listed.len(), 2);
+    assert_eq!(
+        lists.searches().await,
+        searched,
+        "listed again without being made again"
+    );
+}
+
+#[tokio::test]
+async fn a_new_own_country_leaves_pinned_lists_be() {
+    let lists = Lists::new("").await;
+    lists.pages_for("jp", false).await;
+    lists.pages_for("br", false).await;
+    lists.library(Vec::new()).await;
+    lists.choose("alice", "", &["jp"]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    lists.service.songs("alice", "34@jp", &auth()).await;
+    let japan = lists.service.outside_songs("alice", "34@jp");
+    assert!(!japan.is_empty());
+    let searched = lists.searches().await;
+
+    lists.choose("alice", "br", &["jp"]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+
+    assert_eq!(
+        lists.searches().await - searched,
+        5,
+        "only the five songs of her own list are searched again"
+    );
+    let ids = |songs: Vec<Song>| songs.into_iter().map(|s| s.id).collect::<Vec<_>>();
+    assert_eq!(ids(lists.service.outside_songs("alice", "34@jp")), ids(japan));
+}

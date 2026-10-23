@@ -756,3 +756,29 @@ async fn a_pinned_list_row_names_its_country() {
     assert!(cover.status.is_success(), "{}", cover.status);
     assert_eq!(cover.media_type().as_deref(), Some("image/jpeg"));
 }
+
+#[tokio::test]
+async fn country_auto_on_a_read_is_the_callers_own() {
+    let h = harness("", true).await;
+    pages_for(&h, "br").await;
+    choose(&h, "alice", "br", &[]);
+
+    let chart = top(&h, &format!("getTopChart?{ALICE}&country=auto")).await;
+    let charts = top(&h, &format!("getCharts?{ALICE}&country=AUTO")).await;
+
+    assert_eq!(chart["topSongs"]["country"], "br");
+    assert_eq!(charts["charts"]["country"], "br");
+}
+
+#[tokio::test]
+async fn pinned_takes_one_and_zero_too() {
+    let h = harness("", true).await;
+
+    let pinned = top(&h, &format!("pinChartCountry?{ALICE}&country=jp&pinned=1")).await;
+    let unpinned = top(&h, &format!("pinChartCountry?{ALICE}&country=jp&pinned=0")).await;
+    let neither = top(&h, &format!("pinChartCountry?{ALICE}&country=jp&pinned=yes")).await;
+
+    assert_eq!(pinned["charts"]["pinned"], json!(["jp"]));
+    assert_eq!(unpinned["charts"]["pinned"], json!([]));
+    assert_eq!(neither["error"]["code"], 10);
+}

@@ -54,8 +54,8 @@ fn refuse(state: &AppState, code: i32, message: &str) -> Response {
 const TOO_MANY_COUNTRIES: &str = "Too many countries in an hour. Try again later.";
 
 /// The country a chart call asks for: `country` when sent (Apple must have it, and the listener
-/// must not have asked for too many other countries this hour), else the caller's own. Err holds
-/// the answer for one that is refused.
+/// must not have asked for too many other countries this hour), else the caller's own, as for
+/// `auto`. Err holds the answer for one that is refused.
 #[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
 async fn asked_country(
     state: &AppState,
@@ -64,7 +64,11 @@ async fn asked_country(
     username: &str,
     chart: &str,
 ) -> Result<Option<String>, Response> {
-    let Some(sent) = call.param_opt("country").map(str::trim).filter(|c| !c.is_empty()) else {
+    let Some(sent) = call
+        .param_opt("country")
+        .map(str::trim)
+        .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("auto"))
+    else {
         return Ok(service.country_of(username).await);
     };
     let code = sent.to_ascii_lowercase();
@@ -276,8 +280,8 @@ pub async fn pin_chart_country(State(state): State<AppState>, req: Request) -> A
         Err(refused) => return Ok(refused),
     };
     let pin = match call.param_opt("pinned").map(|p| p.trim().to_ascii_lowercase()) {
-        Some(p) if p == "true" => true,
-        Some(p) if p == "false" => false,
+        Some(p) if p == "true" || p == "1" => true,
+        Some(p) if p == "false" || p == "0" => false,
         Some(_) => return Ok(refuse(&state, 10, "pinned is true or false.")),
         None => return Ok(refuse(&state, 10, "Required parameter is missing: pinned")),
     };

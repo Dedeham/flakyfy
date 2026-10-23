@@ -1092,6 +1092,46 @@ fn classify_then_decide_replaces_only_a_confident_other_song() {
     assert_eq!(decide(unsure, "Teardrop"), AutoReplace::Ask);
 }
 
+/// A file the preview says is another song, replaced with the preview's replacing on and every
+/// other gate open, unless `change` closes one.
+fn decide_by_preview(change: impl FnOnce(&mut AppSettings)) -> AutoReplace {
+    let mut settings = app_settings(replacing_by_preview(60));
+    change(&mut settings);
+    let question = VerificationResult {
+        verdict: VerificationVerdict::Inconclusive,
+        reason: InconclusiveReason::DiffersFromYouTube,
+        ..Default::default()
+    };
+    LibraryReviewSweepWorker::decide(
+        &question,
+        &file_titled("Teardrop"),
+        &settings,
+        "bob",
+        Today::default(),
+        Some(PreviewWitness { bit_error: 0.5 }),
+    )
+}
+
+#[test]
+fn the_preview_replaces_only_with_a_source_it_checks_and_the_original_kept() {
+    assert_eq!(decide_by_preview(|_| {}), AutoReplace::Replace);
+    for source in [DownloadSource::YouTube, DownloadSource::SoulseekThenYouTube] {
+        assert_eq!(
+            decide_by_preview(|s| s.subsonic.download_source = source),
+            AutoReplace::Ask,
+            "{source:?}"
+        );
+    }
+    assert_eq!(
+        decide_by_preview(|s| s.subsonic.download_source = DownloadSource::Lidarr),
+        AutoReplace::Replace
+    );
+    assert_eq!(
+        decide_by_preview(|s| s.library_actions.keep_replaced_originals = false),
+        AutoReplace::Ask
+    );
+}
+
 /// Off, a dry run, a keeper off the allowlist, Wrong song off, the day's cap and the breaker each
 /// keep it a question.
 #[test]

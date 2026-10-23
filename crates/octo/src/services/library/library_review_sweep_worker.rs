@@ -21,7 +21,7 @@ use octo_core::json::datetime;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::models::domain::Song;
 use octo_core::settings::{
-    AppSettings, LibraryAction, LibraryActionSettings, SettingsStore, SoulseekSettings,
+    AppSettings, DownloadSource, LibraryAction, LibraryActionSettings, SettingsStore, SoulseekSettings,
 };
 use octo_media::tags::TagFile;
 use octo_media::tags::tag_writer_extras::{self, TagFields};
@@ -1474,6 +1474,8 @@ impl LibraryReviewSweepWorker {
     /// run, the keeper on the allowlist, Wrong song on, the day's cap and breaker not reached,
     /// and either `ReviewSweepAutoReplace` on with AcoustID clearly hearing another song, or
     /// `ReviewSweepAutoReplacePreview` on with the song's YouTube preview clearly not matching (at least [`Self::PREVIEW_REPLACE_FROM`] of its bits differ).
+    /// The preview's replacing also needs `KeepReplacedOriginals` on and a download source without
+    /// YouTube.
     pub fn decide(
         question: &VerificationResult,
         file: &SweptFile,
@@ -1494,10 +1496,17 @@ impl LibraryReviewSweepWorker {
             && today.failed < Self::MAX_FAILED_REPLACEMENTS_PER_DAY;
         let by_acoustid = actions.review_sweep_auto_replace
             && Self::clearly_another_song(question, file, &settings.soulseek);
+        // A replacement from YouTube is never held to the preview, and one whose original is not
+        // kept could not be put back.
         let by_preview = actions.review_sweep_auto_replace_preview
             && file.tagged
             && question.reason == InconclusiveReason::DiffersFromYouTube
-            && witness.is_some_and(|witness| witness.bit_error >= Self::PREVIEW_REPLACE_FROM);
+            && witness.is_some_and(|witness| witness.bit_error >= Self::PREVIEW_REPLACE_FROM)
+            && actions.keep_replaced_originals
+            && !matches!(
+                settings.subsonic.download_source,
+                DownloadSource::YouTube | DownloadSource::SoulseekThenYouTube
+            );
         if may && (by_acoustid || by_preview) {
             AutoReplace::Replace
         } else {

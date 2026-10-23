@@ -23,29 +23,75 @@ pub struct ListenerCharts {
 /// Every listener's chart choices, in `chart-countries.json`.
 pub struct ChartCountryStore {
     path: Option<PathBuf>,
-    users: Mutex<BTreeMap<String, ListenerCharts>>,
+    users: Mutex<Users>,
+    /// The generation last written to the file, held while writing, so a save never writes over
+    /// a newer one.
+    written: Mutex<u64>,
+}
+
+/// The choices, and how many changes they have had.
+#[derive(Default)]
+struct Users {
+    by_name: BTreeMap<String, ListenerCharts>,
+    generation: u64,
 }
 
 impl ChartCountryStore {
     /// `path`: the file, or none to keep the choices in memory only. A file that cannot be read
-    /// starts the store empty and stays as it is until the next save.
+    /// is moved aside to `chart-countries.json.broken-<unix time>` and the store starts empty.
+    /// Names and countries are read in lowercase, whatever case the file holds.
     pub fn new(path: Option<PathBuf>) -> Self {
-        let users = match path.as_ref().map(std::fs::read) {
-            Some(Ok(bytes)) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
-                warn!("Could not read the chart countries, starting without them: {e}");
-                BTreeMap::new()
-            }),
+        let read: BTreeMap<String, ListenerCharts> = match path.as_ref().map(std::fs::read) {
+            Some(Ok(bytes)) => match serde_json::from_slice(&bytes) {
+                Ok(read) => read,
+                Err(e) => {
+                    let path = path.as_ref().expect("read from a path");
+                    let aside = broken_name(path);
+                    match std::fs::rename(path, &aside) {
+                        Ok(()) => warn!(
+                            "Could not read the chart countries, starting without them; the file is kept as {}: {e}",
+                            aside.display()
+                        ),
+                        Err(moved) => warn!(
+                            "Could not read the chart countries, starting without them: {e} (and could not move the file aside: {moved})"
+                        ),
+                    }
+                    BTreeMap::new()
+                }
+            },
             _ => BTreeMap::new(),
         };
+        let mut by_name: BTreeMap<String, ListenerCharts> = BTreeMap::new();
+        for (user, charts) in read {
+            let entry = by_name.entry(key(&user)).or_default();
+            if entry.country.is_empty() {
+                entry.country = charts.country.trim().to_ascii_lowercase();
+            }
+            for pin in charts.pinned {
+                let pin = pin.trim().to_ascii_lowercase();
+                if !pin.is_empty() && !entry.pinned.contains(&pin) {
+                    entry.pinned.push(pin);
+                }
+            }
+        }
         ChartCountryStore {
             path,
-            users: Mutex::new(users),
+            users: Mutex::new(Users {
+                by_name,
+                generation: 0,
+            }),
+            written: Mutex::new(0),
         }
     }
 
     /// A listener's choices, none when they never chose.
     pub fn get(&self, user: &str) -> ListenerCharts {
-        self.users.lock().get(&key(user)).cloned().unwrap_or_default()
+        self.users
+            .lock()
+            .by_name
+            .get(&key(user))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Saves a listener's choices. Choosing nothing removes their entry.
@@ -63,28 +109,44 @@ impl ChartCountryStore {
         user: &str,
         change: impl FnOnce(&mut ListenerCharts) -> Result<(), E>,
     ) -> Result<ListenerCharts, E> {
-        let mut users = self.users.lock();
-        let mut mine = users.get(&key(user)).cloned().unwrap_or_default();
-        change(&mut mine)?;
-        if mine == ListenerCharts::default() {
-            users.remove(&key(user));
-        } else {
-            users.insert(key(user), mine.clone());
+        let (mine, json, generation) = {
+            let mut users = self.users.lock();
+            let mut mine = users.by_name.get(&key(user)).cloned().unwrap_or_default();
+            change(&mut mine)?;
+            if mine == ListenerCharts::default() {
+                users.by_name.remove(&key(user));
+            } else {
+                users.by_name.insert(key(user), mine.clone());
+            }
+            users.generation += 1;
+            let json = self
+                .path
+                .is_some()
+                .then(|| serde_json::to_vec_pretty(&users.by_name));
+            (mine, json, users.generation)
+        };
+        if let Some(json) = json {
+            self.save(json, generation);
         }
-        self.save(&users);
         Ok(mine)
     }
 
-    fn save(&self, users: &BTreeMap<String, ListenerCharts>) {
+    /// Writes one generation of the choices, unless a newer one was written already. The file is
+    /// written outside the choices' lock, so reading them never waits on the disk.
+    fn save(&self, json: serde_json::Result<Vec<u8>>, generation: u64) {
         let Some(path) = &self.path else {
             return;
         };
-        // Written under the lock, so a save never overwrites a newer one.
-        match serde_json::to_vec_pretty(users) {
+        let mut written = self.written.lock();
+        if generation <= *written {
+            return;
+        }
+        match json {
             Ok(json) => {
                 let temp = path.with_extension("json.tmp");
-                if let Err(e) = std::fs::write(&temp, json).and_then(|()| std::fs::rename(&temp, path)) {
-                    warn!("Could not save the chart countries: {e}");
+                match std::fs::write(&temp, json).and_then(|()| std::fs::rename(&temp, path)) {
+                    Ok(()) => *written = generation,
+                    Err(e) => warn!("Could not save the chart countries: {e}"),
                 }
             }
             Err(e) => warn!("Could not save the chart countries: {e}"),
@@ -95,6 +157,7 @@ impl ChartCountryStore {
     pub fn all(&self) -> Vec<(String, ListenerCharts)> {
         self.users
             .lock()
+            .by_name
             .iter()
             .map(|(user, charts)| (user.clone(), charts.clone()))
             .collect()
@@ -105,6 +168,7 @@ impl ChartCountryStore {
         let mut out: Vec<String> = self
             .users
             .lock()
+            .by_name
             .values()
             .flat_map(|c| std::iter::once(c.country.clone()).chain(c.pinned.iter().cloned()))
             .filter(|c| !c.is_empty())
@@ -117,6 +181,16 @@ impl ChartCountryStore {
 
 fn key(user: &str) -> String {
     user.trim().to_lowercase()
+}
+
+/// Where a file that could not be read is kept: beside it, named for when it was moved.
+fn broken_name(path: &std::path::Path) -> PathBuf {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let mut name = path.as_os_str().to_owned();
+    name.push(format!(".broken-{seconds}"));
+    PathBuf::from(name)
 }
 
 #[cfg(test)]

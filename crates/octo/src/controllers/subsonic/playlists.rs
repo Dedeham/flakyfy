@@ -1243,13 +1243,13 @@ async fn served_places(
 /// What reading a library song as the caller gave.
 enum LibraryRead {
     Song(Value),
-    /// Navidrome answered and has no such song for the caller.
+    /// Navidrome answered that the caller has no such song (error 70).
     Refused,
-    /// Navidrome did not answer, or answered something that is not a Subsonic answer.
+    /// Navidrome did not answer, answered some other error, or answered something that is not a song.
     Unreachable,
 }
 
-/// A library song as Navidrome describes it to the caller, in JSON.
+/// Reads a library song as the caller, telling a song the caller does not have from a Navidrome that did not answer.
 async fn library_song_read(call: &SubsonicCall, id: &str) -> LibraryRead {
     let mut request = call.parameters.clone();
     request.insert("id".into(), id.to_string());
@@ -1265,15 +1265,23 @@ async fn library_song_read(call: &SubsonicCall, id: &str) -> LibraryRead {
         return LibraryRead::Unreachable;
     };
     if response.get("status").and_then(Value::as_str) != Some("ok") {
-        return LibraryRead::Refused;
+        let code = response
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(Value::as_i64);
+        return if code == Some(70) {
+            LibraryRead::Refused
+        } else {
+            LibraryRead::Unreachable
+        };
     }
     match response.get("song").filter(|song| song.is_object()) {
         Some(song) => LibraryRead::Song(song.clone()),
-        None => LibraryRead::Refused,
+        None => LibraryRead::Unreachable,
     }
 }
 
-/// A library song as Navidrome describes it to the caller, in JSON.
+/// A library song as Navidrome describes it to the caller, in JSON, when it can be read.
 async fn library_song_json(call: &SubsonicCall, id: &str) -> Option<Value> {
     match library_song_read(call, id).await {
         LibraryRead::Song(song) => Some(song),
@@ -1357,7 +1365,7 @@ async fn family_mutate(state: &AppState, call: &SubsonicCall, id: &str, change: 
                 .filter_map(|index| index.trim().parse().ok())
                 .collect();
             // Places count over the songs the caller's answer lists (see served_places), worked out
-            // before anything changes.
+            // and applied before the name changes, so a refused removal changes nothing.
             let removal_places = if removals.is_empty() {
                 None
             } else {
@@ -1376,15 +1384,15 @@ async fn family_mutate(state: &AppState, call: &SubsonicCall, id: &str, change: 
                         .collect::<Vec<usize>>(),
                 )
             };
-            if renames
-                && let Some(name) = name
-                && let Err(error) = family_playlists::rename(store, caller, id, name)
-            {
-                return playlist_error(state, call, error);
-            }
             if let Some(stored) = removal_places
                 && let Err(error) =
                     family_playlists::remove_stored(store, caller, id, &playlist.entries, &stored)
+            {
+                return playlist_error(state, call, error);
+            }
+            if renames
+                && let Some(name) = name
+                && let Err(error) = family_playlists::rename(store, caller, id, name)
             {
                 return playlist_error(state, call, error);
             }

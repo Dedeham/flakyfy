@@ -134,6 +134,10 @@ impl FakeNavidrome {
         };
         match endpoint {
             "ping" => ok(json!({})),
+            "getSong" if query_value(request, "id").as_deref() == Some("s-busy") => {
+                json!({"status": "failed", "version": "1.16.1",
+                    "error": {"code": 0, "message": "busy"}})
+            }
             "getSong" => match query_value(request, "id").as_deref().and_then(library_song) {
                 Some(song) => ok(json!({ "song": song_json(song, legacy) })),
                 None => json!({"status": "failed", "version": "1.16.1",
@@ -186,6 +190,9 @@ impl FakeNavidrome {
 
 impl Respond for FakeNavidrome {
     fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        if request.url.path().contains("getSong") && query_value(request, "id").as_deref() == Some("s-down") {
+            return ResponseTemplate::new(503);
+        }
         let endpoint = request
             .url
             .path()
@@ -777,6 +784,48 @@ async fn removal_counts_over_the_owners_answer() {
         left_ids(&f, &id),
         [Some("s-alex-only".to_string()), Some(OUTSIDE.to_string())]
     );
+}
+
+/// A removal asked while Navidrome cannot read `unreadable` is refused and changes nothing,
+/// not even the name.
+async fn assert_removal_refused_when_unread(unreadable: &str) {
+    let f = fixture(true).await;
+    // The playlist is made by the owner, who may also rename it.
+    let id = f.playlist(
+        false,
+        vec![
+            library(unreadable, SHARED_SCOPE, Some(OUTSIDE)),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    let answer = f
+        .json(
+            "winters",
+            &format!("updatePlaylist?playlistId={id}&name=New&songIndexToRemove=0"),
+        )
+        .await;
+    assert_eq!(answer["status"], "failed", "{answer}");
+    assert_eq!(answer["error"]["code"], 0, "{answer}");
+    assert_eq!(
+        answer["error"]["message"],
+        "Octo can't reach Navidrome to read this playlist's songs, so nothing was taken out.",
+        "{answer}"
+    );
+    assert_eq!(f.entries(&id).len(), 2);
+    assert_eq!(
+        f.state.family_playlists.get(&id).expect("there").name,
+        "Road trip"
+    );
+}
+
+#[tokio::test]
+async fn removal_refuses_when_navidrome_cannot_read_a_song() {
+    assert_removal_refused_when_unread("s-down").await;
+}
+
+#[tokio::test]
+async fn getsong_errors_other_than_not_found_refuse_removal() {
+    assert_removal_refused_when_unread("s-busy").await;
 }
 
 #[tokio::test]

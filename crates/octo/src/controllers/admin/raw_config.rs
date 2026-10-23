@@ -320,6 +320,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Metadata:AnimatedArt",
     "Subsonic:CoverBadge",
     "LibraryActions:YoutubeCheckPerHour",
+    "LibraryActions:ReviewSweepAutoReplacePreview",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

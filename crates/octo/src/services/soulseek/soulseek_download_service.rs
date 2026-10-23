@@ -511,7 +511,7 @@ impl SoulseekDownloadService {
                     .youtube
                     .search_skipping(&format!("{artist} {title}"), r.duration, false, &r.refused_videos)
                     .await
-                    .filter(|h| !h.video_id.is_empty()),
+                    .filter(|h| !h.video_id.is_empty() && !r.refuses_video(&h.video_id)),
             };
             if let Some(hit) = &hit {
                 self.id_registry.set_you_tube_id(&track_key, &hit.video_id);
@@ -2343,7 +2343,7 @@ impl DownloadBackend for SoulseekDownloadService {
                         .youtube
                         .search_skipping(&format!("{artist} {title}"), r.duration, false, &r.refused_videos)
                         .await
-                        .filter(|h| !h.video_id.is_empty());
+                        .filter(|h| !h.video_id.is_empty() && !r.refuses_video(&h.video_id));
                     if let Some(hit) = &hit {
                         debug!("play of '{artist} - {title}': video {} from yt-dlp", hit.video_id);
                     }
@@ -2355,15 +2355,17 @@ impl DownloadBackend for SoulseekDownloadService {
             // Arpeggi (~10s HTTP timeout) playing the song or canceling and falling back
             // to a local one. Every later stream request for this id reads the same pin.
             if let Some(hit) = &hit {
-                self.id_registry.set_you_tube_id(external_id, &hit.video_id);
-                self.id_registry
-                    .remember_stream(external_id, &hit.video_id, &hit.stream);
-                // The video that plays says how long the song runs, for every later row.
-                if !self
-                    .id_registry
-                    .remember_length(external_id, hit.duration, LengthSource::Video)
-                {
-                    routing.remember_length(hit.duration, LengthSource::Video);
+                let pinned = self.id_registry.set_you_tube_id(external_id, &hit.video_id);
+                if pinned {
+                    self.id_registry
+                        .remember_stream(external_id, &hit.video_id, &hit.stream);
+                    // The video that plays says how long the song runs, for every later row.
+                    if !self
+                        .id_registry
+                        .remember_length(external_id, hit.duration, LengthSource::Video)
+                    {
+                        routing.remember_length(hit.duration, LengthSource::Video);
+                    }
                 }
             }
             video_id = hit.map(|h| h.video_id);

@@ -552,8 +552,8 @@ def _rank_by_length(candidates: list, q: str, duration_hint: Optional[int]) -> l
 
 
 def _search_with_hint(q: str, duration_hint: Optional[int], bg: bool = False, skip: tuple = ()) -> Optional[dict]:
-    """Duration hint present: pick the closest-length of 5 flat candidates
-    (cheap, no per-video extraction), then resolve the winner's URL once.
+    """Five flat candidates for the query, ranked by `_rank_by_length` (named words, other
+    takes, then length), then the winner's URL resolved once.
     Videos in `skip` are left out.
 
     Note this path costs TWO gated yt-dlp runs per track (search5 then resolve),
@@ -666,8 +666,8 @@ _meta_db_init()
 @app.get("/meta")
 def meta():
     """Fast metadata-only lookup (flat search, NO url solve) for an accurate
-    duration on search rows. With a duration hint it picks the closest-length of
-    5 candidates (avoids long-form/compilation uploads); otherwise the top result.
+    duration on search rows. With a duration hint it ranks 5 candidates by
+    `_rank_by_length` (named words, other takes, then length) (avoids long-form/compilation uploads); otherwise the top result.
     Cached, so repeat searches are a dict lookup."""
     q = request.args.get("q", "").strip()
     if not q:

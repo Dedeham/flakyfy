@@ -1918,7 +1918,7 @@ fn a_take_of_the_same_song_a_cover_and_an_unnamed_verdict_are_not() {
     let live = heard(VerificationVerdict::Mismatch, "KILLY", "Killamonjaro (Live)");
     let cover = heard(VerificationVerdict::Mismatch, "Some Band", "Killamonjaro");
     let live_cover = heard(VerificationVerdict::Mismatch, "Some Band", "Killamonjaro (Live)");
-    // The same artist's other song: also kept and asked about, as before.
+    // The same artist's other song: also kept and asked about.
     let other_song = heard(VerificationVerdict::Mismatch, "KILLY", "Distance");
     let nothing_named = VerificationResult {
         verdict: VerificationVerdict::Mismatch,
@@ -1942,7 +1942,7 @@ fn a_name_in_another_script_is_kept_and_asked_about() {
         "A Cruel Angel's Thesis"
     ));
     let russian = heard(VerificationVerdict::Mismatch, "Кино", "Звезда по имени Солнце");
-    assert!(!names_another_song(&russian, "Kino", "Star Called Sun"));
+    assert!(!names_another_song(&russian, "Viktor Tsoi", "Star Called Sun"));
 }
 
 #[test]
@@ -2005,6 +2005,36 @@ async fn a_refused_video_is_not_taken_again() {
         .await
         .expect("no error")
         .expect("a stream");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some("vid123"));
+    let asked = walk._server.received_requests().await.expect("recording");
+    assert!(
+        asked
+            .iter()
+            .any(|r| r.url.path() == "/search" && r.url.query().unwrap_or("").contains("skip=ytm-atv")),
+        "{asked:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_video_is_not_downloaded_again() {
+    let root = Root::new("octo-attempts-");
+    let walk = build_with(&root, false, DownloadSource::YouTube, |_| {
+        Arc::new(|_: &str| Vec::new())
+    })
+    .await;
+    let song = walk.songs[0].clone();
+    let id = song.external_id.clone().expect("an id");
+    let length = walk.registry.lookup(&id).expect("known").snapshot().duration;
+    // YouTube Music would hand back the refused video.
+    walk.slskd.state.lock().ytm_tracks = Some(json!([{
+        "videoId": "ytm-atv", "title": song.title, "artists": [song.artist],
+        "durationSeconds": length.unwrap_or(200), "videoType": "MUSIC_VIDEO_TYPE_ATV",
+    }]));
+    walk.registry.refuse_video(&id, "ytm-atv");
+
+    acquire(&walk, &id, None).await.expect("the YouTube copy lands");
 
     let routing = walk.registry.lookup(&id).expect("known").snapshot();
     assert_eq!(routing.you_tube_id.as_deref(), Some("vid123"));

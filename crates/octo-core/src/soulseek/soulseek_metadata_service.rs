@@ -175,13 +175,19 @@ impl SoulseekRouting {
         if self.you_tube_id.as_deref() != Some(video) {
             return false;
         }
-        // A length learned from this video goes with it; one from the catalog or a file stays.
+        // A length learned from this video goes with it; the song's own length (catalog or
+        // file) takes its place.
         if self.shown_duration_source == LengthSource::Video {
             if self.duration.is_some() && self.duration == self.shown_duration {
                 self.duration = None;
             }
             self.shown_duration = None;
             self.shown_duration_source = LengthSource::None;
+        } else if self.shown_duration_source >= LengthSource::LastFm
+            && let Some(known) = self.shown_duration.filter(|&s| s > 0)
+        {
+            // The catalog's or the file's length stands for the song again.
+            self.duration = Some(known);
         }
         self.you_tube_id = None;
         self.stream_size = None;
@@ -377,6 +383,21 @@ mod tests {
         assert_eq!(catalog.shown_duration, Some(179));
         assert_eq!(catalog.shown_duration_source, LengthSource::Deezer);
         assert_eq!(catalog.duration, Some(179));
+    }
+
+    #[test]
+    fn unpinning_puts_back_the_catalog_length() {
+        let mut routing = SoulseekRouting {
+            you_tube_id: Some("v".into()),
+            duration: Some(171),
+            shown_duration: Some(179),
+            shown_duration_source: LengthSource::Deezer,
+            ..Default::default()
+        };
+        assert!(routing.unpin_video("v"));
+        assert_eq!(routing.duration, Some(179));
+        assert_eq!(routing.shown_duration, Some(179));
+        assert_eq!(routing.shown_duration_source, LengthSource::Deezer);
     }
 
     #[test]

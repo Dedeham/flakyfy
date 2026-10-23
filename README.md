@@ -613,25 +613,28 @@ arrived if verification was on at the time; `LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_D
 them too.
 
 A song AcoustID has never heard is not left to you while its song's YouTube preview can say, the
-same question a new download is asked. If the file sounds like the preview, it is counted as fine
-and nothing is asked. If it sounds nothing like a preview with the song's title, artist and length,
-Review gets a question that says so ("it sounds nothing like its YouTube preview, 47% of its bits
-differ"). Anything the preview cannot settle (another version, a preview that may not be the song,
-no preview) stays the question it was, so Review still decides those. When the YouTube shim does
-not answer, the song is looked at again later instead of becoming a question. By default
-nothing is replaced because of the preview, not even with the sweep's replacing on.
+same question a new download is asked. If the file sounds like a preview with the song's title,
+artist and length, it is counted as fine and nothing is asked. If it sounds nothing like such a
+preview, Review gets a question that says so ("it sounds nothing like its YouTube preview, 47% of
+its bits differ"). Anything the preview cannot settle (another version, a preview that may not be
+the song, no preview) stays the question it was, so Review still decides those. When the YouTube
+shim finds the video but does not send it, the song is tried three times in all, then it becomes
+the question it was. By default nothing is replaced because of the preview, not even with the
+sweep's replacing on.
 
 `LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PREVIEW` (off by default) lets the sweep replace such a
 song through Wrong song instead of asking, for when there are too many questions to go through by
-hand. It acts only on the clear case above, the preview having the song's title, artist and length
-and nothing in the file lining up with it, and never on a song with no tags, an ISRC tag, a star or
-a rating, or anything the preview cannot settle; those stay questions. It needs what the replacing
-above needs (Wrong song on, dry run off, the keeper on the allowlist) and counts toward the same
-`LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY` and the same stop after three failures. The
-replacement is checked like any download, against the same preview, and the old file waits in
-Recently removed. Review keeps a note of each replacement ("Octo replaced this: it sounded nothing
-like its YouTube preview, 47% of its bits differ"). The song it fetches comes from your download
-source, so with YouTube as the source it is the preview's own MP3.
+hand. It acts only on the clearest case: the preview is a YouTube Music row with the song's title,
+artist and length, from the same album as the file's album tag and not a live album, and at least
+42% of the file's bits differ from it (from 38% to 42% it is still asked about). It never acts on a
+song with no tags, an ISRC tag, a star or a rating, on anything the preview cannot settle, or on the
+re-check of Octo's own downloads; those stay questions. It needs what the replacing above needs
+(Wrong song on, dry run off, the keeper on the allowlist), a download source without YouTube
+(`DOWNLOAD_SOURCE` Soulseek or Lidarr, so the replacement is held to the song's YouTube preview like
+any download), and `LIBRARY_ACTIONS_KEEP_REPLACED` on, so the old file can always be put back from
+Recently removed. It counts toward the same `LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY` and
+the same stop after three failures. Review keeps a note of each replacement ("Octo replaced this: it
+sounded nothing like its YouTube preview, 47% of its bits differ").
 
 `LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE` (off by default) lets the check replace a song that
 clearly is another one instead of asking: AcoustID names a different song, by another title, at

@@ -264,12 +264,13 @@ pub struct LibraryActionSettings {
     /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY
     pub review_sweep_auto_replace_per_day: i32,
 
-    /// Let the sweep also replace a song AcoustID has never heard when its YouTube preview, one
-    /// with the song's title, artist and length, sounds nothing like the file, through Wrong song,
-    /// instead of asking. Off by default. The replacement is checked like any download, against
-    /// the same preview. Counts toward the same daily limit and breaker as the replacing above,
-    /// and needs the same: DryRun off, Wrong song on and the keeper on the allowlist. A song with
-    /// an ISRC tag, or that anyone starred or rated, is still asked about.
+    /// Let the sweep also replace a song AcoustID has never heard when its YouTube preview, a
+    /// YouTube Music row with the song's title, artist and length from the file's own album, clearly
+    /// sounds nothing like the file, through Wrong song, instead of asking. Off by default. Counts
+    /// toward the same daily limit and breaker as the replacing above, and needs the same (DryRun
+    /// off, Wrong song on, the keeper on the allowlist), plus KeepReplacedOriginals on and a download
+    /// source without YouTube. A song with an ISRC tag, or that anyone starred or rated, is still
+    /// asked about.
     /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PREVIEW
     pub review_sweep_auto_replace_preview: bool,
     /// How many library songs an hour have their tags checked against their audio: each is

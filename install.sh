@@ -439,7 +439,7 @@ mkdir -p "$(existing OCTO_CONFIG_DIR octo-config)" "$(existing SLSKD_STATE_DIR s
 if [ "$STARTER" = true ]; then
   mkdir -p "$(existing NAVIDROME_DATA_DIR navidrome-data)"
 fi
-# Your own SpotiFLAC, when its profile is on (the SPOTIFLAC_* lines are kept as they are).
+# Your own Mornye (SpotiFLAC), when its profile is on (the SPOTIFLAC_* lines are kept as they are).
 case ",${COMPOSE_PROFILES// /}," in
   *,spotiflac,*) mkdir -p "$(existing SPOTIFLAC_DATA_DIR spotiflac-data)" ;;
 esac
@@ -504,7 +504,19 @@ fi
 
 echo
 bold "─── Starting stack ─────────────────────────────────────────"
-docker compose up -d
+# Mornye (the spotiflac service) is not Octo's: one that can be neither pulled nor built is
+# left out, so Octo still starts. Without its profile this is the plain up -d it always was.
+case ",${COMPOSE_PROFILES// /}," in
+  *,spotiflac,*)
+    if docker compose pull spotiflac || docker compose build spotiflac; then
+      docker compose up -d
+    else
+      yellow "  ⚠ Mornye (spotiflac) could not be pulled or built, so Octo starts without it. Run docker compose build spotiflac later."
+      read -r -a keep <<< "$({ docker compose config --services || true; } | { grep -vx spotiflac || true; } | tr '\n' ' ')"
+      docker compose up -d "${keep[@]}"
+    fi ;;
+  *) docker compose up -d ;;
+esac
 
 # ─────────────────────────────────────────────────────────────────
 # Wait for Octo + verify each backend

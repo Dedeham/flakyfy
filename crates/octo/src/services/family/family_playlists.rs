@@ -72,6 +72,8 @@ pub enum PlaylistError {
     NotAllowed(&'static str),
     /// A name that is blank.
     BlankName,
+    /// The playlist changed while its songs were read.
+    Changed,
 }
 
 impl PlaylistError {
@@ -80,6 +82,9 @@ impl PlaylistError {
             PlaylistError::NotFound => "Playlist not found",
             PlaylistError::NotAllowed(message) => message,
             PlaylistError::BlankName => "A playlist needs a name.",
+            PlaylistError::Changed => {
+                "This family playlist changed while Octo read it, so nothing was taken out. Try again."
+            }
         }
     }
 }
@@ -338,11 +343,13 @@ pub fn remove_shown(
 }
 
 /// Removes the entries at these places of the stored playlist (places past its end are left
-/// alone). Answers how many went.
+/// alone), only while the playlist's entries are still `expected` (the ones the places were
+/// worked out from). Answers how many went.
 pub fn remove_stored(
     store: &FamilyPlaylistStore,
     caller: &FamilyCaller,
     id: &str,
+    expected: &[FamilyPlaylistEntry],
     stored: &[usize],
 ) -> Result<usize, PlaylistError> {
     let playlist = find(store, caller, id).ok_or(PlaylistError::NotFound)?;
@@ -356,8 +363,8 @@ pub fn remove_stored(
         .collect();
     places.sort_unstable();
     places.dedup();
-    if !places.is_empty() {
-        store.remove_indexes(id, &places);
+    if !places.is_empty() && !store.remove_indexes_if(id, expected, &places) {
+        return Err(PlaylistError::Changed);
     }
     Ok(places.len())
 }
@@ -595,11 +602,15 @@ mod tests {
         )
         .expect("added");
         let kid = caller("kid", Preset::Kid);
+        let current = store.get(&list.id).expect("there").entries;
         assert_eq!(
-            remove_stored(&store, &kid, &list.id, &[0]),
+            remove_stored(&store, &kid, &list.id, &current, &[0]),
             Err(PlaylistError::NotAllowed(CANNOT_EDIT))
         );
-        assert_eq!(remove_stored(&store, &alex, &list.id, &[2, 2, 9]), Ok(1));
+        assert_eq!(
+            remove_stored(&store, &alex, &list.id, &current, &[2, 2, 9]),
+            Ok(1)
+        );
         let left: Vec<Option<String>> = store
             .get(&list.id)
             .expect("there")
@@ -608,6 +619,37 @@ mod tests {
             .map(|e| e.outside_id)
             .collect();
         assert_eq!(left, vec![Some("o0".into()), Some("o1".into())]);
+    }
+
+    #[test]
+    fn removal_by_stored_place_refuses_a_changed_playlist() {
+        let store = FamilyPlaylistStore::in_memory();
+        let list = create(&store, &owner(), "Road trip", false, now()).expect("made");
+        let alex = caller("alex", Preset::Member);
+        add(
+            &store,
+            &NoPlaylistAddRequests,
+            &alex,
+            &list.id,
+            vec![outside("o0"), outside("o1")],
+            now(),
+        )
+        .expect("added");
+        let before = store.get(&list.id).expect("there").entries;
+        add(
+            &store,
+            &NoPlaylistAddRequests,
+            &alex,
+            &list.id,
+            vec![outside("o2")],
+            now(),
+        )
+        .expect("added");
+        assert_eq!(
+            remove_stored(&store, &alex, &list.id, &before, &[0]),
+            Err(PlaylistError::Changed)
+        );
+        assert_eq!(store.get(&list.id).expect("there").entries.len(), 3);
     }
 
     #[test]

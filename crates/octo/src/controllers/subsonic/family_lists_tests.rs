@@ -691,6 +691,94 @@ async fn removal_counts_over_a_clean_only_listeners_answer() {
     );
 }
 
+/// The ids of a stored playlist's entries, library song or outside song.
+fn left_ids(f: &Fixture, id: &str) -> Vec<Option<String>> {
+    f.entries(id)
+        .into_iter()
+        .map(|e| e.library_id.or(e.outside_id))
+        .collect()
+}
+
+#[tokio::test]
+async fn removal_skips_a_song_the_index_marks_explicit_for_a_kid() {
+    let f = fixture(true).await;
+    let mut editor = f.state.family_store.member("kid").expect("a member");
+    editor.edits.insert("familyPlaylistsEdit".into(), json!(true));
+    f.state.family_store.upsert_member(editor);
+    let id = f.playlist(
+        false,
+        vec![
+            library("s-explicit", SHARED_SCOPE, None),
+            outside(OUTSIDE),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    let list = f.json("kid", &format!("getPlaylist?id={id}")).await;
+    assert_eq!(ids(&list["playlist"]["entry"]), [OUTSIDE, "s-clean"], "{list}");
+    let answer = f
+        .json(
+            "kid",
+            &format!("updatePlaylist?playlistId={id}&songIndexToRemove=1"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(
+        left_ids(&f, &id),
+        [Some("s-explicit".to_string()), Some(OUTSIDE.to_string())]
+    );
+}
+
+#[tokio::test]
+async fn removal_counts_unrated_songs_as_explicit_when_set() {
+    let f = fixture_with(true, |family| family.kid_unrated_is_explicit = true).await;
+    let mut editor = f.state.family_store.member("kid").expect("a member");
+    editor.edits.insert("familyPlaylistsEdit".into(), json!(true));
+    f.state.family_store.upsert_member(editor);
+    let id = f.playlist(
+        false,
+        vec![
+            library("s-unrated", SHARED_SCOPE, None),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    let list = f.json("kid", &format!("getPlaylist?id={id}")).await;
+    assert_eq!(ids(&list["playlist"]["entry"]), ["s-clean"], "{list}");
+    let answer = f
+        .json(
+            "kid",
+            &format!("updatePlaylist?playlistId={id}&songIndexToRemove=0"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(left_ids(&f, &id), [Some("s-unrated".to_string())]);
+}
+
+#[tokio::test]
+async fn removal_counts_over_the_owners_answer() {
+    let f = fixture(true).await;
+    let id = f.playlist(
+        false,
+        vec![
+            library("s-alex-only", SHARED_SCOPE, None),
+            outside(OUTSIDE),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    let list = f.json("winters", &format!("getPlaylist?id={id}")).await;
+    assert_eq!(ids(&list["playlist"]["entry"]), [OUTSIDE, "s-clean"], "{list}");
+    let answer = f
+        .json(
+            "winters",
+            &format!("updatePlaylist?playlistId={id}&songIndexToRemove=1"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(
+        left_ids(&f, &id),
+        [Some("s-alex-only".to_string()), Some(OUTSIDE.to_string())]
+    );
+}
+
 #[tokio::test]
 async fn kid_cannot_edit() {
     let f = fixture(true).await;

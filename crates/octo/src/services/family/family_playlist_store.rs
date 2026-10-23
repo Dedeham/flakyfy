@@ -157,6 +157,24 @@ impl FamilyPlaylistStore {
         })
     }
 
+    /// Removes the entries at these positions, but only while the playlist's entries are still
+    /// `expected`. False when the playlist changed or is gone; then nothing is removed.
+    pub fn remove_indexes_if(&self, id: &str, expected: &[FamilyPlaylistEntry], indexes: &[usize]) -> bool {
+        let mut removed = false;
+        self.change(id, |p| {
+            if p.entries == expected {
+                let mut at = 0usize;
+                p.entries.retain(|_| {
+                    let keep = !indexes.contains(&at);
+                    at += 1;
+                    keep
+                });
+                removed = true;
+            }
+        });
+        removed
+    }
+
     /// Lets a waiting entry in. False when there is no such playlist or entry.
     pub fn approve_entry(&self, id: &str, index: usize) -> bool {
         let mut found = false;

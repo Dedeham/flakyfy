@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use indexmap::IndexMap;
@@ -20,9 +21,10 @@ use octo_core::library::for_you_lists;
 use octo_core::settings::GeneratedPlaylistSettings;
 use octo_core::settings::NoticeKind;
 use octo_subsonic::SubsonicReply;
+use octo_subsonic::subsonic_request_parser::Parameters;
 use octo_subsonic::subsonic_response_builder::chart_playlist_comment;
 use octo_subsonic::xml::XElement;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tracing::warn;
 
 use super::action_helpers::{
@@ -36,6 +38,7 @@ use crate::services::family::audio_gate::ExplicitMark;
 use crate::services::family::family_playlists::{
     self, FAMILY_OWNER, NewEntry, PlaylistError, SHARED_SCOPE, Serve, ShownEntry, personal_scope,
 };
+use crate::services::family::rules::AnswerContext;
 use crate::services::family::{FamilyCaller, FamilyPlaylist, FamilyPlaylistEntry, family_caller, kid_filter};
 use crate::services::library::library_action_playlist_provisioner::{
     REMOVE_PLAYLIST, REQUEST_FLAC_PLAYLIST, REQUEST_PLAYLIST,
@@ -1067,6 +1070,7 @@ fn playlist_error(state: &AppState, call: &SubsonicCall, error: PlaylistError) -
         PlaylistError::NotFound => 70,
         PlaylistError::NotAllowed(_) => 50,
         PlaylistError::BlankName => 10,
+        PlaylistError::Changed => 0,
     };
     family_error(state, call, code, error.message())
 }
@@ -1117,8 +1121,9 @@ async fn family_playlist(state: &AppState, call: &SubsonicCall, id: &str) -> Res
     };
 
     let shown = family_playlists::shown_entries(&playlist, caller);
-    let entries: Vec<Value> = served_entries(state, call, shown)
+    let entries: Vec<Value> = served_entries(state, call, shown, false)
         .await
+        .unwrap_or_default()
         .into_iter()
         .map(|(_, song)| song)
         .collect();
@@ -1137,72 +1142,143 @@ async fn family_playlist(state: &AppState, call: &SubsonicCall, id: &str) -> Res
 
 /// A family playlist's songs as `getPlaylist` answers them to its caller, each with its place in
 /// the stored playlist: the library song (read as the caller) when it is shared or the caller's
-/// own, else its outside version. An entry neither can be read for is left out.
+/// own, else its outside version. An entry neither can be read for is left out. With `strict`, an
+/// entry whose library song could not be read because Navidrome did not answer makes the whole
+/// answer `None`, so nothing is decided from a list the caller was never shown.
 async fn served_entries(
     state: &AppState,
     call: &SubsonicCall,
     shown: Vec<ShownEntry>,
-) -> Vec<(usize, Value)> {
-    futures::stream::iter(shown)
+    strict: bool,
+) -> Option<Vec<(usize, Value)>> {
+    let resolved: Vec<Result<Option<(usize, Value)>, ()>> = futures::stream::iter(shown)
         .map(|entry| async move {
             let stored = entry.stored;
             let song = match entry.serve {
-                Serve::Library { id, outside } => match library_song_json(call, &id).await {
-                    Some(song) => Some(song),
-                    None => match outside {
-                        Some(outside) => outside_song_json(state, &outside).await,
-                        None => None,
-                    },
+                Serve::Library { id, outside } => match library_song_read(call, &id).await {
+                    LibraryRead::Song(song) => Some(song),
+                    read => {
+                        if strict && matches!(read, LibraryRead::Unreachable) {
+                            return Err(());
+                        }
+                        match outside {
+                            Some(outside) => outside_song_json(state, &outside).await,
+                            None => None,
+                        }
+                    }
                 },
                 Serve::Outside(outside) => outside_song_json(state, &outside).await,
             };
-            song.map(|song| (stored, song))
+            Ok(song.map(|song| (stored, song)))
         })
         .buffered(FAMILY_SONGS_AT_ONCE)
-        .filter_map(|song| async move { song })
         .collect()
-        .await
+        .await;
+    let mut served = Vec::new();
+    for entry in resolved {
+        if let Some(song) = entry.ok()? {
+            served.push(song);
+        }
+    }
+    Some(served)
 }
 
 /// The stored places of the songs the caller's `getPlaylist` answer lists, in its order: what
-/// `songIndexToRemove` counts over. A kid profile's answer also leaves out explicit songs, as
-/// the kid answer rule does.
+/// `songIndexToRemove` counts over. `None` when Navidrome could not be reached for a library song.
 async fn served_places(
     state: &AppState,
     call: &SubsonicCall,
     playlist: &FamilyPlaylist,
     caller: &FamilyCaller,
-) -> Vec<usize> {
-    let served = served_entries(state, call, family_playlists::shown_entries(playlist, caller)).await;
-    let kid = kid_filter::is_kid(caller);
-    let unrated = state.settings.current().family.kid_unrated_is_explicit;
-    served
-        .into_iter()
-        .filter(|(_, song)| {
-            !kid || !kid_filter::song_is_explicit(
-                &state.library_index,
-                song.get("id").and_then(Value::as_str).unwrap_or(""),
-                song.get("explicitStatus").and_then(Value::as_str),
-                unrated,
-            )
-        })
-        .map(|(stored, _)| stored)
-        .collect()
+) -> Option<Vec<usize>> {
+    let served = served_entries(
+        state,
+        call,
+        family_playlists::shown_entries(playlist, caller),
+        true,
+    )
+    .await?;
+    // The songs getPlaylist's answer lists are the ones left once the answer rules that answer goes
+    // through for this caller have run (a kid profile's explicit songs, the owner's privacy).
+    let body = json!({"subsonic-response": {"status": "ok", "version": "1.16.1", "playlist": {
+        "id": playlist.id,
+        "entry": served.iter().map(|(_, song)| song.clone()).collect::<Vec<Value>>(),
+    }}});
+    let mut parameters = Parameters::new();
+    parameters.insert("f".into(), "json".into());
+    let context = AnswerContext {
+        state,
+        caller,
+        endpoint: "getPlaylist",
+        path: "/rest/getPlaylist",
+        parameters: &parameters,
+        content_type: Some("application/json"),
+    };
+    let mut answer = Bytes::from(serde_json::to_vec(&body).unwrap_or_default());
+    for rule in state.family_answer_rules.for_endpoint("getPlaylist") {
+        answer = rule(&context, answer);
+    }
+    let listed: Vec<String> = serde_json::from_slice::<Value>(&answer)
+        .ok()
+        .and_then(|v| v["subsonic-response"]["playlist"]["entry"].as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|song| song.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    // Each listed song, in order, matched to the served song it came from.
+    let mut places = Vec::new();
+    let mut next = 0;
+    for id in listed {
+        while next < served.len() && served[next].1.get("id").and_then(Value::as_str) != Some(id.as_str()) {
+            next += 1;
+        }
+        if next < served.len() {
+            places.push(served[next].0);
+            next += 1;
+        }
+    }
+    Some(places)
+}
+
+/// What reading a library song as the caller gave.
+enum LibraryRead {
+    Song(Value),
+    /// Navidrome answered and has no such song for the caller.
+    Refused,
+    /// Navidrome did not answer, or answered something that is not a Subsonic answer.
+    Unreachable,
 }
 
 /// A library song as Navidrome describes it to the caller, in JSON.
-async fn library_song_json(call: &SubsonicCall, id: &str) -> Option<Value> {
+async fn library_song_read(call: &SubsonicCall, id: &str) -> LibraryRead {
     let mut request = call.parameters.clone();
     request.insert("id".into(), id.to_string());
     request.insert("f".into(), "json".into());
     request.shift_remove("callback");
-    let relay = call.proxy.relay_safe("rest/getSong", &request).await?;
-    let answer: Value = serde_json::from_slice(&relay.body).ok()?;
-    let response = answer.get("subsonic-response")?;
+    let Some(relay) = call.proxy.relay_safe("rest/getSong", &request).await else {
+        return LibraryRead::Unreachable;
+    };
+    let Ok(answer) = serde_json::from_slice::<Value>(&relay.body) else {
+        return LibraryRead::Unreachable;
+    };
+    let Some(response) = answer.get("subsonic-response") else {
+        return LibraryRead::Unreachable;
+    };
     if response.get("status").and_then(Value::as_str) != Some("ok") {
-        return None;
+        return LibraryRead::Refused;
     }
-    response.get("song").filter(|song| song.is_object()).cloned()
+    match response.get("song").filter(|song| song.is_object()) {
+        Some(song) => LibraryRead::Song(song.clone()),
+        None => LibraryRead::Refused,
+    }
+}
+
+/// A library song as Navidrome describes it to the caller, in JSON.
+async fn library_song_json(call: &SubsonicCall, id: &str) -> Option<Value> {
+    match library_song_read(call, id).await {
+        LibraryRead::Song(song) => Some(song),
+        _ => None,
+    }
 }
 
 /// An outside song in the shape every outside song has.
@@ -1274,30 +1350,43 @@ async fn family_mutate(state: &AppState, call: &SubsonicCall, id: &str, change: 
                     ),
                 );
             }
-            if renames
-                && let Some(name) = name
-                && let Err(error) = family_playlists::rename(store, caller, id, name)
-            {
-                return playlist_error(state, call, error);
-            }
             let removals: Vec<usize> = call
                 .incoming
                 .parameter_values("songIndexToRemove")
                 .iter()
                 .filter_map(|index| index.trim().parse().ok())
                 .collect();
-            if !removals.is_empty() {
-                // Places count over the songs the caller's answer lists, not over every entry they
-                // may see: one Octo cannot read, or an explicit one a kid profile is not shown,
-                // would shift the rest.
-                let places = served_places(state, call, &playlist, caller).await;
-                let stored: Vec<usize> = removals
-                    .iter()
-                    .filter_map(|at| places.get(*at).copied())
-                    .collect();
-                if let Err(error) = family_playlists::remove_stored(store, caller, id, &stored) {
-                    return playlist_error(state, call, error);
-                }
+            // Places count over the songs the caller's answer lists (see served_places), worked out
+            // before anything changes.
+            let removal_places = if removals.is_empty() {
+                None
+            } else {
+                let Some(places) = served_places(state, call, &playlist, caller).await else {
+                    return family_error(
+                        state,
+                        call,
+                        0,
+                        "Octo can't reach Navidrome to read this playlist's songs, so nothing was taken out.",
+                    );
+                };
+                Some(
+                    removals
+                        .iter()
+                        .filter_map(|at| places.get(*at).copied())
+                        .collect::<Vec<usize>>(),
+                )
+            };
+            if renames
+                && let Some(name) = name
+                && let Err(error) = family_playlists::rename(store, caller, id, name)
+            {
+                return playlist_error(state, call, error);
+            }
+            if let Some(stored) = removal_places
+                && let Err(error) =
+                    family_playlists::remove_stored(store, caller, id, &playlist.entries, &stored)
+            {
+                return playlist_error(state, call, error);
             }
             let mut additions = Vec::new();
             for song in call.incoming.parameter_values("songIdToAdd") {

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use octo_core::fingerprint::{AcoustIdLookup, AcoustIdRecording, AcoustIdResult};
 use octo_core::models::domain::{Album, Song};
 use octo_core::settings::{AppSettings, DownloadSource, SettingsStore, SoulseekSettings, SubsonicSettings};
 use octo_core::soulseek::{RoutingKind, SoulseekFileHit, SoulseekRouting};
@@ -1867,20 +1868,42 @@ async fn with_soulseek_off_a_soulseek_download_says_so_without_asking_slskd() {
 
 // ---- What a YouTube download does when AcoustID names another song --------------------------
 
-fn heard(verdict: VerificationVerdict, artist: &str, title: &str) -> VerificationResult {
+/// A verdict that heard `artist - title` as recording `rec`, which AcoustID lists at
+/// `recording_seconds` against a file of 153 s.
+fn heard_at(
+    verdict: VerificationVerdict,
+    artist: &str,
+    title: &str,
+    recording_seconds: Option<i32>,
+) -> VerificationResult {
+    let recording = AcoustIdRecording {
+        duration_seconds: recording_seconds,
+        sources: 10,
+        ..AcoustIdRecording::new("rec", title, [artist], None, None)
+    };
     VerificationResult {
         verdict,
         score: 0.97,
         matched_artist: Some(artist.into()),
         matched_title: Some(title.into()),
         recording_id: Some("rec".into()),
+        duration_seconds: 153,
+        lookup: Some(AcoustIdLookup::new(
+            true,
+            None,
+            vec![AcoustIdResult::new(0.97, vec![recording])],
+        )),
         ..Default::default()
     }
 }
 
+fn heard(verdict: VerificationVerdict, artist: &str, title: &str) -> VerificationResult {
+    heard_at(verdict, artist, title, Some(153))
+}
+
 #[test]
 fn another_artists_song_of_another_title_is_another_song() {
-    // The video YouTube's search took for KILLY's song was Summer Cem's.
+    // A video of another artist's song of a like title.
     let summer_cem = heard(
         VerificationVerdict::Mismatch,
         "Summer Cem & BILLA JOE",
@@ -1894,6 +1917,7 @@ fn a_take_of_the_same_song_a_cover_and_an_unnamed_verdict_are_not() {
     // Another take, or another artist's recording of the same title: kept and asked about.
     let live = heard(VerificationVerdict::Mismatch, "KILLY", "Killamonjaro (Live)");
     let cover = heard(VerificationVerdict::Mismatch, "Some Band", "Killamonjaro");
+    let live_cover = heard(VerificationVerdict::Mismatch, "Some Band", "Killamonjaro (Live)");
     // The same artist's other song: also kept and asked about, as before.
     let other_song = heard(VerificationVerdict::Mismatch, "KILLY", "Distance");
     let nothing_named = VerificationResult {
@@ -1901,10 +1925,94 @@ fn a_take_of_the_same_song_a_cover_and_an_unnamed_verdict_are_not() {
         ..Default::default()
     };
     let confirmed = heard(VerificationVerdict::Confirmed, "Summer Cem", "KILLY MANJARO");
-    for verdict in [live, cover, other_song, nothing_named, confirmed] {
+    for verdict in [live, cover, live_cover, other_song, nothing_named, confirmed] {
         assert!(
             !names_another_song(&verdict, "KILLY", "Killamonjaro"),
             "{verdict:?}"
         );
     }
+}
+
+#[test]
+fn a_name_in_another_script_is_kept_and_asked_about() {
+    let japanese = heard(VerificationVerdict::Mismatch, "高橋洋子", "残酷な天使のテーゼ");
+    assert!(!names_another_song(
+        &japanese,
+        "Yoko Takahashi",
+        "A Cruel Angel's Thesis"
+    ));
+    let russian = heard(VerificationVerdict::Mismatch, "Кино", "Звезда по имени Солнце");
+    assert!(!names_another_song(&russian, "Kino", "Star Called Sun"));
+}
+
+#[test]
+fn an_unbelieved_link_is_kept_and_asked_about() {
+    let too_long = heard_at(
+        VerificationVerdict::Mismatch,
+        "Summer Cem & BILLA JOE",
+        "KILLY MANJARO",
+        Some(210),
+    );
+    let no_length = heard_at(
+        VerificationVerdict::Mismatch,
+        "Summer Cem & BILLA JOE",
+        "KILLY MANJARO",
+        None,
+    );
+    let mut dwarfed = heard(
+        VerificationVerdict::Mismatch,
+        "Summer Cem & BILLA JOE",
+        "KILLY MANJARO",
+    );
+    let other = AcoustIdRecording {
+        duration_seconds: Some(153),
+        sources: 250,
+        ..AcoustIdRecording::new("other", "Something Else", ["Other"], None, None)
+    };
+    dwarfed.lookup.as_mut().expect("a lookup").results[0]
+        .recordings
+        .push(other);
+    let mut no_lookup = heard(
+        VerificationVerdict::Mismatch,
+        "Summer Cem & BILLA JOE",
+        "KILLY MANJARO",
+    );
+    no_lookup.lookup = None;
+    for verdict in [too_long, no_length, dwarfed, no_lookup] {
+        assert!(
+            !names_another_song(&verdict, "KILLY", "Killamonjaro"),
+            "{verdict:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_refused_video_is_not_taken_again() {
+    let root = Root::new("octo-stream-");
+    let walk = build(&root, false, |_| Arc::new(|_: &str| Vec::new())).await;
+    let song = walk.songs[0].clone();
+    let id = song.external_id.clone().expect("an id");
+    let length = walk.registry.lookup(&id).expect("known").snapshot().duration;
+    // YouTube Music would hand back the refused video.
+    walk.slskd.state.lock().ytm_tracks = Some(json!([{
+        "videoId": "ytm-atv", "title": song.title, "artists": [song.artist],
+        "durationSeconds": length.unwrap_or(200), "videoType": "MUSIC_VIDEO_TYPE_ATV",
+    }]));
+    walk.registry.refuse_video(&id, "ytm-atv");
+
+    walk.service
+        .get_direct_stream("soulseek", &id, Some("bytes=0-1"), &CancellationToken::new())
+        .await
+        .expect("no error")
+        .expect("a stream");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some("vid123"));
+    let asked = walk._server.received_requests().await.expect("recording");
+    assert!(
+        asked
+            .iter()
+            .any(|r| r.url.path() == "/search" && r.url.query().unwrap_or("").contains("skip=ytm-atv")),
+        "{asked:?}"
+    );
 }

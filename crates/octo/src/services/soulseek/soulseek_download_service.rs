@@ -19,11 +19,9 @@ use std::time::{Duration, Instant, SystemTime};
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::TryStreamExt;
-use octo_core::common::dotnet;
+use octo_core::common::{dotnet, romanize};
 use octo_core::fingerprint::recording_identity::RecordingKind;
-use octo_core::fingerprint::{
-    InconclusiveReason, TrackMatchComparer, VerificationResult, VerificationVerdict,
-};
+use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::models::domain::{Album, Song};
 use octo_core::notifications::{NotificationEvent, NotificationEventType};
 use octo_core::settings::{DownloadSource, SoulseekSettings};
@@ -60,8 +58,10 @@ use crate::services::common::{
     OperationCanceled, TrackDownload,
 };
 use crate::services::fingerprint::DownloadVerificationService;
+use crate::services::fingerprint::download_verification_service::trustworthy;
 use crate::services::fingerprint::preview_check::{Heard, PreviewOutcome, PreviewRequest};
 use crate::services::i_download_service::DirectStreamInfo;
+use crate::services::library::library_review_sweep_worker::LibraryReviewSweepWorker;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::library::upgrade_queue::AudioSummary;
 use crate::services::lidarr::{ILidarrTrackFetcher, LidarrImport, LidarrImportHandoff, LidarrTrackRequest};
@@ -573,9 +573,9 @@ impl SoulseekDownloadService {
 
         info!("YouTube MP3 download complete: {path}");
 
-        // Identification only. YouTube has no second candidate to fall back to, so a
-        // disagreement is something to ask a person about (the Review playlist), never a reason
-        // to throw the song away.
+        // Identification. A file AcoustID firmly names as another artist's song is thrown away
+        // and its video refused for the song; any other disagreement is kept and asked about in
+        // Review, since YouTube has no second copy to fall back to.
         base.track(|t| t.stage(&provider, &track_key, AcquisitionState::Verifying, None, None));
         let song = &mut download.song;
         let mut verdict = self
@@ -3072,21 +3072,53 @@ fn sweep_incoming(incoming: &str) {
 
 // ---- small helpers -------------------------------------------------------------------------
 
-/// The routing's artist and title, for messages.
-/// Whether AcoustID named another artist's song of another title: neither the title nor the
-/// artist it heard is the one asked for. Another take of the song (a live or instrumental
-/// recording of the same title) is not, and neither is a verdict that names nothing.
+/// Whether AcoustID named another artist's song of another title firmly enough to throw the
+/// file away: the title it heard is not the song's, it shares no artist with the request, both
+/// are written in the request's script, and the recording it named is believed (its length
+/// known and the file's, and no other song's recording dwarfs it). Another take of the song, a
+/// cover of its title, the same artist's other song, a name in another script and a verdict
+/// that names nothing are kept and asked about.
 pub(crate) fn names_another_song(verdict: &VerificationResult, artist: &str, title: &str) -> bool {
-    let Some(heard_title) = verdict.matched_title.as_deref().filter(|t| !t.trim().is_empty()) else {
+    if verdict.verdict != VerificationVerdict::Mismatch {
         return false;
-    };
-    let heard_artist = verdict.matched_artist.as_deref().unwrap_or_default();
-    verdict.verdict == VerificationVerdict::Mismatch
-        && !heard_artist.trim().is_empty()
-        && !TrackMatchComparer::title_matches(title, heard_title)
-        && !TrackMatchComparer::artist_matches(artist, heard_artist, &[] as &[&str])
+    }
+    let heard_title = verdict.matched_title.as_deref().unwrap_or_default().trim();
+    let heard_artist = verdict.matched_artist.as_deref().unwrap_or_default().trim();
+    if heard_title.is_empty() || heard_artist.is_empty() {
+        return false;
+    }
+    if romanize::first_script(title) != romanize::first_script(heard_title)
+        || romanize::first_script(artist) != romanize::first_script(heard_artist)
+    {
+        return false;
+    }
+    if LibraryReviewSweepWorker::same_title(heard_title, title)
+        || LibraryReviewSweepWorker::shares_artist(verdict, artist)
+    {
+        return false;
+    }
+    named_recording_believed(verdict)
 }
 
+/// The recording `verdict` names, found in its lookup, has a known length and is
+/// [`trustworthy`] against the file's.
+fn named_recording_believed(verdict: &VerificationResult) -> bool {
+    let Some(id) = verdict.recording_id.as_deref() else {
+        return false;
+    };
+    verdict.duration_seconds > 0
+        && verdict.lookup.as_ref().is_some_and(|lookup| {
+            lookup.results.iter().any(|result| {
+                result.recordings.iter().any(|r| {
+                    dotnet::eq_ignore_case(id, &r.recording_id)
+                        && r.duration_seconds.is_some_and(|s| s > 0)
+                        && trustworthy(r, result, verdict.duration_seconds)
+                })
+            })
+        })
+}
+
+/// The routing's artist and title, for messages.
 fn names(routing: &SoulseekRouting) -> (String, String) {
     (
         routing.artist.clone().unwrap_or_default(),

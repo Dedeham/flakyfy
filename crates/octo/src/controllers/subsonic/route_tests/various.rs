@@ -965,7 +965,8 @@ async fn similar_songs_need_an_id_and_relay_their_own_endpoint_with_radio_off() 
         .json();
     assert_eq!(outside["subsonic-response"]["status"], "ok");
     let outside_xml = get(&app, "/rest/getSimilarSongs?id=ext-deezer-song-1").await.body;
-    assert!(outside_xml.contains("similarSongs"), "{outside_xml}");
+    assert!(outside_xml.contains("<similarSongs"), "{outside_xml}");
+    assert!(!outside_xml.contains("similarSongs2"), "{outside_xml}");
     assert_eq!(server.received_requests().await.unwrap().len(), 3);
 }
 

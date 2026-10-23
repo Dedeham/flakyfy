@@ -55,6 +55,7 @@ fn library_song(id: &str) -> Option<Value> {
         "wide" => song("wide", "Wide", "Wide Artist", "Wides", "al-wides", "Trip-Hop"),
         "hello" => song("hello", "Hello", "Adele", "25", "al-25", "Pop"),
         "quiet" => song("quiet", "Quiet", "Nobody Known", "Quiet", "al-quiet", "Ambient"),
+        "hush" => song("hush", "Hush", "Nobody Known", "Hush", "al-hush", "Ambient"),
         "blend" => song(
             "blend",
             "Blend",
@@ -963,6 +964,21 @@ async fn navidromes_own_error_on_the_fallback_is_the_empty_radio() {
         f.calls()
             .iter()
             .any(|call| call.starts_with("/rest/getSimilarSongs2?id=quiet")),
+        "{:?}",
+        f.calls()
+    );
+}
+
+// Octo's radio is on but finds nothing, and Navidrome's own agents answer: that answer is the
+// radio.
+#[tokio::test]
+async fn navidromes_own_answer_on_the_fallback_reaches_the_client() {
+    let f = fixture(|_| {}).await;
+    assert_eq!(radio_ids(&f, "hush").await, ["nd-1"]);
+    assert!(
+        f.calls()
+            .iter()
+            .any(|call| call.starts_with("/rest/getSimilarSongs2?") && call.contains("id=hush")),
         "{:?}",
         f.calls()
     );

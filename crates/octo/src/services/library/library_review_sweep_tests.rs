@@ -2171,7 +2171,7 @@ async fn a_never_heard_sound_that_sounds_nothing_like_its_preview_is_asked_about
 
     let entries = queue.for_user("bob", NoticeKind::Review);
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].cause, InconclusiveReason::DiffersFromYouTube);
+    assert_eq!(entries[0].cause, InconclusiveReason::SoundsLikeAnother);
     assert_eq!(entries[0].state, NoticeState::Waiting);
     assert!(
         entries[0].reason.contains("YouTube preview"),
@@ -2357,7 +2357,7 @@ async fn a_song_the_preview_says_is_another_is_replaced_and_leaves_a_note_when_s
     let entries = queue.for_user("bob", NoticeKind::Review);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].state, NoticeState::Acted);
-    assert_eq!(entries[0].cause, InconclusiveReason::DiffersFromYouTube);
+    assert_eq!(entries[0].cause, InconclusiveReason::SoundsLikeAnother);
     assert!(
         entries[0].reason.contains("YouTube preview"),
         "{}",
@@ -2389,7 +2389,7 @@ async fn the_preview_replaces_nothing_with_its_own_switch_off_or_in_a_dry_run() 
         let entries = queue.for_user("bob", NoticeKind::Review);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].state, NoticeState::Waiting);
-        assert_eq!(entries[0].cause, InconclusiveReason::DiffersFromYouTube);
+        assert_eq!(entries[0].cause, InconclusiveReason::SoundsLikeAnother);
     }
 }
 

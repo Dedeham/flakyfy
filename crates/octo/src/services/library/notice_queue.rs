@@ -475,7 +475,7 @@ impl NoticeQueue {
                     album: Some(song.album.clone()),
                     state: NoticeState::Waiting,
                     reason,
-                    cause: verdict.reason,
+                    cause: Self::stored_cause(verdict.reason),
                     origin,
                     // Dropped for a library question, so a Keep on one can never be submitted.
                     fingerprint: if sweep { None } else { verdict.fingerprint.clone() },
@@ -501,6 +501,16 @@ impl NoticeQueue {
         }
         self.mark_dirty();
         true
+    }
+
+    /// The cause written with an entry. A file its YouTube preview says is another song is stored
+    /// as one that sounds like another, which every earlier release reads; its reason carries the
+    /// preview's words.
+    fn stored_cause(reason: InconclusiveReason) -> InconclusiveReason {
+        match reason {
+            InconclusiveReason::DiffersFromYouTube => InconclusiveReason::SoundsLikeAnother,
+            other => other,
+        }
     }
 
     /// What a replaced file's note says: "Octo replaced this: AcoustID heard Artist - Title, 97%
@@ -572,7 +582,7 @@ impl NoticeQueue {
                     navidrome_id: Some(navidrome_id.to_string()),
                     state: NoticeState::Acted,
                     reason,
-                    cause: verdict.reason,
+                    cause: Self::stored_cause(verdict.reason),
                     origin: NoticeOrigin::LibrarySweep,
                     duration_seconds: verdict.duration_seconds,
                     file_format: Some(dotnet::to_lower_invariant(&extension(local_path))),

@@ -45,6 +45,7 @@ fn facts(title: &str, artist: Option<&str>, seconds: Option<i32>) -> PreviewFact
         title: Some(title.into()),
         artist: artist.map(str::to_string),
         seconds,
+        album: None,
     }
 }
 

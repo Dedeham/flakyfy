@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::FutureExt;
 use octo_core::common::dotnet;
+use octo_core::common::live_version;
 use octo_core::common::song_identity::ArtistAgreement;
 use octo_core::common::{Clock, SongIdentity};
 use octo_core::fingerprint::verification::{
@@ -401,10 +402,12 @@ pub enum AutoReplace {
 }
 
 /// What the song's YouTube preview said of a file it sounds nothing like, for deciding whether to
-/// replace it: the share of differing bits.
+/// replace it: the share of differing bits, and whether the preview is a YouTube Music row from the
+/// file's own album.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PreviewWitness {
     pub bit_error: f64,
+    pub album_agrees: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1201,10 +1204,12 @@ impl LibraryReviewSweepWorker {
                 PreviewOutcome::Compared {
                     heard: Heard::Mismatch,
                     comparison,
+                    preview: facts,
                     ..
                 } => {
                     witness = Some(PreviewWitness {
                         bit_error: comparison.bit_error,
+                        album_agrees: Self::preview_album_agrees(facts.album.as_deref(), &song.album),
                     });
                     (
                         Outcome::Ask,
@@ -1475,7 +1480,7 @@ impl LibraryReviewSweepWorker {
     /// and either `ReviewSweepAutoReplace` on with AcoustID clearly hearing another song, or
     /// `ReviewSweepAutoReplacePreview` on with the song's YouTube preview clearly not matching (at least [`Self::PREVIEW_REPLACE_FROM`] of its bits differ).
     /// The preview's replacing also needs `KeepReplacedOriginals` on and a download source without
-    /// YouTube.
+    /// YouTube. It also needs the preview to be a YouTube Music row from the file's own album.
     pub fn decide(
         question: &VerificationResult,
         file: &SweptFile,
@@ -1501,7 +1506,9 @@ impl LibraryReviewSweepWorker {
         let by_preview = actions.review_sweep_auto_replace_preview
             && file.tagged
             && question.reason == InconclusiveReason::DiffersFromYouTube
-            && witness.is_some_and(|witness| witness.bit_error >= Self::PREVIEW_REPLACE_FROM)
+            && witness.is_some_and(|witness| {
+                witness.bit_error >= Self::PREVIEW_REPLACE_FROM && witness.album_agrees
+            })
             && actions.keep_replaced_originals
             && !matches!(
                 settings.subsonic.download_source,
@@ -1592,6 +1599,22 @@ impl LibraryReviewSweepWorker {
                     ArtistAgreement::None
                 )
         })
+    }
+
+    /// Whether a YouTube Music row's album is the file's album: both named, the same by their exact
+    /// key, and neither a live album. A row from another album may be another recording of the song.
+    pub fn preview_album_agrees(row_album: Option<&str>, file_album: &str) -> bool {
+        let Some(row_album) = row_album.filter(|album| !dotnet::is_blank(album)) else {
+            return false;
+        };
+        if dotnet::is_blank(file_album)
+            || live_version::mentions(Some(row_album))
+            || live_version::mentions(Some(file_album))
+        {
+            return false;
+        }
+        let key = SongIdentity::key(row_album);
+        !key.is_empty() && key == SongIdentity::key(file_album)
     }
 
     /// The same song by title: the loose keys once guest credits are taken off, or the cores

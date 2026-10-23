@@ -90,6 +90,8 @@ pub struct PreviewFacts {
     /// Who the row credits, or the channel that posted the video.
     pub artist: Option<String>,
     pub seconds: Option<i32>,
+    /// The album of the YouTube Music row the preview is. None for any other video.
+    pub album: Option<String>,
 }
 
 impl PreviewFacts {
@@ -107,6 +109,7 @@ impl PreviewFacts {
             title: hit.title,
             artist,
             seconds: hit.duration,
+            album: hit.album,
         }
     }
 }

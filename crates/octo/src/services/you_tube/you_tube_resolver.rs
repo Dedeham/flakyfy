@@ -21,6 +21,8 @@ pub struct YouTubeHit {
     pub title: Option<String>,
     pub duration: Option<i32>,
     pub channel: Option<String>,
+    /// The album YouTube Music files the row under. None for a video yt-dlp found.
+    pub album: Option<String>,
     /// The audio stream the shim picked for this video, when the run that found it had one
     /// (/search does; /meta never picks a stream).
     pub stream: StreamFacts,
@@ -261,6 +263,7 @@ impl YouTubeResolver {
             title: Some(row.title.clone()),
             duration: row.duration_seconds,
             channel: None,
+            album: row.album.clone(),
             stream: StreamFacts::default(),
         })
     }
@@ -526,6 +529,7 @@ fn parse_hit(root: &Value, with_channel: bool) -> anyhow::Result<Option<YouTubeH
         title,
         duration,
         channel,
+        album: None,
         stream: parse_stream(root),
     }))
 }
@@ -634,6 +638,7 @@ mod tests {
                 title: Some("Emotion".into()),
                 duration: Some(417),
                 channel: Some("Daft Punk - Topic".into()),
+                album: None,
                 stream: StreamFacts::default(),
             })
         );
@@ -981,6 +986,7 @@ mod tests {
                 title: Some("Hello".into()),
                 duration: Some(295),
                 channel: None,
+                album: None,
                 stream: StreamFacts::default(),
             })
         );

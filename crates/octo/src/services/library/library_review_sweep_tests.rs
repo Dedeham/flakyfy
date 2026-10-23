@@ -222,6 +222,9 @@ fn settings_of(per_hour: i32) -> LibraryActionSettings {
     }
 }
 
+/// The album every tagged test file carries.
+const TAGGED_ALBUM: &str = "Mezzanine";
+
 /// The test setup: a music root, the state file beside it, and every store built so far.
 struct Sweep {
     root: tempfile::TempDir,
@@ -268,6 +271,7 @@ impl Sweep {
         let mut file = TagFile::open(&path).expect("opens");
         file.set_performers(&[artist.to_string()]);
         file.set_title(Some(title));
+        file.set_album(Some(TAGGED_ALBUM));
         if let Some(isrc) = isrc {
             tag_writer_extras::set_text(&mut file, TagFields::ISRC, Some(isrc));
         }
@@ -1108,7 +1112,10 @@ fn decide_by_preview(change: impl FnOnce(&mut AppSettings)) -> AutoReplace {
         &settings,
         "bob",
         Today::default(),
-        Some(PreviewWitness { bit_error: 0.5 }),
+        Some(PreviewWitness {
+            bit_error: 0.5,
+            album_agrees: true,
+        }),
     )
 }
 
@@ -2153,6 +2160,11 @@ mod other_listeners {
 // ---- A sound AcoustID has never heard, put to its song's YouTube preview ------------------
 
 fn compared(heard: Heard, bit_error: f64) -> PreviewOutcome {
+    compared_from(heard, bit_error, Some(TAGGED_ALBUM))
+}
+
+/// [`compared`] against a preview filed under `album`, as a YouTube Music row is.
+fn compared_from(heard: Heard, bit_error: f64, album: Option<&str>) -> PreviewOutcome {
     PreviewOutcome::Compared {
         heard,
         comparison: Comparison {
@@ -2160,7 +2172,10 @@ fn compared(heard: Heard, bit_error: f64) -> PreviewOutcome {
             offset_seconds: 0.0,
         },
         trusted: heard != Heard::Unclear,
-        preview: PreviewFacts::bare("vid"),
+        preview: PreviewFacts {
+            album: album.map(str::to_string),
+            ..PreviewFacts::bare("vid")
+        },
     }
 }
 
@@ -2416,6 +2431,54 @@ async fn a_song_the_preview_says_is_another_is_replaced_and_leaves_a_note_when_s
         "{}",
         entries[0].reason
     );
+}
+
+/// One tagged song the preview `album` says is another song, with the preview's replacing on:
+/// whether anything was asked to replace it, and its open questions.
+async fn preview_from_album_says_wrong(album: Option<&str>) -> (usize, usize) {
+    let sweep = Sweep::new();
+    sweep.teardrop("a.flac");
+    let queue = Arc::new(NoticeQueue::new());
+    let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+    let worker = sweep.worker(
+        FakeVerifier::never_heard(Some(compared_from(Heard::Mismatch, 0.5, album))),
+        Options {
+            queue: Some(queue.clone()),
+            settings: Some(replacing_by_preview(60)),
+            replacer: Some(replacer.clone()),
+            ..Default::default()
+        },
+    );
+    worker.tick().await;
+    worker.tick().await;
+    let open = queue
+        .for_user("bob", NoticeKind::Review)
+        .iter()
+        .filter(|entry| entry.state == NoticeState::Waiting)
+        .count();
+    (replacer.requests().len(), open)
+}
+
+#[tokio::test]
+async fn a_preview_from_another_album_is_asked_about_not_replaced() {
+    assert_eq!(preview_from_album_says_wrong(Some("Collected")).await, (0, 1));
+}
+
+#[tokio::test]
+async fn a_yt_dlp_preview_never_replaces() {
+    assert_eq!(preview_from_album_says_wrong(None).await, (0, 1));
+}
+
+#[test]
+fn a_row_from_the_file_s_own_album_agrees_and_others_do_not() {
+    let agrees = LibraryReviewSweepWorker::preview_album_agrees;
+    assert!(agrees(Some("Mezzanine"), "Mezzanine"));
+    assert!(agrees(Some("mezzanine "), "Mezzanine"));
+    assert!(!agrees(Some("Mezzanine (Live at the Roundhouse)"), "Mezzanine"));
+    assert!(!agrees(Some("Live in Paris"), "Live in Paris"));
+    assert!(!agrees(Some("Collected"), "Mezzanine"));
+    assert!(!agrees(None, "Mezzanine"));
+    assert!(!agrees(Some("Mezzanine"), ""));
 }
 
 #[tokio::test]

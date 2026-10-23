@@ -1108,6 +1108,7 @@ impl OneVideo {
             title: Some("Teardrop".into()),
             artist: Some("Massive Attack".into()),
             seconds: Some(40),
+            album: None,
         }
     }
 }

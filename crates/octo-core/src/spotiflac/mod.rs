@@ -21,9 +21,12 @@ pub struct ServerInfo {
 }
 
 impl ServerInfo {
-    /// Whether the answer is SpotiFLAC's own: its name, or at least its API version.
+    /// Whether the answer is SpotiFLAC's own, or Mornye's (its name since the rename): the
+    /// name, or at least the API version.
     pub fn is_spotiflac(&self) -> bool {
-        self.name.eq_ignore_ascii_case("SpotiFLAC") || self.api_version == "v1"
+        self.name.eq_ignore_ascii_case("SpotiFLAC")
+            || self.name.eq_ignore_ascii_case("Mornye")
+            || self.api_version == "v1"
     }
 }
 
@@ -444,6 +447,17 @@ mod tests {
         t.external_url = "javascript:alert(1)".into();
         t.id = "../etc".into();
         assert_eq!(t.link(), None);
+    }
+
+    #[test]
+    fn mornye_answers_as_the_same_web_api() {
+        let info: ServerInfo = serde_json::from_str(
+            r#"{"name":"Mornye","version":"1.0.3","multiuser":false,"authenticated":true}"#,
+        )
+        .unwrap();
+        assert!(info.is_spotiflac());
+        let other: ServerInfo = serde_json::from_str(r#"{"name":"Something else"}"#).unwrap();
+        assert!(!other.is_spotiflac());
     }
 
     #[test]

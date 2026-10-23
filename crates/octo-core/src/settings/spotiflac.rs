@@ -39,12 +39,12 @@ pub struct SpotiflacSettings {
     /// Whether downloads ask SpotiFLAC at all. SPOTIFLAC_ENABLED.
     pub enabled: bool,
 
-    /// The address of the person's SpotiFLAC web server (`spotiflac --web`), as Octo's
-    /// container reaches it. SPOTIFLAC_URL.
+    /// The address of the person's Mornye web server (`mornye --web`, or an older
+    /// `spotiflac --web`), as Octo's container reaches it. SPOTIFLAC_URL.
     pub url: String,
 
-    /// The SpotiFLAC web token (its `--web-token` or `SPOTIFLAC_WEB_TOKEN`), when it has one.
-    /// SPOTIFLAC_WEB_TOKEN.
+    /// The web token (Mornye's `--web-token` or `MORNYE_WEB_TOKEN`; SpotiFLAC's before the
+    /// rename), when it has one. SPOTIFLAC_WEB_TOKEN.
     pub token: String,
 
     /// The quality asked for: `LOSSLESS` or `HI_RES_LOSSLESS`. SPOTIFLAC_QUALITY.

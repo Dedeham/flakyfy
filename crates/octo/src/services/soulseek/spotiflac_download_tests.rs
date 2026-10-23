@@ -542,7 +542,7 @@ async fn a_spotiflac_that_does_not_answer_fails_the_song_plainly() {
 
     let error = fetch.acquire().await.expect_err("unreachable");
 
-    assert!(error.to_string().contains("could not reach SpotiFLAC"), "{error}");
+    assert!(error.to_string().contains("could not reach Mornye"), "{error}");
 }
 
 #[tokio::test]

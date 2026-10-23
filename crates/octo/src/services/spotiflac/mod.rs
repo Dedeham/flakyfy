@@ -1,4 +1,4 @@
-//! The person's own SpotiFLAC server, reached through its web API (`spotiflac --web`): the
+//! The person's own Mornye (SpotiFLAC before its rename) server, reached through its web API (`spotiflac --web`): the
 //! client the download path asks for songs, the gate that keeps to the number of songs asked for
 //! at once, and the dashboard's Test, which says plainly what is missing.
 //!
@@ -24,8 +24,9 @@ use crate::services::http_client_factory::{
     self, connect_failure_message, status_failure_message, timeout_message,
 };
 
-/// The cookie SpotiFLAC's web token is sent in.
-pub const TOKEN_COOKIE: &str = "spotiflac_web_token";
+/// The cookies the web token is sent in: Mornye's, and SpotiFLAC's from before its rename, so
+/// either one reads it.
+pub const TOKEN_COOKIES: [&str; 2] = ["mornye_web_token", "spotiflac_web_token"];
 
 /// Where SpotiFLAC's downloads land, under Octo's music folder: a dot folder, which Navidrome's
 /// scanner skips.
@@ -37,17 +38,17 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// A call to SpotiFLAC that did not work, in words a person can act on.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SpotiflacError {
-    #[error("Octo could not reach SpotiFLAC at {url}. {why}")]
+    #[error("Octo could not reach Mornye at {url}. {why}")]
     Unreachable { url: String, why: String },
     #[error(
-        "SpotiFLAC refused the web token. Set the token SpotiFLAC was started with (its SPOTIFLAC_WEB_TOKEN)."
+        "Mornye refused the web token. Set the token Mornye was started with: SPOTIFLAC_WEB_TOKEN with Octo's spotiflac service, otherwise its --web-token or MORNYE_WEB_TOKEN."
     )]
     Unauthorized,
     #[error(
-        "{url} answers, but not as SpotiFLAC's web API. Check that SpotiFLAC runs with --web and that the address points at it."
+        "{url} answers, but not as Mornye's web API (or an older SpotiFLAC's). Check that Mornye runs with --web and that the address points at it."
     )]
     NotSpotiflac { url: String },
-    #[error("SpotiFLAC said: {0}")]
+    #[error("Mornye said: {0}")]
     Said(String),
 }
 
@@ -169,7 +170,11 @@ impl SpotiflacClient {
         } else {
             builder.header(
                 reqwest::header::COOKIE,
-                format!("{TOKEN_COOKIE}={}", connection.token),
+                TOKEN_COOKIES
+                    .iter()
+                    .map(|name| format!("{name}={}", connection.token))
+                    .collect::<Vec<_>>()
+                    .join("; "),
             )
         }
     }
@@ -325,7 +330,9 @@ impl SpotiflacClient {
     ) -> TestReport {
         let mut report = TestReport::default();
         if connection.url.is_empty() {
-            report.fail("No address yet. Type the address of your SpotiFLAC server, for example http://spotiflac:8000.");
+            report.fail(
+                "No address yet. Type the address of your Mornye server, for example http://spotiflac:8000.",
+            );
             return report.finish();
         }
         if !(connection.url.starts_with("http://") || connection.url.starts_with("https://")) {
@@ -340,17 +347,17 @@ impl SpotiflacClient {
                     .as_deref()
                     .map(|v| format!(" {v}"))
                     .unwrap_or_default();
-                report.pass(&format!("SpotiFLAC{version} answers at {}.", connection.url));
+                report.pass(&format!("Mornye{version} answers at {}.", connection.url));
                 if info.multiuser {
                     report.fail(
-                        "SpotiFLAC runs with --web-multiuser, where it saves into each account's own folder. \
-                         Run it with a web token instead (SPOTIFLAC_WEB_TOKEN), so Octo can say where to save.",
+                        "Mornye runs with --web-multiuser, where it saves into each account's own folder. \
+                         Run it with a web token instead (SPOTIFLAC_WEB_TOKEN with Octo's spotiflac service), so Octo can say where to save.",
                     );
                 }
                 if connection.token.is_empty() && !info.authenticated {
                     report.warn(
-                        "SpotiFLAC has no web token, so anyone who can reach its address can use it. \
-                         Set SPOTIFLAC_WEB_TOKEN on SpotiFLAC and the same token here.",
+                        "Mornye has no web token, so anyone who can reach its address can use it. \
+                         Set SPOTIFLAC_WEB_TOKEN (Mornye's own name: MORNYE_WEB_TOKEN) and the same token here.",
                     );
                 }
             }
@@ -365,34 +372,35 @@ impl SpotiflacClient {
                 report.extensions = Some(installed);
                 if installed == 0 {
                     report.fail(
-                        "SpotiFLAC has no extensions installed, so it cannot download anything yet. \
-                         Give SpotiFLAC your extension registry (SPOTIFLAC_REGISTRIES) and install an extension on SpotiFLAC's own page.",
+                        "Mornye has no extensions installed, so it cannot download anything yet. \
+                         Give Mornye your extension registry (SPOTIFLAC_REGISTRIES) and install an extension on Mornye's own page. \
+                         Coming from SpotiFLAC? Mornye starts without its extensions, so install them again there.",
                     );
                 } else {
                     report.pass(&format!(
-                        "{installed} {} installed in SpotiFLAC.",
+                        "{installed} {} installed in Mornye.",
                         if installed == 1 { "extension" } else { "extensions" }
                     ));
                 }
             }
-            Err(e) => report.warn(&format!("Octo could not read SpotiFLAC's extensions. {e}")),
+            Err(e) => report.warn(&format!("Octo could not read Mornye's extensions. {e}")),
         }
         if download_path.trim().is_empty() {
-            report.fail("Octo has no music folder yet, so it has nowhere for SpotiFLAC's downloads to land.");
+            report.fail("Octo has no music folder yet, so it has nowhere for Mornye's downloads to land.");
         } else {
             let octo_side = format!("{}/{SPOTIFLAC_FOLDER}", download_path.trim_end_matches('/'));
             match make_shared_folder(&octo_side) {
                 Ok(()) => {
                     let theirs = path_for_spotiflac(&octo_side, download_path, folder);
                     report.pass(&format!(
-                        "Downloads land in {theirs} on SpotiFLAC's side, which must be the same folder as {octo_side} in Octo."
+                        "Downloads land in {theirs} on Mornye's side, which must be the same folder as {octo_side} in Octo."
                     ));
                 }
                 Err(e) => report.fail(&format!("Octo cannot make the folder {octo_side}: {e}.")),
             }
         }
         if !enabled {
-            report.warn("The switch is off, so downloads do not ask SpotiFLAC yet. Turn it on and save.");
+            report.warn("The switch is off, so downloads do not ask Mornye yet. Turn it on and save.");
         }
         report.finish()
     }
@@ -466,9 +474,9 @@ impl TestReport {
         self.message = match failed {
             Some(check) => check.text.clone(),
             None if self.checks.iter().any(|check| check.state == "warn") => {
-                "SpotiFLAC is ready, with a warning below.".to_string()
+                "Mornye is ready, with a warning below.".to_string()
             }
-            None => "SpotiFLAC is ready.".to_string(),
+            None => "Mornye is ready.".to_string(),
         };
         self
     }

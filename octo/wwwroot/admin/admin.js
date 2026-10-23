@@ -5465,10 +5465,15 @@ function renderChartStatus() {
 let chartPeople = null;
 let chartPeopleUser = null;
 let chartPeopleSaving = Promise.resolve();
+// Saves sent and not answered yet. The row is drawn again from an answer only when no later
+// save is waiting, so a quick second change is never undone on screen by the first answer.
+let chartPeoplePending = 0;
 
 async function loadChartPeople() {
   const row = document.getElementById('charts-people');
   if (!row) return;
+  // What is saving goes first, so the rows read back hold it.
+  await chartPeopleSaving;
   let r;
   try {
     r = await api('/api/admin/charts/listeners', { cache: 'no-store' });
@@ -5480,7 +5485,9 @@ async function loadChartPeople() {
     row.hidden = true;
     return;
   }
-  chartPeople = await r.json();
+  const body = await r.json();
+  if (chartPeoplePending) return;
+  chartPeople = body;
   row.hidden = false;
   renderChartPeople();
 }
@@ -5546,6 +5553,7 @@ function saveChartPeople() {
   const pinned = Array.from(document.querySelectorAll('#charts-people .charts-pin'))
     .map(select => select.value)
     .filter(Boolean);
+  chartPeoplePending += 1;
   chartPeopleSaving = chartPeopleSaving.then(async () => {
     try {
       const r = await api('/api/admin/charts/listeners', {
@@ -5561,7 +5569,8 @@ function saveChartPeople() {
     } catch (error) {
       chartPeopleNote(`Could not save: ${error.message}`, 'error');
     }
-    if (chartPeopleUser === user) renderChartPeople();
+    chartPeoplePending -= 1;
+    if (!chartPeoplePending && chartPeopleUser === user) renderChartPeople();
   });
 }
 

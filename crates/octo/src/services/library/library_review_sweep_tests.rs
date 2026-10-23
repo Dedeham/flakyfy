@@ -2117,6 +2117,19 @@ fn compared(heard: Heard, bit_error: f64) -> PreviewOutcome {
     }
 }
 
+/// [`compared`] against a preview that may not be the song.
+fn compared_untrusted(heard: Heard, bit_error: f64) -> PreviewOutcome {
+    PreviewOutcome::Compared {
+        heard,
+        comparison: Comparison {
+            bit_error,
+            offset_seconds: 0.0,
+        },
+        trusted: false,
+        preview: PreviewFacts::bare("vid"),
+    }
+}
+
 /// One tagged song, checked, with the questions it raised.
 async fn never_heard_song(
     verifier: Arc<FakeVerifier>,
@@ -2187,8 +2200,8 @@ async fn a_preview_that_cannot_say_leaves_the_question_to_a_person_as_before() {
 }
 
 #[tokio::test]
-async fn a_shim_that_does_not_answer_is_not_a_question_and_the_song_is_tried_again() {
-    let verifier = FakeVerifier::never_heard(Some(PreviewOutcome::Unavailable("shim".into())));
+async fn a_preview_the_shim_did_not_send_is_tried_again_then_asked_about() {
+    let verifier = FakeVerifier::never_heard(Some(PreviewOutcome::NotSent("shim".into())));
 
     let (_sweep, worker, queue) = never_heard_song(verifier.clone(), settings_of(60)).await;
 
@@ -2203,9 +2216,44 @@ async fn a_shim_that_does_not_answer_is_not_a_question_and_the_song_is_tried_aga
             .is_some_and(|r| r.contains("YouTube shim")),
         "{status:?}"
     );
-    // Not checked, so the next look asks again.
     worker.tick().await;
-    assert_eq!(verifier.previews_asked(), 2);
+    assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
+    worker.tick().await;
+    assert_eq!(verifier.previews_asked(), 3);
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].cause, InconclusiveReason::NoEntry);
+    assert_eq!(worker.status().found, 1);
+    // Checked now: the next look moves on.
+    worker.tick().await;
+    assert_eq!(verifier.previews_asked(), 3);
+}
+
+#[tokio::test]
+async fn a_song_with_no_preview_to_compare_is_asked_about_at_once() {
+    let verifier = FakeVerifier::never_heard(Some(PreviewOutcome::Unavailable(
+        "no YouTube video for the song".into(),
+    )));
+
+    let (_sweep, worker, queue) = never_heard_song(verifier.clone(), settings_of(60)).await;
+
+    assert_eq!(verifier.previews_asked(), 1);
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].cause, InconclusiveReason::NoEntry);
+    assert_eq!(worker.status().found, 1);
+}
+
+#[tokio::test]
+async fn a_match_with_a_preview_that_may_not_be_the_song_settles_nothing() {
+    let verifier = FakeVerifier::never_heard(Some(compared_untrusted(Heard::Match, 0.04)));
+
+    let (_sweep, worker, queue) = never_heard_song(verifier, settings_of(60)).await;
+
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].cause, InconclusiveReason::NoEntry);
+    assert_eq!(worker.status().fine, 0);
 }
 
 #[tokio::test]

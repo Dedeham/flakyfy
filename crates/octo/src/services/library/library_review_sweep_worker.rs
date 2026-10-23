@@ -1151,8 +1151,9 @@ impl LibraryReviewSweepWorker {
 
         let (outcome, question) = Self::classify(verdict);
         // A sound AcoustID has never heard is not left to a person while its song's YouTube
-        // preview can say: alike settles it, clearly another song is a better question, and
-        // anything else stays the question it was.
+        // preview can say: a preview with the song's title, artist and length that sounds alike
+        // settles it, one that sounds nothing like it is a better question, and anything else
+        // stays the question it was.
         let mut waiting_for = "AcoustID";
         let (outcome, question) = if outcome == Outcome::Ask
             && question.reason == InconclusiveReason::NoEntry
@@ -1174,7 +1175,9 @@ impl LibraryReviewSweepWorker {
             }
             match heard {
                 PreviewOutcome::Compared {
-                    heard: Heard::Match, ..
+                    heard: Heard::Match,
+                    trusted: true,
+                    ..
                 } => {
                     info!(
                         "Library review sweep: '{} - {}' is a sound AcoustID has never heard, and it sounds like its YouTube preview",
@@ -1197,14 +1200,26 @@ impl LibraryReviewSweepWorker {
                         ..question
                     },
                 ),
-                // The shim did not answer: not an answer, so not a question either. Tried again.
-                PreviewOutcome::Unavailable(why) => {
+                // The shim found the song's video but did not send it: tried again, and asked about
+                // as before once it failed as often as an AcoustID lookup may.
+                PreviewOutcome::NotSent(why) => {
                     debug!(
-                        "Library review sweep: no preview answer for '{} - {}': {why}",
+                        "Library review sweep: no preview for '{} - {}' yet: {why}",
                         song.artist, song.title
                     );
-                    waiting_for = "The YouTube shim";
-                    (Outcome::LookupFailed, question)
+                    if self.lookup_failures.load(Ordering::SeqCst) + 1 < Self::MAX_LOOKUP_FAILURES_PER_FILE {
+                        waiting_for = "The YouTube shim";
+                        (Outcome::LookupFailed, question)
+                    } else {
+                        (outcome, question)
+                    }
+                }
+                PreviewOutcome::Unavailable(why) => {
+                    debug!(
+                        "Library review sweep: no preview check for '{} - {}': {why}",
+                        song.artist, song.title
+                    );
+                    (outcome, question)
                 }
                 _ => (outcome, question),
             }

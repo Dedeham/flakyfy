@@ -5514,17 +5514,14 @@ function renderChartPeople() {
   const pinsBox = document.querySelector('#charts-people .charts-pins');
   const pins = Array.from(document.querySelectorAll('#charts-people .charts-pin'));
   const empty = document.getElementById('charts-people-note');
+  const labels = document.querySelectorAll('#charts-people .charts-people-label');
   if (!person || !country || !pinsBox || !empty) return;
   if (!people.length) {
-    person.hidden = true;
-    country.hidden = true;
-    pinsBox.hidden = true;
-    empty.textContent = 'People show up here once someone has played something.';
+    [person, country, pinsBox, ...labels].forEach(el => { el.hidden = true; });
+    chartPeopleNote('People show up here once someone has played something.', 'info');
     return;
   }
-  empty.textContent = '';
-  country.hidden = false;
-  pinsBox.hidden = false;
+  [country, pinsBox, ...labels].forEach(el => { el.hidden = false; });
   if (!people.some(p => p.user === chartPeopleUser)) chartPeopleUser = people[0].user;
   person.replaceChildren(...people.map(p => {
     const option = document.createElement('option');
@@ -5534,6 +5531,7 @@ function renderChartPeople() {
   }));
   person.value = chartPeopleUser;
   person.hidden = people.length < 2;
+  document.getElementById('charts-person-label').hidden = person.hidden;
   const mine = people.find(p => p.user === chartPeopleUser);
   const missing = mine.notOnAppleMusic || [];
   const used = chartsInfo?.country?.used;
@@ -5549,7 +5547,6 @@ function saveChartPeople() {
     .map(select => select.value)
     .filter(Boolean);
   chartPeopleSaving = chartPeopleSaving.then(async () => {
-    const anchor = document.querySelector('#charts-people .charts-pins');
     try {
       const r = await api('/api/admin/charts/listeners', {
         method: 'PUT',
@@ -5559,12 +5556,43 @@ function saveChartPeople() {
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
       chartPeople = body;
-      note(anchor, 'Saved.');
+      chartPeopleNote('Saved.');
+      refreshChartCountries();
     } catch (error) {
-      note(anchor, `Could not save: ${error.message}`, 'error');
+      chartPeopleNote(`Could not save: ${error.message}`, 'error');
     }
     if (chartPeopleUser === user) renderChartPeople();
   });
+}
+
+// What a save did, on the row's own line, which keeps its height whether it says something or
+// not. Good news fades after a while, as `note` does; a problem stays.
+let chartPeopleNoteTimer = 0;
+function chartPeopleNote(message, kind = 'ok') {
+  const holder = document.getElementById('charts-people-note');
+  if (!holder) return;
+  clearTimeout(chartPeopleNoteTimer);
+  const glyph = { ok: 'i-check-circle-fill', error: 'i-x-circle-fill', info: 'i-info-fill' }[kind] ?? 'i-info-fill';
+  holder.className = `charts-people-note inline-note ${kind}`;
+  holder.innerHTML = `${icon(glyph)}<span>${esc(message)}</span>`;
+  if (kind === 'error' && srAlert) {
+    srAlert.textContent = '';
+    setTimeout(() => { srAlert.textContent = message; }, 50);
+  }
+  if (kind === 'ok') chartPeopleNoteTimer = setTimeout(() => { holder.replaceChildren(); }, 8000);
+}
+
+// The countries people chose, read again after a save so the status line under the card is
+// current, without drawing the rest of the card again.
+async function refreshChartCountries() {
+  try {
+    const r = await api('/api/admin/charts', { cache: 'no-store' });
+    if (!r.ok || !chartsInfo) return;
+    chartsInfo.listenerCountries = (await r.json()).listenerCountries || [];
+    renderChartStatus();
+  } catch {
+    // The status line stays as it was until the card loads again.
+  }
 }
 
 document.getElementById('charts-person')?.addEventListener('change', event => {

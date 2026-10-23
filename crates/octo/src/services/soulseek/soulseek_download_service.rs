@@ -2355,8 +2355,9 @@ impl DownloadBackend for SoulseekDownloadService {
             // Arpeggi (~10s HTTP timeout) playing the song or canceling and falling back
             // to a local one. Every later stream request for this id reads the same pin.
             if let Some(hit) = &hit {
-                let pinned = self.id_registry.set_you_tube_id(external_id, &hit.video_id);
-                if pinned {
+                self.id_registry.set_you_tube_id(external_id, &hit.video_id);
+                // A video the song refuses gives it nothing.
+                if !routing.lock().refuses_video(&hit.video_id) {
                     self.id_registry
                         .remember_stream(external_id, &hit.video_id, &hit.stream);
                     // The video that plays says how long the song runs, for every later row.

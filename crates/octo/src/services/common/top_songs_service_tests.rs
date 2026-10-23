@@ -41,6 +41,7 @@ struct Charts {
     hints: Arc<ArtworkHints>,
     listeners: Arc<ChartCountryStore>,
     now: Arc<Mutex<DateTime<Utc>>>,
+    settings: Arc<SettingsStore>,
 }
 
 impl Charts {
@@ -91,7 +92,7 @@ impl Charts {
             Arc::new(ExternalIdRegistry::in_memory()),
             Arc::new(AppleMusicPages::with_base_url(&apple.uri(), Duration::ZERO)),
             Arc::clone(&hints),
-            settings,
+            Arc::clone(&settings),
         )
         .with_listeners(Arc::clone(&listeners))
         .with_clock(Clock::new(move || *clock_now.lock()));
@@ -103,6 +104,7 @@ impl Charts {
             hints,
             listeners,
             now,
+            settings,
         }
     }
 
@@ -712,4 +714,44 @@ async fn match_library_never_searches_more_than_four_at_once() {
     })
     .await;
     assert!(most.load(Ordering::SeqCst) <= LIBRARY_SEARCHES_AT_ONCE);
+}
+
+#[tokio::test]
+async fn another_countrys_failed_chart_never_stands_in_for_the_servers() {
+    let charts = Charts::new("gb", Some(DEEZER_CHART), None).await;
+    charts.apple_down().await;
+    let us = charts.service.chart_in(Some("us".into()), "34").await;
+    assert!(us.songs.is_empty(), "no stand-in for another country");
+
+    let mut moved = (*charts.settings.current()).clone();
+    moved.generated_playlists.chart_country = "us".into();
+    charts.settings.set(moved);
+    let home = charts.service.chart("34").await;
+
+    assert_eq!(home.source, "deezer", "the server's own chart has its stand-in");
+    assert_eq!(titles(&home), vec!["Dracula (with JENNIE)", "Choosin' Texas"]);
+}
+
+#[tokio::test]
+async fn another_countrys_chart_is_found_without_building_it_again() {
+    let charts = Charts::new("us", None, None).await;
+    charts.overall_for("br").await;
+    charts.service.chart_in(Some("br".into()), "34").await;
+    let asked = charts.apple_asked().await;
+
+    let again = charts.service.chart_in(Some("br".into()), "34").await;
+
+    assert_eq!(again.country.as_deref(), Some("br"));
+    assert_eq!(charts.apple_asked().await, asked);
+    assert!(
+        charts
+            .service
+            .peek_chart_in(Some("br".into()), "34")
+            .await
+            .is_some()
+    );
+    assert!(
+        charts.service.peek_chart("34").await.is_none(),
+        "not the server's"
+    );
 }

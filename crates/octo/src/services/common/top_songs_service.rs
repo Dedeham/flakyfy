@@ -133,6 +133,9 @@ struct Inner {
     hints: Arc<ArtworkHints>,
     settings: Arc<SettingsStore>,
     cache: MemoryCache<Arc<TopList>>,
+    /// Charts read for a country that is not the server's, kept apart so that browsing many
+    /// countries never pushes out the server's charts or the artists' lists.
+    others: MemoryCache<Arc<TopList>>,
     menus: MemoryCache<Arc<Vec<ChartGenre>>>,
     /// The countries (`auto` for the server's own) whose [`TopSongsService::learn_in`] started
     /// by a request is going.
@@ -175,6 +178,7 @@ impl TopSongsService {
                 hints,
                 settings,
                 cache: MemoryCache::new(512),
+                others: MemoryCache::new(256),
                 menus: MemoryCache::new(64),
                 learning: Mutex::new(HashSet::new()),
                 builds: InFlight::new(),
@@ -241,7 +245,7 @@ impl TopSongsService {
             None => format!("artist|name|{}", SongIdentity::key(&name)),
         };
         let this = self.clone();
-        self.cached(key, ARTIST_TTL, ARTIST_BUILD_TIMEOUT, async move {
+        self.cached(Kept::Server, key, ARTIST_TTL, ARTIST_BUILD_TIMEOUT, async move {
             let (list, whole) = this.build_artist(&name, known).await;
             (list, whole)
         })
@@ -349,8 +353,7 @@ impl TopSongsService {
 
     /// Whether Apple Music has this country (its country switcher's list).
     pub fn has_country(&self, code: &str) -> bool {
-        let code = code.trim().to_ascii_lowercase();
-        self.inner.apple.countries().contains(&code)
+        self.inner.apple.has_country(code)
     }
 
     /// Whether a chart of `country` may be read for this listener now. Their own country, their
@@ -358,11 +361,8 @@ impl TopSongsService {
     /// once an hour against [`OTHER_COUNTRIES_PER_HOUR`], so no one listener fills Apple's queue.
     pub fn may_read(&self, user: &str, country: &str, chart: &str) -> bool {
         let code = country.trim().to_ascii_lowercase();
-        let held = self
-            .inner
-            .cache
-            .get(&chart_key(Some(code.as_str()), chart))
-            .is_some();
+        let key = chart_key(Some(code.as_str()), chart);
+        let held = self.inner.cache.get(&key).is_some() || self.inner.others.get(&key).is_some();
         self.spend_other_country(user, &code, held)
     }
 
@@ -465,8 +465,9 @@ impl TopSongsService {
         }
         let this = self.clone();
         tokio::spawn(async move {
+            // Lets the country go even when the learning stops part way, so it can start again.
+            let _done = Learned(this.clone(), key);
             this.learn_in(country).await;
-            this.inner.learning.lock().remove(&key);
         });
     }
 
@@ -489,7 +490,8 @@ impl TopSongsService {
 
     /// The list a chart already holds for a country, without building it.
     pub async fn peek_chart_in(&self, country: Option<String>, id: &str) -> Option<Arc<TopList>> {
-        self.inner.cache.get(&chart_key(country.as_deref(), id))
+        let key = chart_key(country.as_deref(), id);
+        self.inner.cache.get(&key).or_else(|| self.inner.others.get(&key))
     }
 
     /// A chart for the server's country (see [`Self::chart_in`]).
@@ -516,7 +518,10 @@ impl TopSongsService {
         let key = chart_key(country.as_deref(), id);
         let this = self.clone();
         let id_owned = id.to_string();
-        self.cached(key, CHART_TTL, CHART_BUILD_TIMEOUT, async move {
+        // Another country's list is kept apart from the server's, so a failed read of it never
+        // stands in for the server's own (which has stand-ins) under the same key.
+        let place = if backup { Kept::Server } else { Kept::Other };
+        self.cached(place, key, CHART_TTL, CHART_BUILD_TIMEOUT, async move {
             let started = Instant::now();
             let built = this
                 .build_chart(&id_owned, chart_kind, country.clone(), backup)
@@ -697,19 +702,30 @@ impl TopSongsService {
 
     // ---- shared ----------------------------------------------------------------------------
 
-    async fn cached<F>(&self, key: String, ttl: Duration, timeout: Duration, build: F) -> Arc<TopList>
+    async fn cached<F>(
+        &self,
+        place: Kept,
+        key: String,
+        ttl: Duration,
+        timeout: Duration,
+        build: F,
+    ) -> Arc<TopList>
     where
         F: Future<Output = (TopList, bool)> + Send + 'static,
     {
-        if let Some(cached) = self.inner.cache.get(&key) {
+        if let Some(cached) = self.kept(place).get(&key) {
             return cached;
         }
         let this = self.clone();
         let cache_key = key.clone();
+        let building = match place {
+            Kept::Server => key.clone(),
+            Kept::Other => format!("other|{key}"),
+        };
         let (list, _) = self
             .inner
             .builds
-            .run(&key, async move {
+            .run(&building, async move {
                 let (list, whole) = match tokio::time::timeout(timeout, build).await {
                     Ok(built) => built,
                     Err(_) => {
@@ -724,11 +740,18 @@ impl TopSongsService {
                 } else {
                     SHORT_TTL
                 };
-                this.inner.cache.set(cache_key, list.clone(), 1, keep);
+                this.kept(place).set(cache_key, list.clone(), 1, keep);
                 (list, whole)
             })
             .await;
         list
+    }
+
+    fn kept(&self, place: Kept) -> &MemoryCache<Arc<TopList>> {
+        match place {
+            Kept::Server => &self.inner.cache,
+            Kept::Other => &self.inner.others,
+        }
     }
 
     /// Outside songs for the rows, registered so they play, open their album and are added like
@@ -854,6 +877,34 @@ impl TopSongsService {
             .filter(|(row, owned)| owned.is_some() || !skipped_takes::hides_song(&row.song, skip))
             .take(count)
             .unzip()
+    }
+}
+
+/// Which cache a list is kept in.
+#[derive(Debug, Clone, Copy)]
+enum Kept {
+    /// The server's charts and the artists' lists.
+    Server,
+    /// Charts of other countries.
+    Other,
+}
+
+/// Lets a country's learning go when dropped.
+struct Learned(TopSongsService, String);
+
+impl Drop for Learned {
+    fn drop(&mut self) {
+        self.0.inner.learning.lock().remove(&self.1);
+    }
+}
+
+#[cfg(test)]
+impl TopSongsService {
+    /// Sets a country's genre menu, as Apple's page would.
+    pub(crate) fn set_menu(&self, country: &str, menu: Vec<ChartGenre>) {
+        self.inner
+            .menus
+            .set(country.to_string(), Arc::new(menu), 1, MENU_TTL);
     }
 }
 

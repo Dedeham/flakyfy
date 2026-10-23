@@ -320,6 +320,17 @@ impl AppleMusicPages {
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 
+    /// Whether [`Self::countries`] holds this country, in any case, without copying the list.
+    pub fn has_country(&self, code: &str) -> bool {
+        let code = code.trim();
+        let read = self.countries.lock();
+        if read.is_empty() {
+            APPLE_COUNTRIES.iter().any(|c| c.eq_ignore_ascii_case(code))
+        } else {
+            read.iter().any(|c| c.eq_ignore_ascii_case(code))
+        }
+    }
+
     /// Apple Music's countries, from the last overall chart's country switcher, else the list
     /// as it was on 2026-10-07.
     pub fn countries(&self) -> Vec<String> {

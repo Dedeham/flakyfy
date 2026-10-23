@@ -5,7 +5,6 @@
 //! Octo sends SpotiFLAC a catalog link and a folder, and takes the file SpotiFLAC writes there.
 //! How SpotiFLAC gets the audio is up to the extensions the person installed in it.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -405,6 +404,7 @@ pub fn make_shared_folder(path: &str) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        use std::path::Path;
         let mut at = Path::new(path);
         // The folder and its parents up to the incoming folder.
         for _ in 0..3 {

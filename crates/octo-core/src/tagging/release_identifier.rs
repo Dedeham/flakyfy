@@ -317,9 +317,8 @@ impl ReleaseIdentifier {
                     let code_deadline = (Instant::now() + self.code_budget).min(deadline);
                     match bounded(ct, code_deadline, client.lookup_isrc(isrc)).await {
                         Ok(Some(doc)) => candidates.extend(CandidateSources::from_isrc_lookup(&doc)),
-                        Ok(None) => {
-                            notes.push("the music database knows no recording with the code".to_string())
-                        }
+                        Ok(None) => notes
+                            .push("the music database's search found no recording with the code".to_string()),
                         Err(Failure::Error(error)) => {
                             notes.push("the music database could not be asked the code lookup".to_string());
                             debug!("code lookup failed for '{}': {}", isrc, error);

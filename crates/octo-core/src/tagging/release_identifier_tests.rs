@@ -1113,7 +1113,7 @@ async fn a_code_lookup_that_could_not_be_asked_still_asks_by_name() {
 }
 
 #[tokio::test]
-async fn a_code_the_database_does_not_know_says_so() {
+async fn a_code_the_search_does_not_find_says_so() {
     let database = Arc::new(FakeDatabase::default());
     let identifier = identifier(AppSettings::default(), Some(database.clone()), None, file_of(93));
     let plan = identify(
@@ -1125,7 +1125,7 @@ async fn a_code_the_database_does_not_know_says_so() {
     assert!(
         plan.notes
             .iter()
-            .any(|note| note == "the music database knows no recording with the code"),
+            .any(|note| note == "the music database's search found no recording with the code"),
         "{:?}",
         plan.notes
     );

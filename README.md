@@ -628,12 +628,13 @@ hand. It acts only on the clearest case: the preview is a YouTube Music row with
 artist and length, from the same album as the file's album tag and not a live album, and at least
 42% of the file's bits differ from it (from 38% to 42% it is still asked about). It never acts on a
 song with no tags, an ISRC tag, a star or a rating, on anything the preview cannot settle, or on the
-re-check of Octo's own downloads; those stay questions. It needs what the replacing above needs
-(Wrong song on, dry run off, the keeper on the allowlist), a download source without YouTube
-(`DOWNLOAD_SOURCE` Soulseek or Lidarr, so the replacement is held to the song's YouTube preview like
-any download), and `LIBRARY_ACTIONS_KEEP_REPLACED` on, so the old file can always be put back from
-Recently removed. It counts toward the same `LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY` and
-the same stop after three failures. Review keeps a note of each replacement ("Octo replaced this: it
+re-check of Octo's own downloads; those stay questions. It needs what the replacing below needs
+(Wrong song on, dry run off, the keeper on the allowlist), Soulseek as the download source
+(`DOWNLOAD_SOURCE=Soulseek`, the one source whose replacement is held to the song's YouTube preview
+like any download), and `LIBRARY_ACTIONS_KEEP_REPLACED` on, so the old file can be put back from
+Recently removed for `LIBRARY_ACTIONS_TRASH_DAYS` days. It counts toward the same
+`LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY` and the same stop after three failures as the
+replacing below. Review keeps a note of each replacement ("Octo replaced this: it
 sounded nothing like its YouTube preview, 47% of its bits differ").
 
 `LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE` (off by default) lets the check replace a song that

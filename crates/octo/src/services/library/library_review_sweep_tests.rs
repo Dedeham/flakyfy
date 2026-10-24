@@ -1122,17 +1122,17 @@ fn decide_by_preview(change: impl FnOnce(&mut AppSettings)) -> AutoReplace {
 #[test]
 fn the_preview_replaces_only_with_a_source_it_checks_and_the_original_kept() {
     assert_eq!(decide_by_preview(|_| {}), AutoReplace::Replace);
-    for source in [DownloadSource::YouTube, DownloadSource::SoulseekThenYouTube] {
+    for source in [
+        DownloadSource::YouTube,
+        DownloadSource::SoulseekThenYouTube,
+        DownloadSource::Lidarr,
+    ] {
         assert_eq!(
             decide_by_preview(|s| s.subsonic.download_source = source),
             AutoReplace::Ask,
             "{source:?}"
         );
     }
-    assert_eq!(
-        decide_by_preview(|s| s.subsonic.download_source = DownloadSource::Lidarr),
-        AutoReplace::Replace
-    );
     assert_eq!(
         decide_by_preview(|s| s.library_actions.keep_replaced_originals = false),
         AutoReplace::Ask
@@ -2462,6 +2462,50 @@ async fn a_song_the_preview_says_is_another_is_replaced_and_leaves_a_note_when_s
         "{}",
         entries[0].reason
     );
+}
+
+#[tokio::test]
+async fn a_file_asked_about_while_the_sweep_looked_is_not_replaced() {
+    let sweep = Sweep::new();
+    let full = crate::services::library::navidrome_song_path_resolver::get_full_path(&sweep.tagged(
+        "a.flac",
+        "Massive Attack",
+        "Teardrop",
+        None,
+    ));
+    let queue = Arc::new(NoticeQueue::new());
+    let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+    let verifier = FakeVerifier::never_heard(Some(compared(Heard::Mismatch, 0.5)));
+    // Someone is asked about the file while the check is still listening to it.
+    let asking = queue.clone();
+    *verifier.answer.lock() = Box::new(move || {
+        asking.add_library_question(
+            "bob",
+            &full,
+            &Song {
+                artist: "Massive Attack".into(),
+                title: "Teardrop".into(),
+                ..Default::default()
+            },
+            "asked elsewhere",
+        );
+        unknown()
+    });
+    let worker = sweep.worker(
+        verifier,
+        Options {
+            queue: Some(queue.clone()),
+            settings: Some(replacing_by_preview(60)),
+            replacer: Some(replacer.clone()),
+            ..Default::default()
+        },
+    );
+
+    worker.tick().await;
+    worker.tick().await;
+
+    assert!(replacer.requests().is_empty());
+    assert_eq!(queue.for_user("bob", NoticeKind::Review).len(), 1);
 }
 
 /// One tagged song the preview `album` says is another song, with the preview's replacing on:

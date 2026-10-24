@@ -1506,8 +1506,12 @@ async fn a_peer_that_delivers_the_wrong_length_is_passed_over_for_the_next() {
 /// fpcalc is missing.
 fn made_sound(source: &str, format: &[&str]) -> Option<Vec<u8>> {
     let on_path = |program: &str| {
-        std::env::var_os("PATH")
-            .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+        std::env::var_os("PATH").is_some_and(|paths| {
+            std::env::split_paths(&paths).any(|dir| {
+                dir.join(format!("{program}{}", std::env::consts::EXE_SUFFIX))
+                    .is_file()
+            })
+        })
     };
     if !on_path("ffmpeg") || !on_path("fpcalc") {
         return None;

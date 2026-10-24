@@ -1024,8 +1024,12 @@ impl PreviewSource for OneVideo {
 /// 40 seconds of pink noise as FLAC, or None where ffmpeg or fpcalc is missing.
 fn noise_flac(dir: &Path, name: &str, color: &str) -> Option<PathBuf> {
     let on_path = |program: &str| {
-        std::env::var_os("PATH")
-            .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+        std::env::var_os("PATH").is_some_and(|paths| {
+            std::env::split_paths(&paths).any(|dir| {
+                dir.join(format!("{program}{}", std::env::consts::EXE_SUFFIX))
+                    .is_file()
+            })
+        })
     };
     if !on_path("ffmpeg") || !on_path("fpcalc") {
         return None;

@@ -1207,8 +1207,8 @@ impl LibraryReviewSweepWorker {
                     preview: facts,
                     ..
                 } => {
-                    // The re-check of Octo's own downloads only ever asks: each was already held to a
-                    // preview found at the catalog's length when it arrived.
+                    // The re-check of Octo's own downloads only ever asks: Octo picked each of them,
+                    // with the catalog's length and pinned video this check does not have.
                     if lane == Lane::Library {
                         witness = Some(PreviewWitness {
                             bit_error: comparison.bit_error,
@@ -1294,6 +1294,8 @@ impl LibraryReviewSweepWorker {
         self.lookup_failures.store(0, Ordering::SeqCst);
         self.unfingerprinted.store(0, Ordering::SeqCst);
         let replaced = outcome == Outcome::Ask
+            // A file someone was asked about while this check looked at it stays theirs to answer.
+            && !self.notices.reviewed_paths().contains(&path)
             && Self::decide(
                 &question,
                 &file,
@@ -1483,8 +1485,8 @@ impl LibraryReviewSweepWorker {
     /// run, the keeper on the allowlist, Wrong song on, the day's cap and breaker not reached,
     /// and either `ReviewSweepAutoReplace` on with AcoustID clearly hearing another song, or
     /// `ReviewSweepAutoReplacePreview` on with the song's YouTube preview clearly not matching (at least [`Self::PREVIEW_REPLACE_FROM`] of its bits differ).
-    /// The preview's replacing also needs `KeepReplacedOriginals` on and a download source without
-    /// YouTube. It also needs the preview to be a YouTube Music row from the file's own album.
+    /// The preview's replacing also needs `KeepReplacedOriginals` on and Soulseek as the download
+    /// source. It also needs the preview to be a YouTube Music row from the file's own album.
     pub fn decide(
         question: &VerificationResult,
         file: &SweptFile,
@@ -1505,8 +1507,8 @@ impl LibraryReviewSweepWorker {
             && today.failed < Self::MAX_FAILED_REPLACEMENTS_PER_DAY;
         let by_acoustid = actions.review_sweep_auto_replace
             && Self::clearly_another_song(question, file, &settings.soulseek);
-        // A replacement from YouTube is never held to the preview, and one whose original is not
-        // kept could not be put back.
+        // Only a Soulseek replacement is held to the preview (YouTube's and Lidarr's are not), and
+        // one whose original is not kept could not be put back.
         let by_preview = actions.review_sweep_auto_replace_preview
             && file.tagged
             && question.reason == InconclusiveReason::DiffersFromYouTube
@@ -1514,10 +1516,7 @@ impl LibraryReviewSweepWorker {
                 witness.bit_error >= Self::PREVIEW_REPLACE_FROM && witness.album_agrees
             })
             && actions.keep_replaced_originals
-            && !matches!(
-                settings.subsonic.download_source,
-                DownloadSource::YouTube | DownloadSource::SoulseekThenYouTube
-            );
+            && settings.subsonic.download_source == DownloadSource::Soulseek;
         if may && (by_acoustid || by_preview) {
             AutoReplace::Replace
         } else {

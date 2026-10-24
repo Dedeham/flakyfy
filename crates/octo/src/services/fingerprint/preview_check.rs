@@ -133,8 +133,8 @@ pub enum PreviewOutcome {
     /// Nothing to compare with: no video, or fpcalc could not read one of the two. The download is judged
     /// as it was before.
     Unavailable(String),
-    /// The song's video was found but the shim did not send it. Nothing is said about the file;
-    /// asking again later may get it.
+    /// The song's video was found but the shim did not send it, or what it sent could not be read.
+    /// Nothing is said about the file; asking again later may get it.
     NotSent(String),
     Compared {
         heard: Heard,
@@ -412,7 +412,10 @@ pub async fn check(
     )
     .await
     else {
-        return PreviewOutcome::NotSent(format!("the shim did not send preview {}", preview.video_id));
+        return PreviewOutcome::NotSent(format!(
+            "preview {} was not sent or could not be read",
+            preview.video_id
+        ));
     };
     if preview.seconds.is_none_or(|s| s <= 0) {
         preview.seconds = Some(heard.seconds.round() as i32);

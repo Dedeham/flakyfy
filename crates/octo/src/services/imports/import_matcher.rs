@@ -19,6 +19,7 @@ use super::import_keys::ImportKeys;
 use super::text_list::{Orientation, TextLine, choose_orientation};
 use crate::services::family::library_index::row_full_path;
 use crate::services::family::{LibraryScope, ScopeResolver};
+use crate::services::fingerprint::IsrcLookup;
 use crate::services::library::NavidromePlaylistApi;
 use crate::services::library::duplicate_scan_worker::is_lossless_file;
 use crate::services::library::library_ownership::LibraryOwnership;
@@ -418,6 +419,18 @@ impl LibraryIndex {
             }
         }
 
+        // A list row's own length, else the code's, when every recording the code names agrees
+        // on one; recordings of several lengths (an excerpt, an edit) settle none.
+        let code_lengths: Vec<i32> = recordings
+            .iter()
+            .filter_map(|recording| recording.seconds)
+            .collect();
+        let agreed = code_lengths.first().copied().filter(|first| {
+            code_lengths
+                .iter()
+                .all(|length| (length - first).abs() <= LibraryOwnership::DURATION_TOLERANCE_SECONDS)
+        });
+        let seconds = track.seconds.filter(|s| *s > 0).or(agreed);
         let mut by_recording: Vec<usize> = Vec::new();
         for recording in recordings {
             if let Some(found) = self.by_recording.get(&recording.id.trim().to_ascii_lowercase()) {
@@ -428,21 +441,25 @@ impl LibraryIndex {
         if let Some(hit) = best(
             self.rows_of(&by_recording)
                 .filter(|row| visible(row))
-                .filter(|row| !version_gap::other_version(&track.title, &row.title, Against::Title)),
+                .filter(|row| !version_gap::other_version(&track.title, &row.title, Against::Title))
+                .filter(|row| {
+                    // The list row's length, else that of the recording the file is tagged with.
+                    let named = recordings
+                        .iter()
+                        .find(|recording| {
+                            row.recording_id
+                                .as_deref()
+                                .is_some_and(|id| id.trim().eq_ignore_ascii_case(recording.id.trim()))
+                        })
+                        .and_then(|recording| recording.seconds);
+                    length_fits(track.seconds.filter(|s| *s > 0).or(named), row.duration)
+                }),
             track,
             None,
         ) {
             return Some(hit);
         }
 
-        let seconds = track.seconds.filter(|s| *s > 0).or_else(|| {
-            recordings
-                .iter()
-                .find(|recording| {
-                    !version_gap::other_version(&track.title, &recording.title, Against::Recording)
-                })
-                .and_then(|recording| recording.seconds)
-        });
         let wanted =
             SongRef::new(track.title.clone(), track.artist.clone()).with_seconds(seconds.map(f64::from));
         if let Some(same) = self
@@ -663,18 +680,20 @@ fn best<'a>(
     rows.into_iter().next().map(|(row, _)| row)
 }
 
-/// [`IsrcRecordings`] over MusicBrainz's code lookup, in the order it lists the recordings. A
-/// timeout or an unreadable answer is None, so the next match asks again.
+/// [`IsrcRecordings`] over MusicBrainz, asked on its background lane: the recordings that
+/// carry the code, in the order MusicBrainz lists them. A code MusicBrainz does not know is no
+/// recordings, kept; a timeout, an unreadable answer or a question MusicBrainz could not take
+/// is None, so the next match asks again.
 pub fn isrc_recordings_from(
     music_brainz: Arc<crate::services::fingerprint::music_brainz_client::MusicBrainzClient>,
 ) -> IsrcRecordings {
     Arc::new(move |isrc: String| {
         let music_brainz = music_brainz.clone();
         Box::pin(async move {
-            match music_brainz.lookup_isrc(&isrc).await.ok()? {
-                crate::services::fingerprint::IsrcLookup::Found(doc) => Some(isrc_recordings_of(&doc)),
-                crate::services::fingerprint::IsrcLookup::NotKnown => Some(Vec::new()),
-                crate::services::fingerprint::IsrcLookup::Unanswered => None,
+            match music_brainz.isrc_recordings_in_background(&isrc).await.ok()? {
+                IsrcLookup::Found(doc) => Some(isrc_recordings_of(&doc)),
+                IsrcLookup::NotKnown => Some(Vec::new()),
+                IsrcLookup::Unanswered => None,
             }
         })
     })

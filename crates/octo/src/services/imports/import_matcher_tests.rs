@@ -678,3 +678,88 @@ fn the_music_databases_isrc_answer_reads_into_recordings() {
         ]
     );
 }
+
+fn recorded_isrc(file: &str) -> serde_json::Value {
+    let text = std::fs::read_to_string(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/musicbrainz/").to_owned() + file,
+    )
+    .expect("a recorded MusicBrainz answer");
+    serde_json::from_str(&text).expect("JSON")
+}
+
+fn tagged_with(mut song: LibrarySongRow, recording: &str) -> LibrarySongRow {
+    song.recording_id = Some(recording.into());
+    song
+}
+
+fn answering(recordings: Vec<IsrcRecording>) -> IsrcRecordings {
+    Arc::new(move |_isrc: String| {
+        let recordings = recordings.clone();
+        Box::pin(async move { Some(recordings) })
+    })
+}
+
+#[tokio::test]
+async fn a_file_tagged_with_an_excerpt_the_isrc_also_names_is_not_the_song() {
+    // MusicBrainz lists Stayin' Alive's code on two 93 s recordings and one of 189 s.
+    let recordings = isrc_recordings_of(&recorded_isrc("isrc-search-GBA077700130.json"));
+    assert_eq!(recordings.len(), 3);
+    let excerpt = tagged_with(
+        r("excerpt", "Bee Gees", "Night Fever Medley", 93),
+        "8e13de06-8ada-4a68-91ad-171204ed59c2",
+    );
+    let matcher = matcher_over(vec![excerpt]).with_isrc_recordings(answering(recordings));
+    let mut rows = vec![with_isrc(
+        track("Bee Gees", "Stayin' Alive", Some(189), None),
+        "GBA077700130",
+    )];
+    assert!(matcher.match_tracks(&mut rows).await);
+    assert_eq!(rows[0].library_id, None);
+}
+
+#[tokio::test]
+async fn a_row_without_a_length_finds_the_file_tagged_with_a_take_the_code_names_in_any_order() {
+    let mut recordings = isrc_recordings_of(&recorded_isrc("isrc-search-GBA077700130.json"));
+    for _ in 0..2 {
+        let full = tagged_with(
+            r("full", "Bee Gees", "Stayin' Alive", 189),
+            "b9f84ada-627e-4565-b9f7-686b440ed279",
+        );
+        let matcher = matcher_over(vec![full]).with_isrc_recordings(answering(recordings.clone()));
+        let mut rows = vec![with_isrc(
+            track("Bee Gees", "Stayin' Alive", None, None),
+            "GBA077700130",
+        )];
+        assert!(matcher.match_tracks(&mut rows).await);
+        assert_eq!(rows[0].library_id.as_deref(), Some("full"), "{recordings:?}");
+        recordings.reverse();
+    }
+}
+
+#[tokio::test]
+async fn the_code_lookup_keeps_only_what_musicbrainz_really_said() {
+    use crate::services::fingerprint::music_brainz_client::MusicBrainzClient;
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::builder().start().await;
+    Mock::given(path("/ws/2/recording"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/ws/2/recording"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            recorded_isrc("isrc-search-GBA077700130.json").to_string(),
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+    let base = url::Url::parse(&format!("{}/ws/2/", server.uri())).expect("parses");
+    let ask = isrc_recordings_from(Arc::new(MusicBrainzClient::with_base_url(base)));
+
+    // Busy: nothing kept, so the next match asks again.
+    assert_eq!(ask("GBA077700130".into()).await, None);
+    let recordings = ask("GBA077700130".into()).await.expect("answered");
+    assert_eq!(recordings.len(), 3);
+}

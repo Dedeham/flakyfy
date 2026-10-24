@@ -59,6 +59,9 @@ pub struct ImportService {
     gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// People whose lists need matching again: the trickle brought them something.
     rematch: Mutex<Vec<String>>,
+    /// People whose lists hold ISRCs the music database has not answered yet: asked about in
+    /// the loop's pass.
+    learning: Mutex<Vec<String>>,
     /// A song a streaming list misses landed: the next open or pass reads the library again.
     reread_library: AtomicBool,
     /// Library songs as Navidrome described them to each listener for a streaming list, by
@@ -130,6 +133,7 @@ impl ImportService {
             tracker: parts.tracker,
             gates: Mutex::new(HashMap::new()),
             rematch: Mutex::new(Vec::new()),
+            learning: Mutex::new(Vec::new()),
             reread_library: AtomicBool::new(false),
             songs: Mutex::new(HashMap::new()),
             dirty_playlists: Mutex::new(Vec::new()),
@@ -141,25 +145,6 @@ impl ImportService {
         service.trickle.on_finished(Arc::new(move |job| {
             if let Some(service) = weak.upgrade() {
                 service.on_fetched(job);
-            }
-        }));
-        // What the music database says about an ISRC can show a list song is already in the
-        // library: everyone with a list that names ISRCs is matched again on the next pass.
-        let weak = Arc::downgrade(&service);
-        service.matcher.on_learned(Arc::new(move || {
-            let Some(service) = weak.upgrade() else {
-                return;
-            };
-            let mut rematch = service.rematch.lock();
-            for list in service.store.all() {
-                if list
-                    .tracks
-                    .iter()
-                    .any(|track| track.isrc.as_deref().is_some_and(|isrc| !isrc.is_empty()))
-                    && !rematch.iter().any(|user| eq_ignore_case(user, &list.owner))
-                {
-                    rematch.push(list.owner.clone());
-                }
             }
         }));
         // A heart can bring a song a streaming list is missing. Once Navidrome shows it, the
@@ -742,10 +727,18 @@ impl ImportService {
         }
         self.store.update(user, id, |l| l.get_missing = on);
         if on {
-            let queued = self.queue.add(
-                user,
-                list.tracks.iter().filter(|track| track.library_id.is_none()),
-            );
+            let queued = self
+                .queue
+                .add(user, list.tracks.iter().filter(|track| self.fetchable(track)));
+            let waiting = self.waiting_for_isrcs(&list.tracks);
+            if waiting > 0 {
+                self.learn_later(user);
+                return ImportActionResult::ok(format!(
+                    "Queued {queued} {}. Octo is still checking {waiting} more against the music database and fetches them if you do not have them.",
+                    if queued == 1 { "song" } else { "songs" },
+                ))
+                .with_count(queued);
+            }
             return if queued == 0 {
                 ImportActionResult::ok(
                     "Nothing new to fetch: every song is in your library or already queued.",
@@ -798,7 +791,7 @@ impl ImportService {
         let songs: Vec<&ImportTrack> = list
             .tracks
             .iter()
-            .filter(|track| track.library_id.is_none() && keys.contains(&track.key))
+            .filter(|track| self.fetchable(track) && keys.contains(&track.key))
             .collect();
         let chosen: Vec<&str> = songs.iter().map(|song| song.key.as_str()).collect();
         self.queue.retry(user, &chosen);
@@ -912,18 +905,49 @@ impl ImportService {
             }
             list.matched_utc = Some(now);
         });
+        if self.waiting_for_isrcs(&tracks) > 0 {
+            self.learn_later(user);
+        }
         for list in self.store.lists_of(user) {
             if list.get_missing {
-                self.queue.add(
-                    user,
-                    list.tracks.iter().filter(|track| track.library_id.is_none()),
-                );
+                self.queue
+                    .add(user, list.tracks.iter().filter(|track| self.fetchable(track)));
             }
             if list.keep_playlist {
                 self.mark_dirty(format!("{user}\n{}", list.id));
             }
         }
         self.write_dirty_playlists().await;
+    }
+
+    /// Whether a song may be fetched: missing, and no ISRC of it still waits for the music
+    /// database, whose answer can show the library has it.
+    fn fetchable(&self, track: &ImportTrack) -> bool {
+        track.library_id.is_none() && !self.matcher.isrc_pending(track)
+    }
+
+    /// How many missing songs of these wait for the music database.
+    fn waiting_for_isrcs<'a>(&self, tracks: impl IntoIterator<Item = &'a ImportTrack>) -> usize {
+        tracks
+            .into_iter()
+            .filter(|track| track.library_id.is_none() && self.matcher.isrc_pending(track))
+            .count()
+    }
+
+    /// Asks about this person's waiting ISRCs in the loop's next pass.
+    fn learn_later(&self, user: &str) {
+        let mut learning = self.learning.lock();
+        if !learning.iter().any(|u| eq_ignore_case(u, user)) {
+            learning.push(user.to_string());
+        }
+    }
+
+    /// Matches this person again in the loop's next pass.
+    fn rematch_later(&self, user: &str) {
+        let mut rematch = self.rematch.lock();
+        if !rematch.iter().any(|u| eq_ignore_case(u, user)) {
+            rematch.push(user.to_string());
+        }
     }
 
     fn mark_dirty(&self, entry: String) {
@@ -1042,6 +1066,32 @@ impl ImportService {
     pub async fn loop_once(self: &Arc<Self>) -> anyhow::Result<()> {
         if self.reread_library.swap(false, Ordering::Relaxed) {
             self.matcher.forget();
+        }
+        // Each person whose songs wait for the music database gets one round of asking a pass,
+        // outside their import gate. An answer that names recordings matches them again; one
+        // that names none lets the songs it held back be fetched.
+        let waiting: Vec<String> = std::mem::take(&mut *self.learning.lock());
+        for user in waiting {
+            let tracks: Vec<ImportTrack> = self
+                .store
+                .lists_of(&user)
+                .into_iter()
+                .flat_map(|list| list.tracks)
+                .collect();
+            let learned = self.matcher.learn_isrcs(&tracks).await;
+            if learned.named > 0 {
+                self.rematch_later(&user);
+            } else if learned.settled > 0 {
+                for list in self.store.lists_of(&user) {
+                    if list.get_missing {
+                        self.queue
+                            .add(&user, list.tracks.iter().filter(|track| self.fetchable(track)));
+                    }
+                }
+            }
+            if self.waiting_for_isrcs(&tracks) > 0 {
+                self.learn_later(&user);
+            }
         }
         let users: Vec<String> = std::mem::take(&mut *self.rematch.lock());
         for user in users {

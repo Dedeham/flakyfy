@@ -647,13 +647,11 @@ async fn a_file_tagged_with_the_recording_an_isrc_names_is_found_without_an_isrc
         track("G-Eazy", "Let's Get Lost", None, Some("Somewhere Else")),
         "USRC11400725",
     )];
-    // The first match answers with what is known and learns behind it.
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
+    matcher.learn_isrcs(&rows).await;
     assert!(matcher.match_tracks(&mut rows).await);
     assert_eq!(rows[0].library_id.as_deref(), Some("tagged"));
-    // Asked once; the answer is kept for the next match.
-    assert!(matcher.match_tracks(&mut rows).await);
+    // Asked once; the answer is kept.
+    matcher.learn_isrcs(&rows).await;
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
 
@@ -716,8 +714,7 @@ async fn a_file_tagged_with_an_excerpt_the_isrc_also_names_is_not_the_song() {
         track("Bee Gees", "Stayin' Alive", Some(189), None),
         "GBA077700130",
     )];
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
+    matcher.learn_isrcs(&rows).await;
     assert!(matcher.match_tracks(&mut rows).await);
     assert_eq!(rows[0].library_id, None);
 }
@@ -727,7 +724,7 @@ async fn a_row_without_a_length_finds_the_file_tagged_with_a_take_the_code_names
     let mut recordings = isrc_recordings_of(&recorded_isrc("isrc-search-GBA077700130.json"));
     for _ in 0..2 {
         let full = tagged_with(
-            r("full", "Bee Gees", "Stayin' Alive", 189),
+            r("full", "Bee Gees", "Saturday Night Fever Part 2", 189),
             "b9f84ada-627e-4565-b9f7-686b440ed279",
         );
         let matcher = matcher_over(vec![full]).with_isrc_recordings(answering(recordings.clone()));
@@ -735,8 +732,7 @@ async fn a_row_without_a_length_finds_the_file_tagged_with_a_take_the_code_names
             track("Bee Gees", "Stayin' Alive", None, None),
             "GBA077700130",
         )];
-        assert!(matcher.match_tracks(&mut rows).await);
-        matcher.finish_learning().await;
+        matcher.learn_isrcs(&rows).await;
         assert!(matcher.match_tracks(&mut rows).await);
         assert_eq!(rows[0].library_id.as_deref(), Some("full"), "{recordings:?}");
         recordings.reverse();
@@ -750,14 +746,14 @@ async fn the_code_lookup_keeps_only_what_musicbrainz_really_said() {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let server = MockServer::builder().start().await;
-    Mock::given(path("/ws/2/recording"))
+    Mock::given(path("/ws/2/isrc/GBA077700130"))
         .respond_with(ResponseTemplate::new(503))
         .up_to_n_times(1)
         .mount(&server)
         .await;
-    Mock::given(path("/ws/2/recording"))
+    Mock::given(path("/ws/2/isrc/GBA077700130"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
-            recorded_isrc("isrc-search-GBA077700130.json").to_string(),
+            recorded_isrc("isrc-lookup-GBA077700130.json").to_string(),
             "application/json",
         ))
         .mount(&server)
@@ -772,35 +768,52 @@ async fn the_code_lookup_keeps_only_what_musicbrainz_really_said() {
 }
 
 #[tokio::test]
-async fn a_match_never_waits_for_the_music_database() {
+async fn a_match_never_asks_the_music_database() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counted = asked.clone();
     let matcher = matcher_over(vec![r("teardrop", "Massive Attack", "Teardrop", 331)]).with_isrc_recordings(
-        Arc::new(|_isrc: String| Box::pin(futures::future::pending::<Option<Vec<IsrcRecording>>>())),
+        Arc::new(move |_isrc: String| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Some(Vec::new()) })
+        }),
     );
     let mut rows = vec![with_isrc(
         track("Massive Attack", "Teardrop", Some(331), None),
         "GBAAA9800001",
     )];
-    let matched =
-        tokio::time::timeout(std::time::Duration::from_secs(1), matcher.match_tracks(&mut rows)).await;
-    assert_eq!(matched, Ok(true));
+    assert!(matcher.match_tracks(&mut rows).await);
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
     assert_eq!(rows[0].library_id.as_deref(), Some("teardrop"));
 }
 
 #[tokio::test]
-async fn what_a_learner_learns_is_told() {
-    let told = Arc::new(AtomicUsize::new(0));
-    let heard = told.clone();
-    let matcher = matcher_over(vec![]).with_isrc_recordings(answering(Vec::new()));
-    matcher.on_learned(Arc::new(move || {
-        heard.fetch_add(1, Ordering::SeqCst);
+async fn a_learning_round_says_what_it_settled() {
+    let matcher = matcher_over(vec![]).with_isrc_recordings(Arc::new(|isrc: String| {
+        Box::pin(async move {
+            Some(if isrc == "GBAAA0000002" {
+                vec![IsrcRecording {
+                    id: "rec-2".into(),
+                    title: "Second".into(),
+                    seconds: Some(200),
+                }]
+            } else {
+                Vec::new()
+            })
+        })
     }));
-    let mut rows = vec![with_isrc(
-        track("Bee Gees", "Stayin' Alive", Some(189), None),
-        "GBA077700130",
-    )];
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
-    assert_eq!(told.load(Ordering::SeqCst), 1);
+    let rows = vec![
+        with_isrc(track("A", "First", Some(200), None), "GBAAA0000001"),
+        with_isrc(track("B", "Second", Some(200), None), "GBAAA0000002"),
+    ];
+    assert_eq!(
+        matcher.learn_isrcs(&rows).await,
+        IsrcLearning { settled: 2, named: 1 }
+    );
+    assert_eq!(
+        matcher.learn_isrcs(&rows).await,
+        IsrcLearning::default(),
+        "nothing is asked twice"
+    );
 }
 
 #[tokio::test]
@@ -817,26 +830,23 @@ async fn an_isrc_that_came_back_with_nothing_is_asked_after_the_others() {
             }
         })
     }));
-    let mut rows = vec![
+    let rows = vec![
         with_isrc(track("A", "First", Some(200), None), "GBAAA0000001"),
         with_isrc(track("B", "Second", Some(200), None), "GBAAA0000002"),
     ];
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
+    matcher.learn_isrcs(&rows).await;
+    matcher.learn_isrcs(&rows).await;
     assert_eq!(*asked.lock(), ["GBAAA0000001", "GBAAA0000002", "GBAAA0000001"]);
 }
 
 #[tokio::test]
 async fn a_refused_code_question_is_kept_and_the_next_isrc_is_still_asked() {
     use crate::services::fingerprint::music_brainz_client::MusicBrainzClient;
-    use wiremock::matchers::{path, query_param};
+    use wiremock::matchers::path;
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let server = MockServer::builder().start().await;
-    Mock::given(path("/ws/2/recording"))
-        .and(query_param("query", "isrc:GBAAA0000001"))
+    Mock::given(path("/ws/2/isrc/GBAAA0000001"))
         .respond_with(
             ResponseTemplate::new(400).set_body_raw(
                 std::fs::read_to_string(concat!(
@@ -849,9 +859,9 @@ async fn a_refused_code_question_is_kept_and_the_next_isrc_is_still_asked() {
         )
         .mount(&server)
         .await;
-    Mock::given(path("/ws/2/recording"))
+    Mock::given(path("/ws/2/isrc/GBA077700130"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
-            recorded_isrc("isrc-search-GBA077700130.json").to_string(),
+            recorded_isrc("isrc-lookup-GBA077700130.json").to_string(),
             "application/json",
         ))
         .mount(&server)
@@ -861,15 +871,14 @@ async fn a_refused_code_question_is_kept_and_the_next_isrc_is_still_asked() {
     assert_eq!(ask("GBAAA0000001".into()).await, Some(Vec::new()));
 
     let matcher = matcher_over(vec![]).with_isrc_recordings(ask);
-    let mut rows = vec![
+    let rows = vec![
         with_isrc(track("A", "First", Some(200), None), "GBAAA0000001"),
         with_isrc(
             track("Bee Gees", "Stayin' Alive", Some(189), None),
             "GBA077700130",
         ),
     ];
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
+    matcher.learn_isrcs(&rows).await;
     let asked: Vec<String> = server
         .received_requests()
         .await
@@ -878,7 +887,7 @@ async fn a_refused_code_question_is_kept_and_the_next_isrc_is_still_asked() {
         .map(|r| r.url.to_string())
         .collect();
     assert!(
-        asked.iter().any(|url| url.contains("isrc:GBA077700130")),
+        asked.iter().any(|url| url.contains("/ws/2/isrc/GBA077700130")),
         "{asked:?}"
     );
 }
@@ -900,16 +909,14 @@ async fn a_row_without_a_length_borrows_one_only_when_the_codes_takes_agree() {
     let matcher =
         matcher_over(vec![r("short", "Band", "Song", 93)]).with_isrc_recordings(answering(agreeing.clone()));
     let mut rows = vec![with_isrc(track("Band", "Song", None, None), "GBAAA0000003")];
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
+    matcher.learn_isrcs(&rows).await;
     assert!(matcher.match_tracks(&mut rows).await);
     assert_eq!(rows[0].library_id, None, "a 93 s copy is not a 189 s song");
 
     let matcher =
         matcher_over(vec![r("full", "Band", "Song", 189)]).with_isrc_recordings(answering(agreeing));
     let mut rows = vec![with_isrc(track("Band", "Song", None, None), "GBAAA0000003")];
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
+    matcher.learn_isrcs(&rows).await;
     assert!(matcher.match_tracks(&mut rows).await);
     assert_eq!(rows[0].library_id.as_deref(), Some("full"));
 
@@ -928,12 +935,40 @@ async fn a_row_without_a_length_borrows_one_only_when_the_codes_takes_agree() {
     let matcher =
         matcher_over(vec![r("short", "Band", "Song", 93)]).with_isrc_recordings(answering(disagreeing));
     let mut rows = vec![with_isrc(track("Band", "Song", None, None), "GBAAA0000003")];
-    assert!(matcher.match_tracks(&mut rows).await);
-    matcher.finish_learning().await;
+    matcher.learn_isrcs(&rows).await;
     assert!(matcher.match_tracks(&mut rows).await);
     assert_eq!(
         rows[0].library_id.as_deref(),
         Some("short"),
         "no agreed length: matched by name"
+    );
+}
+
+#[test]
+fn the_waiting_isrcs_of_a_long_list_are_read_quickly() {
+    let matcher = matcher_over(vec![]).with_isrc_recordings(answering(Vec::new()));
+    let rows: Vec<ImportTrack> = (0..50_000)
+        .map(|i| {
+            with_isrc(
+                track("A", &format!("Song {i}"), Some(200), None),
+                &format!("GBAAA{i:07}"),
+            )
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let wanted = matcher.pending_isrcs(None, &rows, ImportMatcher::ISRC_ASKS_PER_MATCH);
+    assert_eq!(wanted.len(), ImportMatcher::ISRC_ASKS_PER_MATCH);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    // Every song still waits, and that is read quickly too.
+    let started = std::time::Instant::now();
+    assert!(rows.iter().all(|row| matcher.isrc_pending(row)));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
     );
 }

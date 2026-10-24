@@ -14,7 +14,7 @@ use octo_core::tagging::{ReleaseDetails, ReleaseLookup};
 use parking_lot::Mutex;
 use serde_json::Value;
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, warn};
 use url::Url;
 
 use crate::services::framework::http::{client_builder, parse_json, resolve};
@@ -38,6 +38,43 @@ enum Cached {
     Json(Value),
     Text(String),
 }
+
+/// How MusicBrainz answered one question.
+#[derive(Debug)]
+enum Asked {
+    /// A 200 with a readable body.
+    Answer(Value),
+    /// A 404, or a 400 saying the id is not a MusicBrainz id: MusicBrainz knows nothing by it.
+    NotKnown,
+    /// Any other 4xx but 429: MusicBrainz does not take the question as it was asked.
+    Refused,
+    /// A 429, a 5xx, a body that could not be read, or no answer at all: worth asking again.
+    Busy,
+}
+
+impl Asked {
+    /// The answer, or None for every way of having none.
+    fn found(self) -> Option<Value> {
+        match self {
+            Asked::Answer(doc) => Some(doc),
+            Asked::NotKnown | Asked::Refused | Asked::Busy => None,
+        }
+    }
+}
+
+/// What MusicBrainz said about one code.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IsrcLookup {
+    /// The recordings that carry the code, as `{"isrc": <code>, "recordings": [...]}`.
+    Found(Value),
+    /// MusicBrainz knows no recording with the code.
+    NotKnown,
+    /// MusicBrainz could not be asked: busy, unreachable, or it refused the question.
+    Unanswered,
+}
+
+/// The releases kept per recording of a code: the candidate reader takes no more.
+const MOST_RELEASES_PER_RECORDING: usize = 25;
 
 /// One question for MusicBrainz, asked only when a person keeps a track AcoustID had never heard
 /// of: which recording is this? That is the MusicBrainz id a confirmed fingerprint needs before
@@ -202,23 +239,66 @@ impl MusicBrainzClient {
         Ok(Some(doc))
     }
 
-    /// The recordings that carry one code, with their releases.
-    pub async fn lookup_isrc(&self, isrc: &str) -> Result<Option<Value>, MusicBrainzError> {
+    /// The recordings that carry one code, each with its releases, their groups and the code's
+    /// track on them: a search by code, since the code lookup itself leaves the releases out and
+    /// refuses their groups. A recording the search lists without the code, and a DJ-mix segment,
+    /// are left out. Only a found answer is remembered.
+    pub async fn lookup_isrc(&self, isrc: &str) -> Result<IsrcLookup, MusicBrainzError> {
+        self.lookup_isrc_on(isrc, false).await
+    }
+
+    /// [`Self::lookup_isrc`] on the background lane, for work nobody waits on. The code lookup
+    /// is asked as well, and its recordings join the search's, so a recording the search does
+    /// not list yet is not missed. Remembered apart from [`Self::lookup_isrc`]'s answers, whose
+    /// recordings all carry their releases.
+    pub async fn isrc_recordings_in_background(&self, isrc: &str) -> Result<IsrcLookup, MusicBrainzError> {
+        self.lookup_isrc_on(isrc, true).await
+    }
+
+    async fn lookup_isrc_on(&self, isrc: &str, background: bool) -> Result<IsrcLookup, MusicBrainzError> {
         let Some(code) = SongIdentity::normalize_isrc(isrc) else {
-            return Ok(None);
+            return Ok(IsrcLookup::NotKnown);
         };
-        let key = format!("isrc|{code}");
+        let key = if background {
+            format!("isrc-all|{code}")
+        } else {
+            format!("isrc|{code}")
+        };
         if let Some(Cached::Json(cached)) = self.cache.get(&key) {
-            return Ok(Some(cached));
+            return Ok(IsrcLookup::Found(cached));
         }
 
-        let url = format!("isrc/{code}?inc=artist-credits+releases+release-groups+media&fmt=json");
-        let Some(doc) = self.get(&url, "code lookup").await? else {
-            return Ok(None);
+        let search = format!("recording?query=isrc:{code}&limit=100&fmt=json");
+        let mut recordings = match self.ask_on(&search, "code search", background).await? {
+            Asked::Answer(doc) => recordings_of(&doc, |recording| carries(recording, &code)),
+            Asked::NotKnown => Vec::new(),
+            Asked::Refused | Asked::Busy => return Ok(IsrcLookup::Unanswered),
         };
+        if background {
+            let lookup = format!("isrc/{code}?inc=artist-credits&fmt=json");
+            match self.ask_on(&lookup, "code lookup", true).await? {
+                Asked::Answer(doc) => {
+                    for recording in recordings_of(&doc, |_| true) {
+                        let id = recording.get("id").and_then(Value::as_str);
+                        if !recordings
+                            .iter()
+                            .any(|known| known.get("id").and_then(Value::as_str) == id)
+                        {
+                            recordings.push(recording);
+                        }
+                    }
+                }
+                Asked::NotKnown => {}
+                Asked::Refused | Asked::Busy => return Ok(IsrcLookup::Unanswered),
+            }
+        }
+        if recordings.is_empty() {
+            return Ok(IsrcLookup::NotKnown);
+        }
+        let doc = serde_json::json!({ "isrc": code, "recordings": recordings });
         self.cache
             .set(key, Cached::Json(doc.clone()), 1, Self::SEARCH_TTL);
-        Ok(Some(doc))
+        Ok(IsrcLookup::Found(doc))
     }
 
     /// The one recording that is this song, this version, by this artist, at this length.
@@ -421,6 +501,25 @@ impl MusicBrainzClient {
     /// failure, which every caller reads as "MusicBrainz had nothing to say"; the timeout is
     /// the one error that reaches the caller.
     async fn get(&self, relative: &str, what: &str) -> Result<Option<Value>, MusicBrainzError> {
+        Ok(self.ask(relative, what).await?.found())
+    }
+
+    /// One request on the background lane, for work nobody is waiting on (see [`Self::ask_background`]).
+    async fn get_background(&self, relative: &str, what: &str) -> Result<Option<Value>, MusicBrainzError> {
+        Ok(self.ask_background(relative, what).await?.found())
+    }
+
+    /// [`Self::ask`] or [`Self::ask_background`].
+    async fn ask_on(&self, relative: &str, what: &str, background: bool) -> Result<Asked, MusicBrainzError> {
+        if background {
+            self.ask_background(relative, what).await
+        } else {
+            self.ask(relative, what).await
+        }
+    }
+
+    /// [`Self::get`], telling apart how MusicBrainz answered.
+    async fn ask(&self, relative: &str, what: &str) -> Result<Asked, MusicBrainzError> {
         let mut last_call = self.gate.lock().await;
         if let Some(last) = *last_call {
             let due = last.at + Self::MINIMUM_GAP;
@@ -440,7 +539,7 @@ impl MusicBrainzClient {
     /// [`Self::MINIMUM_GAP`] ago, it steps back for [`Self::BACKGROUND_BACKOFF`] and tries
     /// again, so a download being verified goes first. It takes its turn and lets go of the gate
     /// before it sends, so a caller arriving meanwhile waits one gap at most.
-    async fn get_background(&self, relative: &str, what: &str) -> Result<Option<Value>, MusicBrainzError> {
+    async fn ask_background(&self, relative: &str, what: &str) -> Result<Asked, MusicBrainzError> {
         loop {
             let wait = match self.gate.try_lock() {
                 Err(_) => self.background_backoff,
@@ -469,19 +568,36 @@ impl MusicBrainzClient {
         self.send(relative, what).await
     }
 
-    /// The request itself, once its turn has come.
-    async fn send(&self, relative: &str, what: &str) -> Result<Option<Value>, MusicBrainzError> {
+    /// The request itself, once its turn has come, and how MusicBrainz answered it. A refused
+    /// question is one MusicBrainz does not take as Octo asked it, so it is logged as a warning
+    /// naming the question.
+    async fn send(&self, relative: &str, what: &str) -> Result<Asked, MusicBrainzError> {
         let attempt = async {
             let url = resolve(&self.base, relative)?;
             let response = self.client.get(url).send().await?;
             let answer = HttpAnswer::read(response).await?;
-            if !answer.is_success() {
-                return anyhow::Ok(None);
+            if answer.is_success() {
+                return anyhow::Ok(Asked::Answer(parse_json(&answer.body)?));
             }
-            Ok(Some(parse_json(&answer.body)?))
+            let status = answer.status.as_u16();
+            let said: String = String::from_utf8_lossy(&answer.body).chars().take(300).collect();
+            Ok(match status {
+                404 => Asked::NotKnown,
+                // An id that is not a MusicBrainz id, such as a junk tag: nothing is known by it.
+                400 if said.contains("Invalid mbid") => Asked::NotKnown,
+                429 => Asked::Busy,
+                400..=499 => {
+                    warn!("MusicBrainz refused the {what} question {relative} ({status}): {said}");
+                    Asked::Refused
+                }
+                _ => {
+                    debug!("musicbrainz {what} answered {status}");
+                    Asked::Busy
+                }
+            })
         };
         match attempt.await {
-            Ok(doc) => Ok(doc),
+            Ok(asked) => Ok(asked),
             Err(e)
                 if e.downcast_ref::<reqwest::Error>()
                     .is_some_and(reqwest::Error::is_timeout) =>
@@ -490,10 +606,60 @@ impl MusicBrainzClient {
             }
             Err(e) => {
                 debug!("musicbrainz {what} failed: {e}");
-                Ok(None)
+                Ok(Asked::Busy)
             }
         }
     }
+}
+
+/// The recordings of an answer that `keep` lets through, without DJ-mix segments, each with at
+/// most [`MOST_RELEASES_PER_RECORDING`] releases.
+fn recordings_of(doc: &Value, keep: impl Fn(&Value) -> bool) -> Vec<Value> {
+    doc.get("recordings")
+        .and_then(Value::as_array)
+        .map(|recordings| {
+            recordings
+                .iter()
+                .filter(|recording| keep(recording) && !is_dj_mix_segment(recording))
+                .map(|recording| {
+                    let mut recording = recording.clone();
+                    if let Some(releases) = recording.get_mut("releases").and_then(Value::as_array_mut) {
+                        releases.truncate(MOST_RELEASES_PER_RECORDING);
+                    }
+                    recording
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether one recording carries the code.
+fn carries(recording: &Value, code: &str) -> bool {
+    recording
+        .get("isrcs")
+        .and_then(Value::as_array)
+        .is_some_and(|codes| {
+            codes
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|carried| carried.eq_ignore_ascii_case(code))
+        })
+}
+
+/// A recording MusicBrainz keeps as one segment of a DJ mix ("part of … DJ-mix", however the
+/// hyphen or the space is written): the song inside someone's mix, never the song itself.
+fn is_dj_mix_segment(recording: &Value) -> bool {
+    recording
+        .get("disambiguation")
+        .and_then(Value::as_str)
+        .is_some_and(|said| {
+            let squeezed: String = said
+                .to_lowercase()
+                .chars()
+                .filter(|c| !c.is_whitespace() && *c != '-' && !('\u{2010}'..='\u{2015}').contains(c))
+                .collect();
+            squeezed.contains("djmix")
+        })
 }
 
 /// When the last request went out, and whether the background lane sent it.
@@ -523,7 +689,11 @@ impl ReleaseLookup for MusicBrainzClient {
     }
 
     async fn lookup_isrc(&self, isrc: &str) -> anyhow::Result<Option<Value>> {
-        Ok(MusicBrainzClient::lookup_isrc(self, isrc).await?)
+        match MusicBrainzClient::lookup_isrc(self, isrc).await? {
+            IsrcLookup::Found(doc) => Ok(Some(doc)),
+            IsrcLookup::NotKnown => Ok(None),
+            IsrcLookup::Unanswered => anyhow::bail!("MusicBrainz could not be asked about the code"),
+        }
     }
 }
 

@@ -671,8 +671,11 @@ pub fn isrc_recordings_from(
     Arc::new(move |isrc: String| {
         let music_brainz = music_brainz.clone();
         Box::pin(async move {
-            let doc = music_brainz.lookup_isrc(&isrc).await.ok()?;
-            Some(doc.map(|doc| isrc_recordings_of(&doc)).unwrap_or_default())
+            match music_brainz.lookup_isrc(&isrc).await.ok()? {
+                crate::services::fingerprint::IsrcLookup::Found(doc) => Some(isrc_recordings_of(&doc)),
+                crate::services::fingerprint::IsrcLookup::NotKnown => Some(Vec::new()),
+                crate::services::fingerprint::IsrcLookup::Unanswered => None,
+            }
         })
     })
 }

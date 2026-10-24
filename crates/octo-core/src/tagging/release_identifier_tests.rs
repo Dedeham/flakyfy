@@ -33,6 +33,7 @@ struct FakeDatabase {
     delay: Duration,
     fail: bool,
     isrc_error: Option<&'static str>,
+    isrc_delay: Duration,
     calls: Mutex<Vec<String>>,
 }
 
@@ -76,6 +77,11 @@ impl ReleaseLookup for FakeDatabase {
     }
 
     async fn lookup_isrc(&self, isrc: &str) -> anyhow::Result<Option<Value>> {
+        if !self.isrc_delay.is_zero() {
+            self.calls.lock().push(format!("isrc:{isrc}"));
+            tokio::time::sleep(self.isrc_delay).await;
+            return Ok(self.isrc.clone());
+        }
         if let Some(error) = self.isrc_error {
             self.calls.lock().push(format!("isrc:{isrc}"));
             anyhow::bail!(error);
@@ -372,7 +378,13 @@ async fn a_slow_database_costs_its_candidates_and_says_so() {
 
     let plan = identify(&identifier, &song).await.expect("identified");
 
-    assert_eq!(plan.notes, ["the music database did not answer in 15 s"]);
+    assert_eq!(
+        plan.notes,
+        [
+            "the music database did not answer the code lookup in 8 s",
+            "the music database did not answer in 15 s"
+        ]
+    );
     assert_eq!(plan.confidence, TagConfidence::None);
     assert_eq!(plan.stage_seconds["database"].round(), 15.0);
 }
@@ -1114,6 +1126,36 @@ async fn a_code_the_database_does_not_know_says_so() {
         plan.notes
             .iter()
             .any(|note| note == "the music database knows no recording with the code"),
+        "{:?}",
+        plan.notes
+    );
+}
+
+#[tokio::test]
+async fn a_slow_code_question_leaves_the_search_by_name_its_time() {
+    let database = Arc::new(FakeDatabase {
+        isrc: Some(recorded_code("isrc-search-GBA077700130.json", "GBA077700130")),
+        isrc_delay: Duration::from_millis(400),
+        search: Some(recorded_code("isrc-search-GBA077700130.json", "GBA077700130")),
+        ..Default::default()
+    });
+    let identifier = identifier(AppSettings::default(), Some(database.clone()), None, file_of(93))
+        .with_code_budget(Duration::from_millis(100));
+    let plan = identify(
+        &identifier,
+        &coded_song("Bee Gees", "Stayin' Alive", "GBA077700130", 93),
+    )
+    .await
+    .expect("identified");
+    assert_eq!(
+        database.calls()[..2],
+        ["isrc:GBA077700130", "search:Bee Gees|Stayin' Alive|93"]
+    );
+    assert!(plan.chosen.is_some(), "the search's recordings were weighed");
+    assert!(
+        plan.notes
+            .iter()
+            .any(|note| note == "the music database did not answer the code lookup in 0 s"),
         "{:?}",
         plan.notes
     );

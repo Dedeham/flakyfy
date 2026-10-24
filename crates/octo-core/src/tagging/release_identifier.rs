@@ -140,11 +140,16 @@ pub struct ReleaseIdentifier {
     facts: Arc<dyn FileFactsReader>,
     music_brainz: Option<Arc<dyn ReleaseLookup>>,
     deezer: Option<Arc<dyn CatalogLookup>>,
+    /// How long the code question may take within the database stage.
+    code_budget: Duration,
 }
 
 impl ReleaseIdentifier {
     pub const CATALOG_BUDGET: Duration = Duration::from_secs(12);
     pub const DATABASE_BUDGET: Duration = Duration::from_secs(15);
+    /// The most the code question may take of [`Self::DATABASE_BUDGET`], so a slow answer
+    /// still leaves the search by name its time.
+    pub const CODE_BUDGET: Duration = Duration::from_secs(8);
 
     /// How far a recording the code names may be from the file's length and still settle what
     /// the file is without a search by name: the length an owned copy may differ by.
@@ -164,7 +169,14 @@ impl ReleaseIdentifier {
             facts,
             music_brainz,
             deezer,
+            code_budget: Self::CODE_BUDGET,
         }
+    }
+
+    /// The identifier with another time for the code question, for tests.
+    pub fn with_code_budget(mut self, budget: Duration) -> Self {
+        self.code_budget = budget;
+        self
     }
 
     /// The request as evidence: what was asked for, before anything corrected it.
@@ -302,7 +314,8 @@ impl ReleaseIdentifier {
             let deadline = Instant::now() + Self::DATABASE_BUDGET;
             let asked: Result<(), Failure> = async {
                 if let Some(isrc) = &request.isrc {
-                    match bounded(ct, deadline, client.lookup_isrc(isrc)).await {
+                    let code_deadline = (Instant::now() + self.code_budget).min(deadline);
+                    match bounded(ct, code_deadline, client.lookup_isrc(isrc)).await {
                         Ok(Some(doc)) => candidates.extend(CandidateSources::from_isrc_lookup(&doc)),
                         Ok(None) => {
                             notes.push("the music database knows no recording with the code".to_string())
@@ -311,6 +324,10 @@ impl ReleaseIdentifier {
                             notes.push("the music database could not be asked the code lookup".to_string());
                             debug!("code lookup failed for '{}': {}", isrc, error);
                         }
+                        Err(Failure::TimedOut) => notes.push(format!(
+                            "the music database did not answer the code lookup in {} s",
+                            self.code_budget.as_secs()
+                        )),
                         Err(failure) => return Err(failure),
                     }
                 }

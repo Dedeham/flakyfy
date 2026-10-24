@@ -665,3 +665,24 @@ async fn the_overview_says_who_approves_only_when_a_member_waits_for_approval() 
     let alice = serde_json::to_value(rig.service.overview("alice")).expect("json");
     assert!(alice.get("approval").is_none(), "{alice}");
 }
+
+#[tokio::test]
+async fn what_the_matcher_learns_about_isrcs_rematches_the_people_with_coded_lists() {
+    let rig = rig().await;
+    let mut coded = song("k1", "Stayin' Alive", "Bee Gees", 189);
+    coded.isrc = Some("GBA077700130".into());
+    rig.store.save(ImportList {
+        id: "coded-list".into(),
+        owner: "alice".into(),
+        tracks: vec![coded],
+        ..Default::default()
+    });
+    rig.store.save(ImportList {
+        id: "plain-list".into(),
+        owner: "bob".into(),
+        tracks: vec![song("k2", "Halo", "Beyonce", 261)],
+        ..Default::default()
+    });
+    rig.service.matcher().learned_now_for_tests();
+    assert_eq!(*rig.service.rematch.lock(), ["alice"]);
+}

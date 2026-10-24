@@ -143,6 +143,25 @@ impl ImportService {
                 service.on_fetched(job);
             }
         }));
+        // What the music database says about an ISRC can show a list song is already in the
+        // library: everyone with a list that names ISRCs is matched again on the next pass.
+        let weak = Arc::downgrade(&service);
+        service.matcher.on_learned(Arc::new(move || {
+            let Some(service) = weak.upgrade() else {
+                return;
+            };
+            let mut rematch = service.rematch.lock();
+            for list in service.store.all() {
+                if list
+                    .tracks
+                    .iter()
+                    .any(|track| track.isrc.as_deref().is_some_and(|isrc| !isrc.is_empty()))
+                    && !rematch.iter().any(|user| eq_ignore_case(user, &list.owner))
+                {
+                    rematch.push(list.owner.clone());
+                }
+            }
+        }));
         // A heart can bring a song a streaming list is missing. Once Navidrome shows it, the
         // owners of the lists that miss it are matched again on the next pass, which reads the
         // library once however many songs landed in between.

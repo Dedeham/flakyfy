@@ -60,8 +60,14 @@ pub struct ImportMatcher {
     clock: Mutex<Clock>,
     scope: Option<ScopeResolver>,
     /// The music database's recordings for each ISRC asked about, kept while Octo runs.
-    isrc_recordings: Mutex<HashMap<String, Vec<IsrcRecording>>>,
+    isrc_recordings: Arc<Mutex<HashMap<String, Vec<IsrcRecording>>>>,
     ask_isrc: Mutex<Option<IsrcRecordings>>,
+    /// The ISRCs whose last ask came back with nothing, asked after the others.
+    isrc_failed: Arc<Mutex<Vec<String>>>,
+    /// The learner asking about ISRCs behind the matches: one at a time.
+    learner: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Told when a learner has learned something, so the lists are matched again.
+    on_learned: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl ImportMatcher {
@@ -87,8 +93,11 @@ impl ImportMatcher {
             read_page: Mutex::new(read_page),
             clock: Mutex::new(Clock::system()),
             scope: None,
-            isrc_recordings: Mutex::new(HashMap::new()),
+            isrc_recordings: Arc::new(Mutex::new(HashMap::new())),
             ask_isrc: Mutex::new(None),
+            isrc_failed: Arc::new(Mutex::new(Vec::new())),
+            learner: Mutex::new(None),
+            on_learned: Mutex::new(None),
         }
     }
 
@@ -103,14 +112,21 @@ impl ImportMatcher {
     /// asked about over several matches.
     pub const ISRC_ASKS_PER_MATCH: usize = 20;
 
-    /// Asks about the ISRCs of songs no library file carries, up to [`Self::ISRC_ASKS_PER_MATCH`]
-    /// that were not asked about before.
-    async fn learn_isrcs(&self, index: &LibraryIndex, tracks: &[ImportTrack]) {
+    /// Starts asking about the ISRCs of songs no library file carries, up to
+    /// [`Self::ISRC_ASKS_PER_MATCH`] not asked about before, behind the match: the match answers
+    /// with what is already known, and [`Self::on_learned`] hears when more is. One learner at a
+    /// time. An ISRC whose ask came back with nothing is asked after the others next time.
+    fn learn_isrcs_later(&self, index: &LibraryIndex, tracks: &[ImportTrack]) {
         let Some(ask) = self.ask_isrc.lock().clone() else {
             return;
         };
+        let mut learner = self.learner.lock();
+        if learner.as_ref().is_some_and(|task| !task.is_finished()) {
+            return;
+        }
         let wanted: Vec<String> = {
             let known = self.isrc_recordings.lock();
+            let failed = self.isrc_failed.lock();
             let mut wanted: Vec<String> = Vec::new();
             for track in tracks {
                 for isrc in SongIdentity::isrcs(track.isrc.iter()) {
@@ -122,16 +138,58 @@ impl ImportMatcher {
                     }
                 }
             }
+            wanted.sort_by_key(|isrc| failed.contains(isrc));
             wanted.truncate(Self::ISRC_ASKS_PER_MATCH);
             wanted
         };
-        for isrc in wanted {
-            match ask(isrc.clone()).await {
-                Some(recordings) => {
-                    self.isrc_recordings.lock().insert(isrc, recordings);
+        if wanted.is_empty() {
+            return;
+        }
+        let known = Arc::clone(&self.isrc_recordings);
+        let failed = Arc::clone(&self.isrc_failed);
+        let on_learned = self.on_learned.lock().clone();
+        *learner = Some(tokio::spawn(async move {
+            let mut learned = false;
+            for isrc in wanted {
+                match ask(isrc.clone()).await {
+                    Some(recordings) => {
+                        failed.lock().retain(|failed| failed != &isrc);
+                        known.lock().insert(isrc, recordings);
+                        learned = true;
+                    }
+                    None => {
+                        let mut failed = failed.lock();
+                        if !failed.contains(&isrc) {
+                            failed.push(isrc);
+                        }
+                        break;
+                    }
                 }
-                None => break,
             }
+            if learned && let Some(on_learned) = on_learned {
+                on_learned();
+            }
+        }));
+    }
+
+    /// Tells `call` whenever a learner has learned something about an ISRC.
+    pub fn on_learned(&self, call: Arc<dyn Fn() + Send + Sync>) {
+        *self.on_learned.lock() = Some(call);
+    }
+
+    /// Waits for the learner asking now, if there is one.
+    pub async fn finish_learning(&self) {
+        let task = self.learner.lock().take();
+        if let Some(task) = task {
+            let _ = task.await;
+        }
+    }
+
+    /// Tells whoever listens that something was learned, as a learner does.
+    #[cfg(test)]
+    pub fn learned_now_for_tests(&self) {
+        if let Some(on_learned) = self.on_learned.lock().clone() {
+            on_learned();
         }
     }
 
@@ -179,7 +237,7 @@ impl ImportMatcher {
         let Some(index) = self.library_index().await else {
             return false;
         };
-        self.learn_isrcs(&index, tracks).await;
+        self.learn_isrcs_later(&index, tracks);
         for track in tracks.iter_mut() {
             let recordings = self.known_recordings(track);
             track.library_id = index
@@ -195,7 +253,7 @@ impl ImportMatcher {
         let Some(index) = self.library_index().await else {
             return false;
         };
-        self.learn_isrcs(&index, tracks).await;
+        self.learn_isrcs_later(&index, tracks);
         let known: Vec<Vec<IsrcRecording>> =
             tracks.iter().map(|track| self.known_recordings(track)).collect();
         self.within(owner, |visible| {

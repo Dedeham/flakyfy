@@ -291,3 +291,66 @@ async fn a_download_nobody_reports_on_is_checked_again() {
     assert_eq!(job.state, import_track_states::QUEUED);
     assert_eq!(job.detail.as_deref(), Some("Checking again"));
 }
+
+#[tokio::test]
+async fn the_last_look_finds_a_copy_only_the_isrc_names_and_trusts_the_name_check_first() {
+    use super::super::import_matcher::{ImportMatcher, IsrcRecording};
+    use super::super::test_support::row;
+    use std::sync::atomic::AtomicUsize;
+
+    let mut tagged = row(
+        "nd-roads",
+        "Portishead",
+        "Track 05",
+        Some(305),
+        Some("Dummy"),
+        "flac",
+        900,
+    );
+    tagged.recording_id = Some("rec-roads".into());
+    let pages = vec![tagged];
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counted = asked.clone();
+    let matcher = ImportMatcher::with_pages(Arc::new(move |start, count| {
+        let page: Vec<_> = pages
+            .iter()
+            .skip(start as usize)
+            .take(count as usize)
+            .cloned()
+            .collect();
+        let n = page.len();
+        Box::pin(async move { Some((page, n)) })
+    }))
+    .with_isrc_recordings(Arc::new(move |_isrc: String| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            Some(vec![IsrcRecording {
+                id: "rec-roads".into(),
+                title: "Roads".into(),
+                seconds: Some(305),
+            }])
+        })
+    }));
+    let job = TrickleJob {
+        owner: "alice".into(),
+        key: "k-roads".into(),
+        title: "Roads".into(),
+        artist: "Portishead".into(),
+        seconds: Some(305),
+        isrc: Some("GBAAA9400010".into()),
+        ..Default::default()
+    };
+
+    // The name check found it: no question asked.
+    let named = last_look(Some(OwnedSong(Some("by-name".into()))), Some(&matcher), &job).await;
+    assert_eq!(named, Some(OwnedSong(Some("by-name".into()))));
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // It did not: the ISRC's recordings find the numbered file.
+    let found = last_look(None, Some(&matcher), &job).await;
+    assert_eq!(found, Some(OwnedSong(Some("nd-roads".into()))));
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // No matcher (no music database): nothing more to look by.
+    assert_eq!(last_look(None, None, &job).await, None);
+}

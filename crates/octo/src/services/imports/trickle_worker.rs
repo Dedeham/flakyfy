@@ -120,6 +120,8 @@ pub struct TrickleWorker {
 /// The services the real trickle fetches with.
 pub struct TrickleServices {
     pub owned: Arc<LibraryOwnership>,
+    /// The import matcher, for a last look through a song's ISRC before it is fetched.
+    pub matcher: Option<Arc<super::ImportMatcher>>,
     pub ids: Arc<ExternalIdRegistry>,
     pub hearts: Arc<HeartAcquisitionCoordinator>,
     pub downloads: Arc<TrackAcquisitionQueue>,
@@ -154,6 +156,7 @@ impl TrickleWorker {
     ) -> Arc<Self> {
         let TrickleServices {
             owned,
+            matcher,
             ids,
             hearts,
             downloads,
@@ -166,9 +169,9 @@ impl TrickleWorker {
         let out_settings = settings.clone();
         let seams = TrickleSeams {
             owned: Arc::new(move |job| {
-                let owned = owned.clone();
+                let (owned, matcher) = (owned.clone(), matcher.clone());
                 Box::pin(async move {
-                    Ok(owned
+                    let by_name = owned
                         .find(
                             Some(&job.artist),
                             Some(&job.title),
@@ -176,7 +179,8 @@ impl TrickleWorker {
                             job.album.as_deref(),
                         )
                         .await
-                        .map(|copy| OwnedSong(copy.navidrome_id)))
+                        .map(|copy| OwnedSong(copy.navidrome_id));
+                    Ok(last_look(by_name, matcher.as_deref(), &job).await)
                 })
             }),
             start: Arc::new(move |job| {
@@ -563,6 +567,32 @@ impl TrickleWorker {
         }
         Ok(())
     }
+}
+
+/// The library's copy of a job's song: the name check's, else the one the recordings its ISRC
+/// names lead to.
+async fn last_look(
+    by_name: Option<OwnedSong>,
+    matcher: Option<&super::ImportMatcher>,
+    job: &TrickleJob,
+) -> Option<OwnedSong> {
+    if by_name.is_some() {
+        return by_name;
+    }
+    let matcher = matcher?;
+    let track = super::ImportTrack {
+        key: job.key.clone(),
+        title: job.title.clone(),
+        artist: job.artist.clone(),
+        album: job.album.clone(),
+        seconds: job.seconds,
+        isrc: job.isrc.clone(),
+        library_id: None,
+    };
+    matcher
+        .owned_by_isrc(&job.owner, &track)
+        .await
+        .map(|id| OwnedSong(Some(id)))
 }
 
 #[cfg(test)]

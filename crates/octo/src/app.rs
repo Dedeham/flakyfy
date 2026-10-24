@@ -1894,11 +1894,23 @@ impl Imports {
         };
         let file = |name: &str| config_dir.map(|dir| dir.join(name));
         let queue = Arc::new(TrickleQueue::new(file("imports-trickle.json")));
+        let matcher = Arc::new({
+            let matcher = ImportMatcher::new(navidrome.navidrome_playlist_api.clone())
+                .with_library_scope(navidrome.library_scope.clone())
+                .with_isrc_file(file("imports-isrc.json"));
+            match music_brainz {
+                Some(music_brainz) => matcher.with_isrc_recordings(
+                    crate::services::imports::import_matcher::isrc_recordings_from(music_brainz),
+                ),
+                None => matcher,
+            }
+        });
         let trickle = TrickleWorker::wired(
             queue.clone(),
             settings.clone(),
             TrickleServices {
                 owned: acquisition.library_ownership.clone(),
+                matcher: Some(matcher.clone()),
                 ids: stores.external_id_registry.clone(),
                 hearts: acquisition.heart_acquisition_coordinator.clone(),
                 downloads: acquisition.track_acquisition_queue.clone(),
@@ -1910,16 +1922,7 @@ impl Imports {
             store: Arc::new(ImportStore::new(file("imports.json"))),
             queue,
             trickle: trickle.clone(),
-            matcher: Arc::new({
-                let matcher = ImportMatcher::new(navidrome.navidrome_playlist_api.clone())
-                    .with_library_scope(navidrome.library_scope.clone());
-                match music_brainz {
-                    Some(music_brainz) => matcher.with_isrc_recordings(
-                        crate::services::imports::import_matcher::isrc_recordings_from(music_brainz),
-                    ),
-                    None => matcher,
-                }
-            }),
+            matcher,
             playlists: ImportPlaylists::new(Arc::new(NavidromePlaylists {
                 api: navidrome.navidrome_playlist_api.clone(),
                 identity: navidrome.navidrome_identity.clone(),

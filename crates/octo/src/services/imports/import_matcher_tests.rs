@@ -788,26 +788,30 @@ async fn a_match_never_asks_the_music_database() {
 
 #[tokio::test]
 async fn a_learning_round_says_what_it_settled() {
-    let matcher = matcher_over(vec![]).with_isrc_recordings(Arc::new(|isrc: String| {
-        Box::pin(async move {
-            Some(if isrc == "GBAAA0000002" {
-                vec![IsrcRecording {
-                    id: "rec-2".into(),
-                    title: "Second".into(),
-                    seconds: Some(200),
-                }]
-            } else {
-                Vec::new()
+    let matcher = matcher_over(vec![tagged_with(r("second", "B", "Second", 200), "rec-2")])
+        .with_isrc_recordings(Arc::new(|isrc: String| {
+            Box::pin(async move {
+                Some(if isrc == "GBAAA0000002" {
+                    vec![IsrcRecording {
+                        id: "rec-2".into(),
+                        title: "Second".into(),
+                        seconds: Some(200),
+                    }]
+                } else {
+                    Vec::new()
+                })
             })
-        })
-    }));
+        }));
     let rows = vec![
         with_isrc(track("A", "First", Some(200), None), "GBAAA0000001"),
         with_isrc(track("B", "Second", Some(200), None), "GBAAA0000002"),
     ];
     assert_eq!(
         matcher.learn_isrcs(&rows).await,
-        IsrcLearning { settled: 2, named: 1 }
+        IsrcLearning {
+            settled: 2,
+            in_library: 1
+        }
     );
     assert_eq!(
         matcher.learn_isrcs(&rows).await,
@@ -817,26 +821,31 @@ async fn a_learning_round_says_what_it_settled() {
 }
 
 #[tokio::test]
-async fn an_isrc_that_came_back_with_nothing_is_asked_after_the_others() {
+async fn codes_that_keep_failing_are_asked_after_the_others_oldest_failure_first() {
     let asked = Arc::new(Mutex::new(Vec::<String>::new()));
     let log = asked.clone();
     let matcher = matcher_over(vec![]).with_isrc_recordings(Arc::new(move |isrc: String| {
         log.lock().push(isrc.clone());
-        Box::pin(async move {
-            if isrc == "GBAAA0000001" {
-                None
-            } else {
-                Some(Vec::new())
-            }
-        })
+        Box::pin(async move { (isrc == "GBAAA0000002").then(Vec::new) })
     }));
     let rows = vec![
         with_isrc(track("A", "First", Some(200), None), "GBAAA0000001"),
         with_isrc(track("B", "Second", Some(200), None), "GBAAA0000002"),
+        with_isrc(track("C", "Third", Some(200), None), "GBAAA0000003"),
     ];
-    matcher.learn_isrcs(&rows).await;
-    matcher.learn_isrcs(&rows).await;
-    assert_eq!(*asked.lock(), ["GBAAA0000001", "GBAAA0000002", "GBAAA0000001"]);
+    for _ in 0..4 {
+        matcher.learn_isrcs(&rows).await;
+    }
+    assert_eq!(
+        *asked.lock(),
+        [
+            "GBAAA0000001",
+            "GBAAA0000002",
+            "GBAAA0000003",
+            "GBAAA0000001",
+            "GBAAA0000003"
+        ]
+    );
 }
 
 #[tokio::test]
@@ -955,6 +964,12 @@ fn the_waiting_isrcs_of_a_long_list_are_read_quickly() {
             )
         })
         .collect();
+    for i in 20..50_000 {
+        matcher
+            .isrc_failed
+            .lock()
+            .insert(format!("GBAAA{i:07}"), i as u64);
+    }
     let started = std::time::Instant::now();
     let wanted = matcher.pending_isrcs(None, &rows, ImportMatcher::ISRC_ASKS_PER_MATCH);
     assert_eq!(wanted.len(), ImportMatcher::ISRC_ASKS_PER_MATCH);
@@ -965,10 +980,97 @@ fn the_waiting_isrcs_of_a_long_list_are_read_quickly() {
     );
     // Every song still waits, and that is read quickly too.
     let started = std::time::Instant::now();
-    assert!(rows.iter().all(|row| matcher.isrc_pending(row)));
+    assert!(matcher.has_pending_isrcs(&rows));
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(2),
+        started.elapsed() < std::time::Duration::from_secs(1),
         "{:?}",
         started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn what_was_learned_survives_a_restart() {
+    let dir = tempfile::tempdir().expect("a folder");
+    let file = dir.path().join("imports-isrc.json");
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counted = asked.clone();
+    let tagged = tagged_with(r("roads", "Portishead", "Track 05", 305), "rec-roads");
+    let first = matcher_over(vec![tagged.clone()])
+        .with_isrc_recordings(Arc::new(move |_isrc: String| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                Some(vec![IsrcRecording {
+                    id: "rec-roads".into(),
+                    title: "Roads".into(),
+                    seconds: Some(305),
+                }])
+            })
+        }))
+        .with_isrc_file(Some(file.clone()));
+    let mut rows = vec![with_isrc(
+        track("Portishead", "Roads", Some(305), None),
+        "GBAAA9400010",
+    )];
+    first.learn_isrcs(&rows).await;
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+
+    // A new matcher over the same file: nothing to ask, and the copy is still found.
+    let again = Arc::new(AtomicUsize::new(0));
+    let counted = again.clone();
+    let second = matcher_over(vec![tagged])
+        .with_isrc_recordings(Arc::new(move |_isrc: String| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Some(Vec::new()) })
+        }))
+        .with_isrc_file(Some(file));
+    assert!(second.match_tracks(&mut rows).await);
+    assert_eq!(rows[0].library_id.as_deref(), Some("roads"));
+    rows[0].library_id = None;
+    second.learn_isrcs(&rows).await;
+    assert_eq!(again.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn the_last_look_before_a_fetch_finds_a_copy_only_the_isrc_names() {
+    let tagged = tagged_with(r("roads", "Portishead", "Track 05", 305), "rec-roads");
+    let matcher = matcher_over(vec![tagged]).with_isrc_recordings(answering(vec![IsrcRecording {
+        id: "rec-roads".into(),
+        title: "Roads".into(),
+        seconds: Some(305),
+    }]));
+    let song = with_isrc(track("Portishead", "Roads", Some(305), None), "GBAAA9400010");
+    assert_eq!(
+        matcher.owned_by_isrc("alice", &song).await.as_deref(),
+        Some("roads")
+    );
+    let plain = track("Portishead", "Roads", Some(305), None);
+    assert_eq!(
+        matcher.owned_by_isrc("alice", &plain).await,
+        None,
+        "no ISRC, nothing to look by"
+    );
+}
+
+#[tokio::test]
+async fn with_the_libraries_apart_a_code_another_members_file_carries_is_still_asked() {
+    use crate::services::family::library_index::scope_for_tests;
+    let carried = coded(r("theirs", "Portishead", "Roads", 305), "GBAAA9400010");
+    let rows = vec![with_isrc(
+        track("Portishead", "Roads", Some(305), None),
+        "GBAAA9400010",
+    )];
+
+    let apart = matcher_over(vec![carried.clone()])
+        .with_library_scope(scope_for_tests(true, &[("alex", 3), ("sam", 4)]))
+        .with_isrc_recordings(answering(Vec::new()));
+    assert_eq!(apart.learn_isrcs(&rows).await.settled, 1);
+
+    let together = matcher_over(vec![carried])
+        .with_library_scope(scope_for_tests(false, &[("alex", 3), ("sam", 4)]))
+        .with_isrc_recordings(answering(Vec::new()));
+    assert_eq!(
+        together.learn_isrcs(&rows).await.settled,
+        0,
+        "the library's own copy answers it"
     );
 }

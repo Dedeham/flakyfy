@@ -719,7 +719,7 @@ fn coded_list(rig: &Rig, owner: &str, isrc: &str) -> String {
 }
 
 #[tokio::test]
-async fn a_song_whose_isrc_waits_for_the_music_database_is_not_fetched_until_it_is_known() {
+async fn a_learning_round_finds_a_copy_only_the_isrc_names_and_matches_again() {
     let asked = Arc::new(AtomicUsize::new(0));
     let rig = coded_rig(
         Some(vec![IsrcRecording {
@@ -733,52 +733,78 @@ async fn a_song_whose_isrc_waits_for_the_music_database_is_not_fetched_until_it_
     let id = coded_list(&rig, "alice", "GBAAA9400010");
     rig.service.match_and_follow("alice").await;
     assert_eq!(asked.load(Ordering::SeqCst), 0, "a match never asks");
-    let result = rig.service.set_get_missing("alice", &id, true);
-    assert_eq!(result.count, 0, "{result:?}");
-
-    rig.service.loop_once().await.expect("a pass");
+    rig.service.learn_once().await;
     assert_eq!(asked.load(Ordering::SeqCst), 1);
+    assert_eq!(*rig.service.rematch.lock(), ["alice"]);
+    rig.service.match_and_follow("alice").await;
     let list = rig.store.get("alice", &id).expect("the list");
     assert_eq!(list.tracks[0].library_id.as_deref(), Some("nd-roads"));
-    assert_eq!(queued_count(&rig, "alice"), 0);
 }
 
 #[tokio::test]
-async fn a_code_the_music_database_does_not_know_lets_its_song_be_fetched() {
+async fn an_answer_naming_no_library_file_matches_nobody_again() {
     let asked = Arc::new(AtomicUsize::new(0));
-    let rig = coded_rig(Some(Vec::new()), asked.clone()).await;
-    let id = coded_list(&rig, "alice", "GBAAA9400010");
+    let rig = coded_rig(
+        Some(vec![IsrcRecording {
+            id: "rec-elsewhere".into(),
+            title: "Roads".into(),
+            seconds: Some(305),
+        }]),
+        asked.clone(),
+    )
+    .await;
+    coded_list(&rig, "alice", "GBAAA9400010");
     rig.service.match_and_follow("alice").await;
-    rig.service.set_get_missing("alice", &id, true);
-    assert_eq!(queued_count(&rig, "alice"), 0);
-    rig.service.loop_once().await.expect("a pass");
-    assert_eq!(queued_count(&rig, "alice"), 1);
+    rig.service.learn_once().await;
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    assert!(rig.service.rematch.lock().is_empty());
 }
 
 #[tokio::test]
-async fn a_busy_music_database_writes_nothing_and_is_asked_again_next_pass() {
+async fn a_busy_music_database_matches_nobody_again_and_is_asked_next_round() {
     let asked = Arc::new(AtomicUsize::new(0));
     let rig = coded_rig(None, asked.clone()).await;
     coded_list(&rig, "alice", "GBAAA9400010");
     rig.service.match_and_follow("alice").await;
-    rig.service.loop_once().await.expect("a pass");
-    assert_eq!(asked.load(Ordering::SeqCst), 1);
-    assert!(
-        rig.service.rematch.lock().is_empty(),
-        "nothing learned, nothing matched again"
-    );
-    rig.service.loop_once().await.expect("a pass");
+    rig.service.learn_once().await;
+    rig.service.learn_once().await;
     assert_eq!(asked.load(Ordering::SeqCst), 2);
+    assert!(rig.service.rematch.lock().is_empty());
 }
 
 #[tokio::test]
-async fn everyone_with_waiting_isrcs_is_asked_in_one_pass() {
+async fn everyone_waiting_is_asked_in_one_round() {
     let asked = Arc::new(AtomicUsize::new(0));
     let rig = coded_rig(Some(Vec::new()), asked.clone()).await;
     coded_list(&rig, "alice", "GBAAA9400010");
     coded_list(&rig, "bob", "GBAAA9400011");
     rig.service.match_and_follow("alice").await;
     rig.service.match_and_follow("bob").await;
-    rig.service.loop_once().await.expect("a pass");
+    rig.service.learn_once().await;
     assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn learning_never_holds_up_the_loop() {
+    let ask: IsrcRecordings =
+        Arc::new(|_isrc: String| Box::pin(futures::future::pending::<Option<Vec<IsrcRecording>>>()));
+    let rig = rig_with(Arc::new(ImportStore::default()), Some(ask)).await;
+    coded_list(&rig, "alice", "GBAAA9400010");
+    rig.service.match_and_follow("alice").await;
+    let pass = tokio::time::timeout(std::time::Duration::from_secs(1), rig.service.loop_once()).await;
+    assert!(
+        matches!(pass, Ok(Ok(()))),
+        "the pass finished while the music database said nothing"
+    );
+}
+
+#[tokio::test]
+async fn getting_the_missing_songs_never_waits_for_the_music_database() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let rig = coded_rig(None, asked.clone()).await;
+    let id = coded_list(&rig, "alice", "GBAAA9400010");
+    rig.service.match_and_follow("alice").await;
+    rig.service.set_get_missing("alice", &id, true);
+    assert_eq!(queued_count(&rig, "alice"), 1);
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
 }

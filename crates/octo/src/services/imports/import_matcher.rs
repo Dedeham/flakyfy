@@ -30,7 +30,8 @@ pub type ReadPage =
     Arc<dyn Fn(i32, i32) -> BoxFuture<'static, Option<(Vec<LibrarySongRow>, usize)>> + Send + Sync>;
 
 /// One recording an ISRC names in the music database: its id, its title and its length.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct IsrcRecording {
     pub id: String,
     pub title: String,
@@ -45,8 +46,16 @@ pub type IsrcRecordings = Arc<dyn Fn(String) -> BoxFuture<'static, Option<Vec<Is
 pub struct IsrcLearning {
     /// ISRCs answered for good, with or without recordings.
     pub settled: usize,
-    /// Of those, the ISRCs that named recordings: the lists may match differently now.
-    pub named: usize,
+    /// Of those, the ISRCs that named a recording a library file is tagged with: the lists may
+    /// match differently now.
+    pub in_library: usize,
+}
+
+/// What the music database said about each ISRC asked about, as kept on disk.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+struct IsrcFile {
+    recordings: HashMap<String, Vec<IsrcRecording>>,
 }
 
 /// Whether the library already has each imported song, the way Octo decides it everywhere else:
@@ -71,8 +80,12 @@ pub struct ImportMatcher {
     /// The music database's recordings for each ISRC asked about, kept while Octo runs.
     isrc_recordings: Arc<Mutex<HashMap<String, Vec<IsrcRecording>>>>,
     ask_isrc: Mutex<Option<IsrcRecordings>>,
-    /// The ISRCs whose last ask came back with nothing, asked after the others.
-    isrc_failed: Mutex<HashSet<String>>,
+    /// The ISRCs whose last ask came back with nothing, each with the turn it failed on: asked after the others, the oldest failure first.
+    isrc_failed: Mutex<HashMap<String, u64>>,
+    /// Counts the failed asks, so the oldest failure is asked first.
+    failures: std::sync::atomic::AtomicU64,
+    /// Where what was learned is kept across restarts, if anywhere.
+    isrc_file: Option<std::path::PathBuf>,
 }
 
 impl ImportMatcher {
@@ -100,7 +113,9 @@ impl ImportMatcher {
             scope: None,
             isrc_recordings: Arc::new(Mutex::new(HashMap::new())),
             ask_isrc: Mutex::new(None),
-            isrc_failed: Mutex::new(HashSet::new()),
+            isrc_failed: Mutex::new(HashMap::new()),
+            failures: std::sync::atomic::AtomicU64::new(0),
+            isrc_file: None,
         }
     }
 
@@ -109,6 +124,26 @@ impl ImportMatcher {
     pub fn with_isrc_recordings(self, ask: IsrcRecordings) -> Self {
         *self.ask_isrc.lock() = Some(ask);
         self
+    }
+
+    /// Keeps what the music database said about each ISRC in `path`, and reads it back now, so
+    /// a restart neither asks again nor forgets which copy a recording found.
+    pub fn with_isrc_file(mut self, path: Option<std::path::PathBuf>) -> Self {
+        if let Some(path) = &path {
+            let kept: IsrcFile = super::load_or_default(path, "the ISRC answers");
+            *self.isrc_recordings.lock() = kept.recordings;
+        }
+        self.isrc_file = path;
+        self
+    }
+
+    fn keep_isrc_answers(&self) {
+        if let Some(path) = &self.isrc_file {
+            let file = IsrcFile {
+                recordings: self.isrc_recordings.lock().clone(),
+            };
+            let _ = super::save(path, &file, "the ISRC answers");
+        }
     }
 
     /// How many ISRCs one round of learning asks the music database about, one a second: a
@@ -128,10 +163,15 @@ impl ImportMatcher {
         if most == 0 || self.ask_isrc.lock().is_none() {
             return Vec::new();
         }
-        let carried_counts = self.scope.is_none();
+        // With the libraries kept apart, the file that carries an ISRC may be another member's.
+        let carried_counts = !self
+            .scope
+            .as_ref()
+            .map(ScopeResolver::view)
+            .is_some_and(|view| view.apart());
         let mut seen: HashSet<String> = HashSet::new();
         let mut fresh: Vec<String> = Vec::new();
-        let mut again: Vec<String> = Vec::new();
+        let mut again: Vec<(u64, String)> = Vec::new();
         for track in tracks.iter().filter(|track| track.library_id.is_none()) {
             for isrc in SongIdentity::isrcs(track.isrc.iter()) {
                 if !seen.insert(isrc.clone()) || self.isrc_recordings.lock().contains_key(&isrc) {
@@ -140,8 +180,8 @@ impl ImportMatcher {
                 if carried_counts && index.is_some_and(|index| index.by_isrc.contains_key(&isrc)) {
                     continue;
                 }
-                if self.isrc_failed.lock().contains(&isrc) {
-                    again.push(isrc);
+                if let Some(turn) = self.isrc_failed.lock().get(&isrc).copied() {
+                    again.push((turn, isrc));
                 } else {
                     fresh.push(isrc);
                     if fresh.len() >= most {
@@ -150,23 +190,14 @@ impl ImportMatcher {
                 }
             }
         }
-        fresh.extend(again);
+        again.sort_by_key(|(turn, _)| *turn);
+        fresh.extend(again.into_iter().map(|(_, isrc)| isrc));
         fresh.truncate(most);
         fresh
     }
 
-    /// Whether the music database may still name a recording of an unmatched track: it carries
-    /// an ISRC not answered yet. Such a song is not fetched yet, since the answer can show the
-    /// library already has it.
-    pub fn isrc_pending(&self, track: &ImportTrack) -> bool {
-        let index = self.index.lock().as_ref().map(|(index, _)| Arc::clone(index));
-        !self
-            .pending_isrcs(index.as_deref(), std::slice::from_ref(track), 1)
-            .is_empty()
-    }
-
     /// Asks the music database about up to [`Self::ISRC_ASKS_PER_MATCH`] pending ISRCs of these
-    /// tracks, stopping at the first that could not be asked.
+    /// tracks, stopping at the first that could not be asked, and keeps the answers.
     pub async fn learn_isrcs(&self, tracks: &[ImportTrack]) -> IsrcLearning {
         let Some(ask) = self.ask_isrc.lock().clone() else {
             return IsrcLearning::default();
@@ -179,18 +210,52 @@ impl ImportMatcher {
                 Some(recordings) => {
                     self.isrc_failed.lock().remove(&isrc);
                     learning.settled += 1;
-                    if !recordings.is_empty() {
-                        learning.named += 1;
+                    if index.as_ref().is_some_and(|index| {
+                        recordings.iter().any(|recording| {
+                            index
+                                .by_recording
+                                .contains_key(&recording.id.trim().to_ascii_lowercase())
+                        })
+                    }) {
+                        learning.in_library += 1;
                     }
                     self.isrc_recordings.lock().insert(isrc, recordings);
                 }
                 None => {
-                    self.isrc_failed.lock().insert(isrc);
+                    let turn = self.failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    self.isrc_failed.lock().insert(isrc, turn);
                     break;
                 }
             }
         }
+        if learning.settled > 0 {
+            self.keep_isrc_answers();
+        }
         learning
+    }
+
+    /// Whether any unmatched song of these still has an ISRC the music database has not
+    /// answered.
+    pub fn has_pending_isrcs(&self, tracks: &[ImportTrack]) -> bool {
+        let index = self.index.lock().as_ref().map(|(index, _)| Arc::clone(index));
+        !self.pending_isrcs(index.as_deref(), tracks, 1).is_empty()
+    }
+
+    /// The library's copy of a song, through every way a match has, the recordings its ISRC
+    /// names included: asked about now when the music database was not asked yet. The last look
+    /// before a song is fetched, so a copy only its ISRC can find is never fetched again.
+    pub async fn owned_by_isrc(&self, owner: &str, track: &ImportTrack) -> Option<String> {
+        if SongIdentity::isrcs(track.isrc.iter()).is_empty() {
+            return None;
+        }
+        self.learn_isrcs(std::slice::from_ref(track)).await;
+        let index = self.library_index().await?;
+        let recordings = self.known_recordings(track);
+        self.within(owner, |visible| {
+            index
+                .find_known(track, &recordings, visible)
+                .map(|row| row.id.clone())
+        })
     }
 
     /// What the music database said about the track's ISRCs, as far as it was asked.

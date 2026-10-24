@@ -62,6 +62,8 @@ pub struct ImportService {
     /// People whose lists hold ISRCs the music database has not answered yet: asked about in
     /// the loop's pass.
     learning: Mutex<Vec<String>>,
+    /// The round of learning running beside the loop, if one is.
+    learner: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// A song a streaming list misses landed: the next open or pass reads the library again.
     reread_library: AtomicBool,
     /// Library songs as Navidrome described them to each listener for a streaming list, by
@@ -134,6 +136,7 @@ impl ImportService {
             gates: Mutex::new(HashMap::new()),
             rematch: Mutex::new(Vec::new()),
             learning: Mutex::new(Vec::new()),
+            learner: Mutex::new(None),
             reread_library: AtomicBool::new(false),
             songs: Mutex::new(HashMap::new()),
             dirty_playlists: Mutex::new(Vec::new()),
@@ -727,18 +730,10 @@ impl ImportService {
         }
         self.store.update(user, id, |l| l.get_missing = on);
         if on {
-            let queued = self
-                .queue
-                .add(user, list.tracks.iter().filter(|track| self.fetchable(track)));
-            let waiting = self.waiting_for_isrcs(&list.tracks);
-            if waiting > 0 {
-                self.learn_later(user);
-                return ImportActionResult::ok(format!(
-                    "Queued {queued} {}. Octo is still checking {waiting} more against the music database and fetches them if you do not have them.",
-                    if queued == 1 { "song" } else { "songs" },
-                ))
-                .with_count(queued);
-            }
+            let queued = self.queue.add(
+                user,
+                list.tracks.iter().filter(|track| track.library_id.is_none()),
+            );
             return if queued == 0 {
                 ImportActionResult::ok(
                     "Nothing new to fetch: every song is in your library or already queued.",
@@ -791,7 +786,7 @@ impl ImportService {
         let songs: Vec<&ImportTrack> = list
             .tracks
             .iter()
-            .filter(|track| self.fetchable(track) && keys.contains(&track.key))
+            .filter(|track| track.library_id.is_none() && keys.contains(&track.key))
             .collect();
         let chosen: Vec<&str> = songs.iter().map(|song| song.key.as_str()).collect();
         self.queue.retry(user, &chosen);
@@ -905,33 +900,21 @@ impl ImportService {
             }
             list.matched_utc = Some(now);
         });
-        if self.waiting_for_isrcs(&tracks) > 0 {
+        if self.matcher.has_pending_isrcs(&tracks) {
             self.learn_later(user);
         }
         for list in self.store.lists_of(user) {
             if list.get_missing {
-                self.queue
-                    .add(user, list.tracks.iter().filter(|track| self.fetchable(track)));
+                self.queue.add(
+                    user,
+                    list.tracks.iter().filter(|track| track.library_id.is_none()),
+                );
             }
             if list.keep_playlist {
                 self.mark_dirty(format!("{user}\n{}", list.id));
             }
         }
         self.write_dirty_playlists().await;
-    }
-
-    /// Whether a song may be fetched: missing, and no ISRC of it still waits for the music
-    /// database, whose answer can show the library has it.
-    fn fetchable(&self, track: &ImportTrack) -> bool {
-        track.library_id.is_none() && !self.matcher.isrc_pending(track)
-    }
-
-    /// How many missing songs of these wait for the music database.
-    fn waiting_for_isrcs<'a>(&self, tracks: impl IntoIterator<Item = &'a ImportTrack>) -> usize {
-        tracks
-            .into_iter()
-            .filter(|track| track.library_id.is_none() && self.matcher.isrc_pending(track))
-            .count()
     }
 
     /// Asks about this person's waiting ISRCs in the loop's next pass.
@@ -1061,15 +1044,10 @@ impl ImportService {
             .clone()
     }
 
-    /// One pass of the loop: matches people the trickle brought songs, writes playlists, and
-    /// reads stale links again.
-    pub async fn loop_once(self: &Arc<Self>) -> anyhow::Result<()> {
-        if self.reread_library.swap(false, Ordering::Relaxed) {
-            self.matcher.forget();
-        }
-        // Each person whose songs wait for the music database gets one round of asking a pass,
-        // outside their import gate. An answer that names recordings matches them again; one
-        // that names none lets the songs it held back be fetched.
+    /// One round of asking about the ISRCs of everyone whose lists wait for answers. An answer
+    /// that names a recording a library file is tagged with matches that person again on the
+    /// next pass.
+    pub async fn learn_once(&self) {
         let waiting: Vec<String> = std::mem::take(&mut *self.learning.lock());
         for user in waiting {
             let tracks: Vec<ImportTrack> = self
@@ -1079,19 +1057,30 @@ impl ImportService {
                 .flat_map(|list| list.tracks)
                 .collect();
             let learned = self.matcher.learn_isrcs(&tracks).await;
-            if learned.named > 0 {
+            if learned.in_library > 0 {
                 self.rematch_later(&user);
-            } else if learned.settled > 0 {
-                for list in self.store.lists_of(&user) {
-                    if list.get_missing {
-                        self.queue
-                            .add(&user, list.tracks.iter().filter(|track| self.fetchable(track)));
-                    }
-                }
             }
-            if self.waiting_for_isrcs(&tracks) > 0 {
+            if self.matcher.has_pending_isrcs(&tracks) {
                 self.learn_later(&user);
             }
+        }
+    }
+
+    /// One pass of the loop: matches people the trickle brought songs, writes playlists, and
+    /// reads stale links again.
+    pub async fn loop_once(self: &Arc<Self>) -> anyhow::Result<()> {
+        if self.reread_library.swap(false, Ordering::Relaxed) {
+            self.matcher.forget();
+        }
+        // Learning runs beside the loop: one round at a time, never holding up a pass.
+        let running = self
+            .learner
+            .lock()
+            .as_ref()
+            .is_some_and(|task| !task.is_finished());
+        if !running && !self.learning.lock().is_empty() {
+            let service = Arc::clone(self);
+            *self.learner.lock() = Some(tokio::spawn(async move { service.learn_once().await }));
         }
         let users: Vec<String> = std::mem::take(&mut *self.rematch.lock());
         for user in users {

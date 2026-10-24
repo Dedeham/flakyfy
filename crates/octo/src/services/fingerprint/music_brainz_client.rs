@@ -69,8 +69,11 @@ pub enum IsrcLookup {
     Found(Value),
     /// MusicBrainz knows no recording with the code.
     NotKnown,
-    /// MusicBrainz could not be asked: busy, unreachable, or it refused the question.
+    /// MusicBrainz could not be asked: busy or unreachable. Worth asking again.
     Unanswered,
+    /// MusicBrainz refused the question as Octo asked it: a definite answer, never worth
+    /// asking again the same way.
+    Refused,
 }
 
 /// The releases kept per recording of a code: the candidate reader takes no more.
@@ -272,7 +275,8 @@ impl MusicBrainzClient {
         let mut recordings = match self.ask_on(&search, "code search", background).await? {
             Asked::Answer(doc) => recordings_of(&doc, |recording| carries(recording, &code)),
             Asked::NotKnown => Vec::new(),
-            Asked::Refused | Asked::Busy => return Ok(IsrcLookup::Unanswered),
+            Asked::Refused => return Ok(IsrcLookup::Refused),
+            Asked::Busy => return Ok(IsrcLookup::Unanswered),
         };
         if background {
             let lookup = format!("isrc/{code}?inc=artist-credits&fmt=json");
@@ -289,7 +293,8 @@ impl MusicBrainzClient {
                     }
                 }
                 Asked::NotKnown => {}
-                Asked::Refused | Asked::Busy => return Ok(IsrcLookup::Unanswered),
+                Asked::Refused => return Ok(IsrcLookup::Refused),
+                Asked::Busy => return Ok(IsrcLookup::Unanswered),
             }
         }
         if recordings.is_empty() {
@@ -584,7 +589,7 @@ impl MusicBrainzClient {
             Ok(match status {
                 404 => Asked::NotKnown,
                 // An id that is not a MusicBrainz id, such as a junk tag: nothing is known by it.
-                400 if said.contains("Invalid mbid") => Asked::NotKnown,
+                400 if said.contains("Invalid mbid") || asks_by_a_non_mbid(relative) => Asked::NotKnown,
                 429 => Asked::Busy,
                 400..=499 => {
                     warn!("MusicBrainz refused the {what} question {relative} ({status}): {said}");
@@ -609,6 +614,25 @@ impl MusicBrainzClient {
                 Ok(Asked::Busy)
             }
         }
+    }
+}
+
+/// Whether a question looks something up by an id that is not a MusicBrainz id
+/// (`release/<id>`, `recording/<id>`, `artist/<id>`, ...): MusicBrainz has nothing by it.
+fn asks_by_a_non_mbid(relative: &str) -> bool {
+    let path = relative.split('?').next().unwrap_or("");
+    let mut parts = path.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(resource), Some(id), None)
+            if !id.is_empty()
+                && matches!(
+                    resource,
+                    "release" | "recording" | "artist" | "release-group" | "label" | "work"
+                ) =>
+        {
+            !pure::is_mbid(&dotnet::unescape_data_string(id))
+        }
+        _ => false,
     }
 }
 
@@ -693,6 +717,7 @@ impl ReleaseLookup for MusicBrainzClient {
             IsrcLookup::Found(doc) => Ok(Some(doc)),
             IsrcLookup::NotKnown => Ok(None),
             IsrcLookup::Unanswered => anyhow::bail!("MusicBrainz could not be asked about the code"),
+            IsrcLookup::Refused => anyhow::bail!("MusicBrainz refused the question about the code"),
         }
     }
 }

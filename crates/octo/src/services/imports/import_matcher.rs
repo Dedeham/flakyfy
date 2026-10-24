@@ -693,6 +693,7 @@ pub fn isrc_recordings_from(
             match music_brainz.isrc_recordings_in_background(&isrc).await.ok()? {
                 IsrcLookup::Found(doc) => Some(isrc_recordings_of(&doc)),
                 IsrcLookup::NotKnown => Some(Vec::new()),
+                IsrcLookup::Refused => Some(Vec::new()),
                 IsrcLookup::Unanswered => None,
             }
         })

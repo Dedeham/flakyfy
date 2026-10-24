@@ -493,11 +493,16 @@ async fn the_matcher_also_gets_the_recordings_only_the_code_lookup_lists() {
     assert_eq!(ids(&doc), ["a", "b"]);
     // The search's own copy of "a", with its releases, is the one kept.
     assert_eq!(doc["recordings"][0]["releases"][0]["id"], "r");
-    assert_eq!(calls(&server).await.len(), 2);
+    let asked = calls(&server).await;
+    assert_eq!(asked.len(), 2);
+    assert!(
+        asked[1].ends_with("/ws/2/isrc/GBA077700130?inc=artist-credits&fmt=json"),
+        "{asked:?}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_question_musicbrainz_refuses_is_unanswered_and_logged_as_a_warning() {
+async fn a_question_musicbrainz_refuses_is_refused_and_logged_as_a_warning() {
     let (logs, _guard) = crate::services::test_support::LogCapture::start();
     let (client, server) = code_server(
         "GBA077700130",
@@ -507,7 +512,7 @@ async fn a_question_musicbrainz_refuses_is_unanswered_and_logged_as_a_warning() 
     .await;
     assert_eq!(
         client.lookup_isrc("GBA077700130").await.expect("no timeout"),
-        IsrcLookup::Unanswered
+        IsrcLookup::Refused
     );
     assert_eq!(calls(&server).await.len(), 1);
     let warnings = logs.at(tracing::Level::WARN);
@@ -569,6 +574,11 @@ async fn a_busy_musicbrainz_is_unanswered_and_asked_again_next_time() {
 async fn the_matchers_code_questions_step_aside_so_a_download_check_waits_one_gap_at_most() {
     let (client, _server) = client(json_answer(recorded("search-empty.json"))).await;
     let client = Arc::new(client);
+    // A download check has just asked: the gate's last call is a foreground one.
+    client
+        .fetch_isrcs("11111111-1111-4111-8111-111111111111")
+        .await
+        .expect("no timeout");
     let background = {
         let client = Arc::clone(&client);
         tokio::spawn(async move {
@@ -579,13 +589,184 @@ async fn the_matchers_code_questions_step_aside_so_a_download_check_waits_one_ga
             }
         })
     };
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let started = std::time::Instant::now();
-    client.fetch_isrcs("rec-1").await.expect("no timeout");
-    let first = started.elapsed();
+    client
+        .fetch_isrcs("22222222-2222-4222-8222-222222222222")
+        .await
+        .expect("no timeout");
+    let waited = started.elapsed();
     background.abort();
 
     let gap = MusicBrainzClient::MINIMUM_GAP;
-    assert!(first < gap + Duration::from_millis(400), "first {first:?}");
+    assert!(waited < gap + Duration::from_millis(400), "waited {waited:?}");
+}
+
+#[tokio::test]
+async fn the_tagger_hears_each_kind_of_code_answer() {
+    use octo_core::tagging::ReleaseLookup;
+
+    let (busy, _a) = code_server(
+        "GBA077700130",
+        ResponseTemplate::new(503),
+        ResponseTemplate::new(500),
+    )
+    .await;
+    assert!(ReleaseLookup::lookup_isrc(&busy, "GBA077700130").await.is_err());
+
+    let (refused, _b) = code_server(
+        "GBA077700130",
+        ResponseTemplate::new(400).set_body_raw(recorded("isrc-refused.json"), "application/json"),
+        ResponseTemplate::new(500),
+    )
+    .await;
+    assert!(
+        ReleaseLookup::lookup_isrc(&refused, "GBA077700130")
+            .await
+            .is_err()
+    );
+
+    let (unknown, server) = code_server(
+        "ZZZZZ0000001",
+        json_answer(recorded("search-empty.json")),
+        ResponseTemplate::new(500),
+    )
+    .await;
+    assert_eq!(
+        ReleaseLookup::lookup_isrc(&unknown, "ZZZZZ0000001")
+            .await
+            .expect("an answer"),
+        None
+    );
+    assert_eq!(calls(&server).await.len(), 1);
+
+    let (known, _c) = code_server(
+        "GBA077700130",
+        json_answer(recorded("isrc-search-GBA077700130.json")),
+        ResponseTemplate::new(500),
+    )
+    .await;
+    assert!(
+        ReleaseLookup::lookup_isrc(&known, "GBA077700130")
+            .await
+            .expect("an answer")
+            .is_some()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn each_kind_of_answer_is_read_and_only_a_refused_question_is_warned() {
+    let (logs, _guard) = crate::services::test_support::LogCapture::start();
+    let cases: [(ResponseTemplate, &str); 7] = [
+        (
+            ResponseTemplate::new(404).set_body_raw(recorded("isrc-not-found.json"), "application/json"),
+            "not known",
+        ),
+        (
+            ResponseTemplate::new(400)
+                .set_body_raw(recorded("release-invalid-mbid.json"), "application/json"),
+            "not known",
+        ),
+        (ResponseTemplate::new(429), "busy"),
+        (
+            ResponseTemplate::new(400).set_body_raw(recorded("isrc-refused.json"), "application/json"),
+            "refused",
+        ),
+        (ResponseTemplate::new(500), "busy"),
+        (
+            ResponseTemplate::new(200).set_body_raw("<html>not json</html>", "text/html"),
+            "busy",
+        ),
+        (json_answer(recorded("search-empty.json")), "answer"),
+    ];
+    for (answer, expected) in cases {
+        let (client, _server) = client(answer).await;
+        let asked = client
+            .ask(
+                "recording?query=isrc:GBA077700130&limit=100&fmt=json",
+                "code search",
+            )
+            .await
+            .expect("no timeout");
+        let kind = match asked {
+            Asked::Answer(_) => "answer",
+            Asked::NotKnown => "not known",
+            Asked::Refused => "refused",
+            Asked::Busy => "busy",
+        };
+        assert_eq!(kind, expected);
+    }
+    assert_eq!(
+        logs.at(tracing::Level::WARN).len(),
+        1,
+        "{:?}",
+        logs.at(tracing::Level::WARN)
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_lookup_by_an_id_that_is_not_a_musicbrainz_id_is_nothing_whatever_musicbrainz_says() {
+    let (logs, _guard) = crate::services::test_support::LogCapture::start();
+    let (client, _server) = client(
+        ResponseTemplate::new(400)
+            .set_body_raw(r#"{"error":"Something else entirely."}"#, "application/json"),
+    )
+    .await;
+    assert!(
+        client
+            .lookup_release("not-an-mbid")
+            .await
+            .expect("no timeout")
+            .is_none()
+    );
+    assert!(asks_by_a_non_mbid("release/not-an-mbid?inc=labels&fmt=json"));
+    assert!(!asks_by_a_non_mbid(
+        "release/5e5c5a1c-b4fc-4ba2-9d1e-5f0e1bd1b9a2?inc=labels&fmt=json"
+    ));
+    assert!(!asks_by_a_non_mbid(
+        "recording?query=isrc:GBA077700130&limit=100&fmt=json"
+    ));
+    assert!(!asks_by_a_non_mbid(
+        "isrc/GBA077700130?inc=artist-credits&fmt=json"
+    ));
+    assert!(
+        logs.at(tracing::Level::WARN).is_empty(),
+        "{:?}",
+        logs.at(tracing::Level::WARN)
+    );
+}
+
+#[tokio::test]
+async fn a_big_code_answer_keeps_25_releases_a_recording_and_drops_its_dj_mix_segment() {
+    let raw: serde_json::Value =
+        serde_json::from_str(&recorded("isrc-search-USSM19803320.json")).expect("JSON");
+    let (client, _server) = code_server(
+        "USSM19803320",
+        json_answer(recorded("isrc-search-USSM19803320.json")),
+        ResponseTemplate::new(500),
+    )
+    .await;
+    let IsrcLookup::Found(doc) = client.lookup_isrc("USSM19803320").await.expect("no timeout") else {
+        panic!("found");
+    };
+    assert_eq!(ids(&doc), ["384f304d-5539-4cbf-920b-cfa8e69f795e"]);
+    assert_eq!(
+        doc["recordings"][0]["releases"].as_array().map(Vec::len),
+        Some(25)
+    );
+
+    // The candidates are those of the whole answer without the segment: the reader takes 25.
+    let mut whole = raw.clone();
+    let recordings = whole["recordings"].as_array_mut().expect("recordings");
+    recordings.retain(|r| r["id"] != "4f6bae05-b451-4117-8703-f4fffa07322c");
+    whole
+        .as_object_mut()
+        .expect("an object")
+        .insert("isrc".into(), serde_json::Value::String("USSM19803320".into()));
+    use octo_core::tagging::candidate_sources::CandidateSources;
+    assert_eq!(
+        CandidateSources::from_isrc_lookup(&doc),
+        CandidateSources::from_isrc_lookup(&whole)
+    );
 }

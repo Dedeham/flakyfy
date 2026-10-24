@@ -431,7 +431,7 @@ async fn a_code_answer_keeps_at_most_25_releases_per_recording_and_the_same_cand
 
 #[tokio::test]
 async fn a_dj_mix_segment_the_code_lists_is_left_out() {
-    let (client, _server) = code_server(
+    let (client, server) = code_server(
         "USSM19803320",
         json_answer(recorded("search-empty.json")),
         json_answer(recorded("isrc-lookup-USSM19803320.json")),
@@ -445,6 +445,13 @@ async fn a_dj_mix_segment_the_code_lists_is_left_out() {
         panic!("found");
     };
     assert_eq!(ids(&doc), ["384f304d-5539-4cbf-920b-cfa8e69f795e"]);
+    // The code lookup alone: the search is not asked for the matcher.
+    let asked = calls(&server).await;
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(
+        asked[0].ends_with("/ws/2/isrc/USSM19803320?inc=artist-credits&fmt=json"),
+        "{asked:?}"
+    );
 }
 
 #[test]
@@ -469,17 +476,14 @@ fn a_dj_mix_segment_is_read_however_its_hyphen_is_written() {
 }
 
 #[tokio::test]
-async fn the_matcher_also_gets_the_recordings_only_the_code_lookup_lists() {
-    let search = serde_json::json!({"recordings": [
-        {"id": "a", "title": "Song", "isrcs": ["GBA077700130"], "releases": [{"id": "r"}]}
-    ]});
+async fn the_matcher_gets_every_recording_the_code_lookup_lists() {
     let lookup = serde_json::json!({"isrc": "GBA077700130", "recordings": [
         {"id": "a", "title": "Song"},
         {"id": "b", "title": "Song"}
     ]});
     let (client, server) = code_server(
         "GBA077700130",
-        json_answer(search.to_string()),
+        ResponseTemplate::new(500),
         json_answer(lookup.to_string()),
     )
     .await;
@@ -491,13 +495,58 @@ async fn the_matcher_also_gets_the_recordings_only_the_code_lookup_lists() {
         panic!("found");
     };
     assert_eq!(ids(&doc), ["a", "b"]);
-    // The search's own copy of "a", with its releases, is the one kept.
-    assert_eq!(doc["recordings"][0]["releases"][0]["id"], "r");
+    // Remembered: asked once.
+    client
+        .isrc_recordings_in_background("GBA077700130")
+        .await
+        .expect("no timeout");
     let asked = calls(&server).await;
-    assert_eq!(asked.len(), 2);
+    assert_eq!(asked.len(), 1, "{asked:?}");
     assert!(
-        asked[1].ends_with("/ws/2/isrc/GBA077700130?inc=artist-credits&fmt=json"),
+        asked[0].ends_with("/ws/2/isrc/GBA077700130?inc=artist-credits&fmt=json"),
         "{asked:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_matchers_code_lookup_tells_each_kind_of_answer() {
+    let (busy, _a) = code_server(
+        "GBA077700130",
+        ResponseTemplate::new(500),
+        ResponseTemplate::new(503),
+    )
+    .await;
+    assert_eq!(
+        busy.isrc_recordings_in_background("GBA077700130")
+            .await
+            .expect("no timeout"),
+        IsrcLookup::Unanswered
+    );
+    let (refused, _b) = code_server(
+        "GBA077700130",
+        ResponseTemplate::new(500),
+        ResponseTemplate::new(400).set_body_raw(recorded("isrc-refused.json"), "application/json"),
+    )
+    .await;
+    assert_eq!(
+        refused
+            .isrc_recordings_in_background("GBA077700130")
+            .await
+            .expect("no timeout"),
+        IsrcLookup::Refused
+    );
+    let (unknown, _c) = code_server(
+        "ZZZZZ0000001",
+        ResponseTemplate::new(500),
+        ResponseTemplate::new(404).set_body_raw(recorded("isrc-not-found.json"), "application/json"),
+    )
+    .await;
+    assert_eq!(
+        unknown
+            .isrc_recordings_in_background("ZZZZZ0000001")
+            .await
+            .expect("no timeout"),
+        IsrcLookup::NotKnown
     );
 }
 

@@ -247,56 +247,52 @@ impl MusicBrainzClient {
     /// refuses their groups. A recording the search lists without the code, and a DJ-mix segment,
     /// are left out. Only a found answer is remembered.
     pub async fn lookup_isrc(&self, isrc: &str) -> Result<IsrcLookup, MusicBrainzError> {
-        self.lookup_isrc_on(isrc, false).await
+        self.code_search(isrc).await
     }
 
-    /// [`Self::lookup_isrc`] on the background lane, for work nobody waits on. The code lookup
-    /// is asked as well, and its recordings join the search's, so a recording the search does
-    /// not list yet is not missed. Remembered apart from [`Self::lookup_isrc`]'s answers, whose
-    /// recordings all carry their releases.
+    /// Every recording that carries one code, without its releases, asked on the background
+    /// lane for work nobody waits on: the code lookup, which knows a code the moment it is
+    /// entered and lists each recording once. A DJ-mix segment is left out. Only a found answer
+    /// is remembered.
     pub async fn isrc_recordings_in_background(&self, isrc: &str) -> Result<IsrcLookup, MusicBrainzError> {
-        self.lookup_isrc_on(isrc, true).await
-    }
-
-    async fn lookup_isrc_on(&self, isrc: &str, background: bool) -> Result<IsrcLookup, MusicBrainzError> {
         let Some(code) = SongIdentity::normalize_isrc(isrc) else {
             return Ok(IsrcLookup::NotKnown);
         };
-        let key = if background {
-            format!("isrc-all|{code}")
-        } else {
-            format!("isrc|{code}")
-        };
+        let key = format!("isrc-recordings|{code}");
         if let Some(Cached::Json(cached)) = self.cache.get(&key) {
             return Ok(IsrcLookup::Found(cached));
         }
+        let lookup = format!("isrc/{code}?inc=artist-credits&fmt=json");
+        let recordings = match self.ask_on(&lookup, "code lookup", true).await? {
+            Asked::Answer(doc) => recordings_of(&doc, |_| true),
+            Asked::NotKnown => Vec::new(),
+            Asked::Refused => return Ok(IsrcLookup::Refused),
+            Asked::Busy => return Ok(IsrcLookup::Unanswered),
+        };
+        if recordings.is_empty() {
+            return Ok(IsrcLookup::NotKnown);
+        }
+        let doc = serde_json::json!({ "isrc": code, "recordings": recordings });
+        self.cache
+            .set(key, Cached::Json(doc.clone()), 1, Self::SEARCH_TTL);
+        Ok(IsrcLookup::Found(doc))
+    }
 
+    async fn code_search(&self, isrc: &str) -> Result<IsrcLookup, MusicBrainzError> {
+        let Some(code) = SongIdentity::normalize_isrc(isrc) else {
+            return Ok(IsrcLookup::NotKnown);
+        };
+        let key = format!("isrc|{code}");
+        if let Some(Cached::Json(cached)) = self.cache.get(&key) {
+            return Ok(IsrcLookup::Found(cached));
+        }
         let search = format!("recording?query=isrc:{code}&limit=100&fmt=json");
-        let mut recordings = match self.ask_on(&search, "code search", background).await? {
+        let recordings = match self.ask(&search, "code search").await? {
             Asked::Answer(doc) => recordings_of(&doc, |recording| carries(recording, &code)),
             Asked::NotKnown => Vec::new(),
             Asked::Refused => return Ok(IsrcLookup::Refused),
             Asked::Busy => return Ok(IsrcLookup::Unanswered),
         };
-        if background {
-            let lookup = format!("isrc/{code}?inc=artist-credits&fmt=json");
-            match self.ask_on(&lookup, "code lookup", true).await? {
-                Asked::Answer(doc) => {
-                    for recording in recordings_of(&doc, |_| true) {
-                        let id = recording.get("id").and_then(Value::as_str);
-                        if !recordings
-                            .iter()
-                            .any(|known| known.get("id").and_then(Value::as_str) == id)
-                        {
-                            recordings.push(recording);
-                        }
-                    }
-                }
-                Asked::NotKnown => {}
-                Asked::Refused => return Ok(IsrcLookup::Refused),
-                Asked::Busy => return Ok(IsrcLookup::Unanswered),
-            }
-        }
         if recordings.is_empty() {
             return Ok(IsrcLookup::NotKnown);
         }

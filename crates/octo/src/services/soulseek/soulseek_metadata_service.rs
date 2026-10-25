@@ -590,6 +590,7 @@ impl Inner {
             return None;
         }
         if self.id_registry.pin_video(song_id, &hit.video_id, !background) {
+            self.id_registry.remember_pick(song_id, &hit.video_id, hit.pick);
             if let Some(routing) = self.lookup(song_id) {
                 routing.lock().duration = Some(d);
             }
@@ -657,6 +658,7 @@ impl Inner {
         if !self.id_registry.pin_video(id, &hit.video_id, false) {
             return false;
         }
+        self.id_registry.remember_pick(id, &hit.video_id, hit.pick);
         if let Some(d) = hit.duration {
             routing.lock().duration = Some(d);
         }

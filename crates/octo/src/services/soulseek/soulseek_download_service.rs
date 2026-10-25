@@ -263,7 +263,10 @@ impl SoulseekDownloadService {
 
     fn routing_for(&self, external_id: &str) -> Option<SharedRouting> {
         self.id_registry.lookup(external_id).or_else(|| {
-            SoulseekMetadataService::try_decode_external_id(Some(external_id)).map(SharedRouting::new)
+            SoulseekMetadataService::try_decode_external_id(Some(external_id)).map(|mut routing| {
+                self.id_registry.apply_refusals(&mut routing);
+                SharedRouting::new(routing)
+            })
         })
     }
 
@@ -515,6 +518,8 @@ impl SoulseekDownloadService {
             };
             if let Some(hit) = &hit {
                 self.id_registry.set_you_tube_id(&track_key, &hit.video_id);
+                self.id_registry
+                    .remember_pick(&track_key, &hit.video_id, hit.pick);
                 self.id_registry
                     .remember_stream(&track_key, &hit.video_id, &hit.stream);
             }
@@ -2356,6 +2361,8 @@ impl DownloadBackend for SoulseekDownloadService {
             // to a local one. Every later stream request for this id reads the same pin.
             if let Some(hit) = &hit {
                 self.id_registry.set_you_tube_id(external_id, &hit.video_id);
+                self.id_registry
+                    .remember_pick(external_id, &hit.video_id, hit.pick);
                 // A video the song refuses gives it nothing.
                 if !routing.lock().refuses_video(&hit.video_id) {
                     self.id_registry

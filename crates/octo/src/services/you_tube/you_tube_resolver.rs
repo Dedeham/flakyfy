@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use futures::future::{BoxFuture, Shared};
 use octo_core::settings::SettingsStore;
-use octo_core::soulseek::StreamFacts;
+use octo_core::soulseek::{SoulseekRouting, StreamFacts};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 use tokio::sync::Semaphore;
@@ -24,6 +24,9 @@ pub struct YouTubeHit {
     /// The audio stream the shim picked for this video, when the run that found it had one
     /// (/search does; /meta never picks a stream).
     pub stream: StreamFacts,
+    /// The version of the ranking that chose this video (0 when the answer names none), at most
+    /// [`SoulseekRouting::VIDEO_PICK`].
+    pub pick: u8,
 }
 
 /// An open `/stream` response. The caller owns it and reads the body from `response`
@@ -276,6 +279,7 @@ impl YouTubeResolver {
             duration: row.duration_seconds,
             channel: None,
             stream: StreamFacts::default(),
+            pick: SoulseekRouting::VIDEO_PICK,
         })
     }
 
@@ -517,12 +521,17 @@ fn parse_hit(root: &Value, with_channel: bool) -> anyhow::Result<Option<YouTubeH
     } else {
         None
     };
+    let pick = root
+        .get("rank")
+        .and_then(Value::as_u64)
+        .map_or(0, |rank| rank.min(u64::from(SoulseekRouting::VIDEO_PICK)) as u8);
     Ok(Some(YouTubeHit {
         video_id,
         title,
         duration,
         channel,
         stream: parse_stream(root),
+        pick,
     }))
 }
 
@@ -631,9 +640,38 @@ mod tests {
                 duration: Some(417),
                 channel: Some("Daft Punk - Topic".into()),
                 stream: StreamFacts::default(),
+                pick: 0,
             })
         );
         assert!(resolver.search("  ", None, false).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_ranked_answer_names_the_ranking_that_chose_the_video() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/search"))
+            .and(query_param("q", "Ranked Song"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"abc","rank":3}"#))
+            .mount(&shim)
+            .await;
+        Mock::given(path("/search"))
+            .and(query_param("q", "Newer Song"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"abc","rank":9}"#))
+            .mount(&shim)
+            .await;
+        Mock::given(path("/search"))
+            .and(query_param("q", "Plain Song"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"abc"}"#))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let pick = |q: &'static str| {
+            let resolver = &resolver;
+            async move { resolver.search(q, None, false).await.map(|h| h.pick) }
+        };
+        assert_eq!(pick("Ranked Song").await, Some(3));
+        assert_eq!(pick("Newer Song").await, Some(SoulseekRouting::VIDEO_PICK));
+        assert_eq!(pick("Plain Song").await, Some(0));
     }
 
     #[tokio::test]
@@ -1002,6 +1040,7 @@ mod tests {
                 duration: Some(295),
                 channel: None,
                 stream: StreamFacts::default(),
+                pick: SoulseekRouting::VIDEO_PICK,
             })
         );
     }

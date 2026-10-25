@@ -294,6 +294,7 @@ impl StreamSizeWarmer {
         if !self.registry.pin_video(song_id, &hit.video_id, false) {
             return Some(true);
         }
+        self.registry.remember_pick(song_id, &hit.video_id, hit.pick);
         self.registry.remember_stream(song_id, &hit.video_id, &hit.stream);
         if let (Some(d), Some(routing)) = (hit.duration, self.registry.lookup(song_id)) {
             let mut r = routing.lock();

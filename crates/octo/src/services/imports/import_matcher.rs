@@ -73,6 +73,14 @@ struct IsrcFile {
     recordings: HashMap<String, Vec<IsrcRecording>>,
 }
 
+/// What the music database was asked about at one moment, kept apart so a forget drops only
+/// what it saw.
+#[derive(Debug, Default, Clone)]
+pub struct KnownIsrcs {
+    pub answered: HashSet<String>,
+    pub failed: HashSet<String>,
+}
+
 /// Whether the library already has each imported song, the way Octo decides it everywhere else:
 /// one ISRC, or one MatchKey (the primary artist and the title, one version, so a live take or a
 /// remix is its own song) and a length within LibraryOwnership's 8 seconds when both lengths are
@@ -182,33 +190,41 @@ impl ImportMatcher {
     /// Forgets every answer and failure for ISRCs not in `wanted` (the ISRCs some list still
     /// holds), and writes the file when anything went.
     pub fn keep_only(&self, wanted: &HashSet<String>) {
-        let gone: HashSet<String> = self.known_isrcs().difference(wanted).cloned().collect();
-        self.forget_isrcs(&gone);
+        self.forget_unheld(&self.known_isrcs(), wanted);
     }
 
-    /// The ISRCs the music database was asked about: answered, or failed and waiting to be
-    /// asked again.
-    pub fn known_isrcs(&self) -> HashSet<String> {
-        let mut known: HashSet<String> = self.isrc_recordings.lock().keys().cloned().collect();
-        known.extend(self.isrc_failed.lock().keys().cloned());
-        known
-    }
-
-    /// Forgets the answers and failures for these ISRCs, and writes the file when an answer went.
-    pub fn forget_isrcs(&self, gone: &HashSet<String>) {
-        if gone.is_empty() {
-            return;
+    /// What the music database was asked about, at one moment: the ISRCs it answered and the
+    /// ones whose last ask failed.
+    pub fn known_isrcs(&self) -> KnownIsrcs {
+        KnownIsrcs {
+            answered: self.isrc_recordings.lock().keys().cloned().collect(),
+            failed: self.isrc_failed.lock().keys().cloned().collect(),
         }
+    }
+
+    /// Forgets the answers and failures `known` saw that `held` does not hold. An answer that
+    /// came in since `known` was taken, even for an ISRC that had failed then, stays. Writes
+    /// the file when an answer went.
+    pub fn forget_unheld(&self, known: &KnownIsrcs, held: &HashSet<String>) {
         let mut dropped = false;
         self.isrc_recordings.lock().retain(|isrc, _| {
-            let keep = !gone.contains(isrc);
+            let keep = held.contains(isrc) || !known.answered.contains(isrc);
             dropped |= !keep;
             keep
         });
-        self.isrc_failed.lock().retain(|isrc, _| !gone.contains(isrc));
+        self.isrc_failed
+            .lock()
+            .retain(|isrc, _| held.contains(isrc) || !known.failed.contains(isrc));
         if dropped {
             self.keep_isrc_answers();
         }
+    }
+
+    /// Puts an answer in as if the music database had given it. Only tests need it.
+    #[cfg(test)]
+    pub fn answer_for_tests(&self, isrc: &str, recordings: Vec<IsrcRecording>) {
+        self.isrc_failed.lock().remove(isrc);
+        self.isrc_recordings.lock().insert(isrc.to_string(), recordings);
     }
 
     /// How many ISRCs one round of learning asks the music database about, one a second: a

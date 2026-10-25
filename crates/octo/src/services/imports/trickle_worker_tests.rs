@@ -722,12 +722,18 @@ async fn a_song_put_back_while_a_tick_works_out_the_hold_is_not_taken_again_in_t
             Box::pin(async move {
                 // Lets the song's check end, and waits until it is put back.
                 release.notify_one();
-                while queue
-                    .get("alice", "a")
-                    .is_some_and(|job| job.state != import_track_states::QUEUED)
-                {
+                let mut put_back = false;
+                for _ in 0..10_000 {
+                    if queue
+                        .get("alice", "a")
+                        .is_some_and(|job| job.state == import_track_states::QUEUED)
+                    {
+                        put_back = true;
+                        break;
+                    }
                     tokio::task::yield_now().await;
                 }
+                assert!(put_back, "a was put back");
                 jobs.iter()
                     .enumerate()
                     .filter(|(_, job)| job.key == "b")

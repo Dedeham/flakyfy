@@ -1240,3 +1240,30 @@ async fn working_out_the_hold_never_reads_the_library() {
     }
     assert_eq!(reads.load(Ordering::SeqCst), before, "no library read");
 }
+
+#[tokio::test]
+async fn a_forget_keeps_an_answer_that_came_in_for_an_isrc_that_had_failed() {
+    let answers = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let on = answers.clone();
+    let matcher = matcher_over(vec![]).with_isrc_recordings(Arc::new(move |_isrc: String| {
+        let answer = on.load(Ordering::SeqCst).then(Vec::new);
+        Box::pin(async move { answer })
+    }));
+    let coded = with_isrc(track("Portishead", "Roads", Some(305), None), "GBAAA9400010");
+    matcher.learn_isrcs(std::slice::from_ref(&coded)).await;
+    let known = matcher.known_isrcs();
+    assert!(known.failed.contains("GBAAA9400010"));
+    answers.store(true, Ordering::SeqCst);
+    matcher.learn_isrcs(std::slice::from_ref(&coded)).await;
+    assert!(matcher.knows_isrc_for_tests("GBAAA9400010"));
+    matcher.forget_unheld(&known, &HashSet::new());
+    assert!(
+        matcher.knows_isrc_for_tests("GBAAA9400010"),
+        "the answer came in after the look"
+    );
+    matcher.forget_unheld(&matcher.known_isrcs(), &HashSet::new());
+    assert!(
+        !matcher.knows_isrc_for_tests("GBAAA9400010"),
+        "a later look sees it and nothing holds it"
+    );
+}

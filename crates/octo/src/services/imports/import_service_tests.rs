@@ -1063,19 +1063,33 @@ async fn a_loop_pass_forgets_an_answer_nothing_holds_any_more() {
 }
 
 #[tokio::test]
-async fn forgetting_keeps_an_answer_learned_after_it_looked() {
+async fn an_answer_learned_while_the_forget_looks_is_kept() {
     let asked = Arc::new(AtomicUsize::new(0));
     let rig = coded_rig(Some(Vec::new()), asked).await;
-    // Known before: a code nothing holds. Learned after the look: a code a new list holds.
-    let known = rig.service.matcher().known_isrcs();
-    assert!(known.is_empty());
-    coded_list(&rig, "alice", "GBAAA9400010");
-    rig.service.match_and_follow("alice").await;
-    rig.service.learn_once().await;
-    assert!(rig.service.matcher().knows_isrc_for_tests("GBAAA9400010"));
-    rig.service.matcher().forget_isrcs(&known);
+    let (store, matcher) = (rig.store.clone(), Arc::clone(rig.service.matcher()));
+    // Between the look at what is held and the forget, a list holding the ISRC is saved and
+    // the ISRC answered.
+    *rig.service.after_held_look.lock() = Some(Box::new(move || {
+        let mut roads = song("k-roads", "Roads", "Portishead", 305);
+        roads.isrc = Some("GBAAA9400010".into());
+        store.save(ImportList {
+            id: "alice-coded".into(),
+            owner: "alice".into(),
+            tracks: vec![roads],
+            ..Default::default()
+        });
+        matcher.answer_for_tests(
+            "GBAAA9400010",
+            vec![IsrcRecording {
+                id: "rec-roads".into(),
+                title: "Roads".into(),
+                seconds: Some(305),
+            }],
+        );
+    }));
+    rig.service.forget_unheld_answers();
     assert!(
         rig.service.matcher().knows_isrc_for_tests("GBAAA9400010"),
-        "only what was known goes"
+        "the answer learned meanwhile stays"
     );
 }

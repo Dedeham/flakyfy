@@ -1,6 +1,6 @@
 //! The import service: every person's imported lists, their matching and their playlists.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -81,6 +81,9 @@ pub struct ImportService {
     /// Family's write gate and requests: a member who must ask first asks for a list's missing
     /// songs instead of fetching them. Unset, or with Family off, everyone fetches as always.
     family: std::sync::OnceLock<ImportFamily>,
+    /// Runs between the held look and the forget in `forget_unheld_answers`. Only tests set it.
+    #[cfg(test)]
+    after_held_look: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 /// What imports use for family members.
@@ -147,6 +150,8 @@ impl ImportService {
             playlist_retries: Mutex::new(HashMap::new()),
             clock: Mutex::new(Clock::system()),
             family: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            after_held_look: Mutex::new(None),
         });
         let weak = Arc::downgrade(&service);
         service.trickle.on_finished(Arc::new(move |job| {
@@ -1067,8 +1072,11 @@ impl ImportService {
         let known = self.matcher.known_isrcs();
         let mut held = self.store.held_isrcs();
         held.extend(self.queue.open_isrcs());
-        let gone: HashSet<String> = known.difference(&held).cloned().collect();
-        self.matcher.forget_isrcs(&gone);
+        #[cfg(test)]
+        if let Some(hook) = self.after_held_look.lock().take() {
+            hook();
+        }
+        self.matcher.forget_unheld(&known, &held);
     }
 
     /// One round of asking about the ISRCs of everyone whose songs wait for answers. An answer

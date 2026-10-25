@@ -410,6 +410,10 @@ def _is_bg() -> bool:
     return request.args.get("bg") == "1"
 
 
+# The version of the ranking, sent with every ranked answer so Octo knows which picks to look at again.
+_RANK = 3
+
+
 @app.get("/search")
 def search():
     q = request.args.get("q", "").strip()
@@ -421,18 +425,27 @@ def search():
     bg = _is_bg()
     skip = tuple(s for s in request.args.get("skip", "").split(",") if s)
 
+    resolve = request.args.get("resolve") != "0"
+    # Rank-only background work neither reads nor fills the caches.
+    uncached = bg and not resolve
+
     cache_key = f"{q.lower()}|{duration_hint or ''}|{','.join(sorted(skip))}"
-    cached = _cache_get(cache_key)
+    cached = None if uncached else _cache_get(cache_key)
     if cached is not None:
         return jsonify(**cached)
 
-    payload = _search_with_hint(q, duration_hint, bg, skip) if duration_hint is not None or skip else _search_single(q, bg)
+    if duration_hint is not None or skip or not resolve:
+        payload = _search_with_hint(q, duration_hint, bg, skip, resolve=resolve)
+    else:
+        payload = _search_single(q, bg)
     if payload is None:
         return jsonify(error="search_failed"), 502
     if not payload.get("video_id"):
         return jsonify(error="no_hit"), 404
 
-    _cache_put(cache_key, payload)
+    payload = {**payload, "rank": _RANK}
+    if not uncached:
+        _cache_put(cache_key, payload)
     return jsonify(**payload)
 
 
@@ -470,6 +483,11 @@ def _search_single(q: str, bg: bool = False) -> Optional[dict]:
     except json.JSONDecodeError as e:
         log.warning("search: bad json from yt-dlp: %s", e)
         return None
+    # YouTube's first hit is kept only when it names the song and is no other take; otherwise the
+    # five are ranked.
+    core, extra = _query_words(q)
+    if _rank_key(data, core, extra, _takes(q), None)[:3] != (0, 0, 0):
+        return _search_with_hint(q, None, bg)
     payload = _payload_from(data)
     if payload.get("video_id") and stream_url:
         # Warm the URL cache from the SAME extraction. This used to be a second
@@ -497,11 +515,43 @@ _FILLER = {"feat", "ft", "featuring", "with", "x", "and", "the", "a", "an", "of"
            "official", "video", "audio", "lyrics", "lyric", "music", "topic", "prod"}
 
 
+_SCRIPT_FOLD = {"HIRAGANA", "KATAKANA", "BOPOMOFO", "CJK", "IDEOGRAPHIC", "KATAKANA-HIRAGANA"}
+
+
+def _script_of(ch: str) -> Optional[str]:
+    """The script one letter is written in, or None for a letter that joins any script."""
+    if not ch.isalpha():
+        return None
+    first = unicodedata.name(ch, "").split(" ", 1)[0]
+    if not first or first == "MODIFIER":
+        return None
+    return "HAN" if first in _SCRIPT_FOLD else first
+
+
+def _scripts(text: str) -> set:
+    """The scripts a text's letters are written in, with Japanese kana and Chinese characters
+    counted as one."""
+    return {s for s in map(_script_of, text) if s}
+
+
 def _words(text: str) -> set:
-    """The words of a title or a query, in lower case, accents and punctuation gone."""
+    """The words of a title or a query, in lower case, accents and punctuation gone. A run of
+    letters changing script splits into one word per script."""
     plain = unicodedata.normalize("NFKD", text or "")
     plain = "".join(c for c in plain if not unicodedata.combining(c))
-    return set(re.findall(r"\w+", plain.casefold()))
+    found = set()
+    for run in re.findall(r"\w+", plain.casefold()):
+        start, current = 0, None
+        for i, ch in enumerate(run):
+            s = _script_of(ch)
+            if s is None:
+                continue
+            if current is not None and s != current:
+                found.add(run[start:i])
+                start = i
+            current = s
+        found.add(run[start:])
+    return found
 
 
 def _takes(text: str) -> Counter:
@@ -532,28 +582,44 @@ def _rank_by_length(candidates: list, q: str, duration_hint: Optional[int]) -> l
     Take words are counted, so a title that holds one ("Live Forever") is not held against a
     video saying it once. A word no video has adds the same to every key, so a title in another
     script leaves the order to the rest. Without a length hint, ties keep YouTube's order.
-    Candidates without a duration sort last."""
+    Candidates without a duration sort last.
+
+    A query word in another script than the words the candidate's own title adds is not held
+    against an upload whose channel names the song, so a native-script title on the artist's
+    channel wins over a translated fan upload."""
     core, extra = _query_words(q)
     asked = _takes(q)
-
-    def key(r: dict):
-        title = r.get("title") or ""
-        named = _words(title) | _words(r.get("channel") or "")
-        other = sum((_takes(title) - asked).values())
-        if not r.get("duration"):
-            length = float("inf")
-        elif duration_hint is None:
-            length = 0
-        else:
-            length = abs(r["duration"] - duration_hint)
-        return (len(core - named), other, len(extra - named), length)
-
-    return sorted(candidates, key=key)
+    return sorted(candidates, key=lambda r: _rank_key(r, core, extra, asked, duration_hint))
 
 
-def _search_with_hint(q: str, duration_hint: Optional[int], bg: bool = False, skip: tuple = ()) -> Optional[dict]:
+def _rank_key(r: dict, core: set, extra: set, asked: Counter, duration_hint: Optional[int]) -> tuple:
+    """The sort key of one candidate: core words it does not name, other takes it holds, extra
+    words it does not name, then its distance in length from the hint."""
+    tw, cw = _words(r.get("title") or ""), _words(r.get("channel") or "")
+    named = tw | cw
+    loose = tw - core - extra - _FILLER
+    foreign = set().union(*map(_scripts, loose)) if loose else set()
+    vouched = bool(core & cw)  # the channel names the song: the artist's own or Topic upload
+
+    def judged(w):
+        s = _scripts(w)
+        return not (vouched and s and (foreign - s))
+
+    missing = sum(1 for w in core - named if judged(w))
+    other = sum((_takes(r.get("title") or "") - asked).values())
+    if not r.get("duration"):
+        length = float("inf")
+    elif duration_hint is None:
+        length = 0
+    else:
+        length = abs(r["duration"] - duration_hint)
+    return (missing, other, len(extra - named), length)
+
+
+def _search_with_hint(q: str, duration_hint: Optional[int], bg: bool = False, skip: tuple = (),
+                      resolve: bool = True) -> Optional[dict]:
     """Five flat candidates for the query, ranked by `_rank_by_length` (named words, other
-    takes, then length), then the winner's URL resolved once.
+    takes, then length), then the winner's URL resolved once unless `resolve` is false.
     Videos in `skip` are left out.
 
     Note this path costs TWO gated yt-dlp runs per track (search5 then resolve),
@@ -587,7 +653,7 @@ def _search_with_hint(q: str, duration_hint: Optional[int], bg: bool = False, sk
     # sort last so a hint never drags us onto an entry we can't length-match.
     candidates = _rank_by_length(candidates, q, duration_hint)
     payload = _payload_from(candidates[0])
-    if payload.get("video_id"):
+    if payload.get("video_id") and resolve:
         # Warm the URL cache for the coming /stream (single-flight + cached).
         _resolve_url(payload["video_id"], bg)
     return _with_facts(payload)
@@ -677,22 +743,40 @@ def meta():
     bg = _is_bg()
 
     # The ranking's version leads the key, so a lookup answered by an older ranking is searched again.
-    key = "v2|" + _norm_q(q)
+    key = "v3|" + _norm_q(q)
     # Hot front: exact repeat within this process.
     with _META_CACHE_LOCK:
         c = _META_CACHE.get(key)
         if c is not None:
             _META_CACHE.move_to_end(key)
-            return jsonify(**c)
+            return jsonify(**c, rank=_RANK)
     # Durable backing: resolved in a past search/warm, possibly a past process.
     persisted = _meta_db_get(key)
     if persisted is not None:
         with _META_CACHE_LOCK:
             _META_CACHE[key] = persisted
             _META_CACHE.move_to_end(key)
-        return jsonify(**persisted)
+        return jsonify(**persisted, rank=_RANK)
 
-    if duration_hint is not None:
+    data = None
+    if duration_hint is None:
+        out = _run([f"ytsearch1:{q}", "--flat-playlist", "--print", "%(.{id,title,duration,channel})j"],
+                   timeout=15, label="meta", bg=bg)
+        if out is None:
+            return jsonify(error="search_failed"), 502
+        line = next((ln.strip() for ln in out.strip().split("\n") if ln.strip()), "")
+        if not line:
+            return jsonify(error="no_hit"), 404
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            return jsonify(error="bad_yt_response"), 502
+        # YouTube's first hit is kept only when it names the song and is no other take; otherwise the
+        # five are ranked.
+        core, extra = _query_words(q)
+        if _rank_key(data, core, extra, _takes(q), None)[:3] != (0, 0, 0):
+            data = None
+    if data is None:
         out = _run([f"ytsearch5:{q}", "--flat-playlist", "--print", "%(.{id,title,duration,channel})j"],
                    timeout=20, label="meta5", bg=bg)
         cands = []
@@ -706,18 +790,6 @@ def meta():
         if not cands:
             return jsonify(error="no_hit"), 404
         data = _rank_by_length(cands, q, duration_hint)[0]
-    else:
-        out = _run([f"ytsearch1:{q}", "--flat-playlist", "--print", "%(.{id,title,duration})j"],
-                   timeout=15, label="meta", bg=bg)
-        if out is None:
-            return jsonify(error="search_failed"), 502
-        line = next((ln.strip() for ln in out.strip().split("\n") if ln.strip()), "")
-        if not line:
-            return jsonify(error="no_hit"), 404
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            return jsonify(error="bad_yt_response"), 502
 
     payload = {"video_id": data.get("id"), "title": data.get("title"), "duration": data.get("duration")}
     if payload["video_id"]:
@@ -727,7 +799,7 @@ def meta():
             while len(_META_CACHE) > _SEARCH_CACHE_MAX:
                 _META_CACHE.popitem(last=False)
         _meta_db_put(key, payload)  # persist so it survives restarts, for both modes
-    return jsonify(**payload)
+    return jsonify(**payload, rank=_RANK)
 
 
 def _resolve_url(video_id: str, bg: bool = False) -> Optional[str]:
@@ -1076,6 +1148,8 @@ _YTM_GATE = threading.BoundedSemaphore(int(os.environ.get("YTM_MAX_CONCURRENT", 
 # Octo gives a radio source 8 s; a request still queued past this has no one waiting for it, and
 # would only hold a gunicorn thread that playback needs.
 _YTM_GATE_WAIT = float(os.environ.get("YTM_GATE_WAIT_SEC", "5"))
+# Background searches share one slot, so they never crowd out a radio someone is waiting on.
+_YTM_BG_GATE = threading.BoundedSemaphore(1)
 # One cache per kind, so a burst of radios never pushes the searches out.
 _YTM_CACHE: "dict[str, OrderedDict]" = {"search": OrderedDict(), "radio": OrderedDict(), "artist": OrderedDict()}
 _YTM_LIMIT = {"search": 2000, "radio": 500, "artist": 500}
@@ -1090,20 +1164,25 @@ def _arg_int(name, default, low, high):
         return default
 
 
-def _ytm_cached(kind, key, load):
-    """A cached answer, else load() under the gate; None when the gate stays full."""
+def _ytm_cached(kind, key, load, bg=False):
+    """A cached answer, else load() under the gate; None when the gate stays full.
+    Background work has its own one-slot gate that never waits, and never fills the cache."""
     cache = _YTM_CACHE[kind]
     with _YTM_LOCK:
         hit = cache.get(key)
         if hit and time.time() - hit[0] < _YTM_TTL[kind]:
             cache.move_to_end(key)
             return hit[1]
-    if not _YTM_GATE.acquire(timeout=_YTM_GATE_WAIT):
+    gate = _YTM_BG_GATE if bg else _YTM_GATE
+    taken = gate.acquire(blocking=False) if bg else gate.acquire(timeout=_YTM_GATE_WAIT)
+    if not taken:
         return None
     try:
         value = load()
     finally:
-        _YTM_GATE.release()
+        gate.release()
+    if bg:
+        return value
     with _YTM_LOCK:
         cache[key] = (time.time(), value)
         while len(cache) > _YTM_LIMIT[kind]:
@@ -1121,7 +1200,8 @@ def ytm_search():
         abort(400, "filter must be songs or videos")
     limit = _arg_int("limit", 10, 1, 20)
     try:
-        rows = _ytm_cached("search", (q.lower(), filter_name, limit), lambda: ytm.search(q, filter_name, limit))
+        rows = _ytm_cached("search", (q.lower(), filter_name, limit), lambda: ytm.search(q, filter_name, limit),
+                           bg=_is_bg())
     except Exception as e:  # ytmusicapi raises plain exceptions when YouTube Music changes its pages
         log.warning("ytm search failed for %r: %s", q, e)
         return jsonify(error="ytm_failed"), 502

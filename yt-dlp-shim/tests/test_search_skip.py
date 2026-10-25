@@ -75,6 +75,6 @@ def test_meta_reads_the_channel(runs):
 
 def test_meta_searches_again_for_a_lookup_an_older_ranking_answered(runs):
     runs["rows"] = list(TEARDROP)
-    app_module._meta_db_put("massive attack teardrop", {"video_id": "old", "title": "x", "duration": 1})
+    app_module._meta_db_put("v2|massive attack teardrop", {"video_id": "old", "title": "x", "duration": 1})
     answer = client.get("/meta?q=Massive Attack Teardrop&duration=330").get_json()
     assert answer["video_id"] == "topic"

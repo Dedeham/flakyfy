@@ -1032,3 +1032,50 @@ async fn removing_a_list_takes_its_answers_out_of_the_answers_file() {
     let kept = std::fs::read_to_string(&file).expect("the answers file");
     assert!(!kept.contains("GBAAA9400010"), "{kept}");
 }
+
+#[tokio::test]
+async fn a_loop_pass_forgets_an_answer_nothing_holds_any_more() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let rig = coded_rig(
+        Some(vec![IsrcRecording {
+            id: "rec-roads".into(),
+            title: "Roads".into(),
+            seconds: Some(305),
+        }]),
+        asked,
+    )
+    .await;
+    let mut roads = song("k-roads", "Roads", "Portishead", 305);
+    roads.isrc = Some("GBAAA9400010".into());
+    rig.queue.add("alice", &[roads]);
+    rig.service.learn_later("alice");
+    rig.service.learn_once().await;
+    assert!(rig.service.matcher().knows_isrc_for_tests("GBAAA9400010"));
+    rig.queue.update("alice", "k-roads", |job| {
+        job.state = import_track_states::DONE.to_string()
+    });
+    assert!(rig.service.learning.lock().is_empty(), "no learning round runs");
+    rig.service.loop_once().await.expect("a pass");
+    assert!(
+        !rig.service.matcher().knows_isrc_for_tests("GBAAA9400010"),
+        "the pass forgot it"
+    );
+}
+
+#[tokio::test]
+async fn forgetting_keeps_an_answer_learned_after_it_looked() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let rig = coded_rig(Some(Vec::new()), asked).await;
+    // Known before: a code nothing holds. Learned after the look: a code a new list holds.
+    let known = rig.service.matcher().known_isrcs();
+    assert!(known.is_empty());
+    coded_list(&rig, "alice", "GBAAA9400010");
+    rig.service.match_and_follow("alice").await;
+    rig.service.learn_once().await;
+    assert!(rig.service.matcher().knows_isrc_for_tests("GBAAA9400010"));
+    rig.service.matcher().forget_isrcs(&known);
+    assert!(
+        rig.service.matcher().knows_isrc_for_tests("GBAAA9400010"),
+        "only what was known goes"
+    );
+}

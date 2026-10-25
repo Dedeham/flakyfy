@@ -1,6 +1,6 @@
 //! The import service: every person's imported lists, their matching and their playlists.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -1062,9 +1062,13 @@ impl ImportService {
     /// Forgets what the music database said about ISRCs no list holds and no waiting song
     /// carries any more.
     fn forget_unheld_answers(&self) {
+        // What was known before looking at what is held: an answer learned meanwhile, for a
+        // list saved meanwhile, is not dropped.
+        let known = self.matcher.known_isrcs();
         let mut held = self.store.held_isrcs();
         held.extend(self.queue.open_isrcs());
-        self.matcher.keep_only(&held);
+        let gone: HashSet<String> = known.difference(&held).cloned().collect();
+        self.matcher.forget_isrcs(&gone);
     }
 
     /// One round of asking about the ISRCs of everyone whose songs wait for answers. An answer

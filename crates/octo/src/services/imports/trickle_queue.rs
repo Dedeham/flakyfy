@@ -314,6 +314,23 @@ impl TrickleQueue {
         }
     }
 
+    /// Puts these words on a song while it is still running, for while it is checked; a song
+    /// skipped or taken back meanwhile keeps its own.
+    pub fn say_while_running(&self, owner: &str, key: &str, detail: &str) {
+        let now = self.now();
+        let mut state = self.state.lock();
+        let Some(job) = state
+            .jobs
+            .get_mut(&key_of(owner, key))
+            .filter(|job| job.state == import_track_states::DOWNLOADING)
+        else {
+            return;
+        };
+        job.detail = Some(detail.to_string());
+        job.updated_utc = now;
+        self.write(&state);
+    }
+
     /// Gives back the song `take_next` just handed out, while it is still being checked: queued
     /// again behind the owner's other songs, with these words. With `turn_back` the trickle's
     /// pacing is as it was before, so the next song may start at once (only songs like this one

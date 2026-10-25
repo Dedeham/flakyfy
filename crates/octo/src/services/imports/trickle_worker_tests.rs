@@ -694,3 +694,58 @@ async fn a_song_found_in_the_library_during_its_check_is_not_taken_back_by_a_can
     );
     assert_eq!(rig.queue.last_start_utc(), slot, "the used turn stays used");
 }
+
+#[tokio::test]
+async fn a_song_put_back_while_a_tick_works_out_the_hold_is_not_taken_again_in_that_tick() {
+    let rig = rig();
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let waited = gate.clone();
+    rig.worker.configure(move |seams| {
+        seams.owned = Arc::new(move |_| {
+            let waited = waited.clone();
+            Box::pin(async move {
+                waited.notified().await;
+                Err(TrickleCheckLater {
+                    detail: WAITING_FOR_ANSWER.to_string(),
+                    turn_back: true,
+                }
+                .into())
+            })
+        });
+    });
+    rig.add(&["a", "b"]);
+    assert!(rig.worker.tick().await, "a is taken");
+    let (queue, release) = (rig.queue.clone(), gate.clone());
+    rig.worker.configure(move |seams| {
+        seams.held = Arc::new(move |jobs| {
+            let (queue, release) = (queue.clone(), release.clone());
+            Box::pin(async move {
+                // Lets the song's check end, and waits until it is put back.
+                release.notify_one();
+                while queue
+                    .get("alice", "a")
+                    .is_some_and(|job| job.state != import_track_states::QUEUED)
+                {
+                    tokio::task::yield_now().await;
+                }
+                jobs.iter()
+                    .enumerate()
+                    .filter(|(_, job)| job.key == "b")
+                    .map(|(at, _)| at)
+                    .collect::<HashSet<usize>>()
+            })
+        });
+    });
+    assert!(
+        !rig.worker.tick().await,
+        "the tick that began while a ran does not take it again"
+    );
+    assert_eq!(
+        rig.queue.get("alice", "a").expect("a").state,
+        import_track_states::QUEUED
+    );
+    assert_eq!(
+        rig.queue.get("alice", "b").expect("b").state,
+        import_track_states::QUEUED
+    );
+}

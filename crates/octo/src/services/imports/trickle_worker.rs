@@ -103,7 +103,7 @@ pub struct TrickleSeams {
     pub row: RowSeam,
     pub people_downloading: BusySeam,
     pub soulseek_out: SoulseekOutSeam,
-    /// The keys of the queued songs that wait for MusicBrainz to answer.
+    /// The places, in the jobs it is given, of the queued songs that wait for MusicBrainz to answer.
     pub held: HeldSeam,
     pub clock: Clock,
 }
@@ -221,11 +221,7 @@ impl TrickleWorker {
                             matcher.has_pending_isrcs(std::slice::from_ref(&job.as_track()))
                         })
                     {
-                        queue.update(&job.owner, &job.key, |j| {
-                            if j.state == import_track_states::DOWNLOADING {
-                                j.detail = Some(CHECKING.to_string());
-                            }
-                        });
+                        queue.say_while_running(&job.owner, &job.key, CHECKING);
                     }
                     last_look(by_name, matcher.as_deref(), &job).await
                 })

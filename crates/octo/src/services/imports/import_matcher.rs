@@ -49,6 +49,8 @@ pub struct IsrcLearning {
     /// Of those, the ISRCs that named a recording a library file is tagged with: the lists may
     /// match differently now.
     pub in_library: usize,
+    /// Whether an ask could not get an answer, so the round stopped there.
+    pub failed: bool,
 }
 
 /// What the last look through a song's ISRC found.
@@ -60,6 +62,8 @@ pub enum IsrcOwnership {
     Missing,
     /// No copy yet, but the music database could not be asked about an ISRC of the song.
     Unanswered,
+    /// The library could not be read, so nothing could be looked for yet.
+    LibraryUnread,
 }
 
 /// What the music database said about each ISRC asked about, as kept on disk.
@@ -88,7 +92,7 @@ pub struct ImportMatcher {
     read_page: Mutex<ReadPage>,
     clock: Mutex<Clock>,
     scope: Option<ScopeResolver>,
-    /// The music database's recordings for each ISRC asked about, kept in the answers file across restarts.
+    /// The music database's recordings for each ISRC asked about; the answers that name recordings are kept in the answers file across restarts.
     isrc_recordings: Arc<Mutex<HashMap<String, Vec<IsrcRecording>>>>,
     ask_isrc: Mutex<Option<IsrcRecordings>>,
     /// The ISRCs whose last ask came back with nothing, each with the turn it failed on: asked after the others, the oldest failure first.
@@ -264,6 +268,7 @@ impl ImportMatcher {
                 None => {
                     let turn = self.failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     self.isrc_failed.lock().insert(isrc, turn);
+                    learning.failed = true;
                     break;
                 }
             }
@@ -292,7 +297,7 @@ impl ImportMatcher {
         }
         self.learn_isrcs(std::slice::from_ref(track)).await;
         let Some(index) = self.library_index().await else {
-            return IsrcOwnership::Unanswered;
+            return IsrcOwnership::LibraryUnread;
         };
         let recordings = self.known_recordings(track);
         let found = self.within(owner, |visible| {
@@ -303,12 +308,21 @@ impl ImportMatcher {
         if let Some(id) = found {
             return IsrcOwnership::Owned(id);
         }
-        let known = self.isrc_recordings.lock();
-        if isrcs.iter().all(|isrc| known.contains_key(isrc)) {
+        // A code the library already answers, or one with no music database to ask, is as good
+        // as answered; only a code still waiting for its answer holds the song.
+        if self
+            .pending_isrcs(Some(&index), std::slice::from_ref(track), 1)
+            .is_empty()
+        {
             IsrcOwnership::Missing
         } else {
             IsrcOwnership::Unanswered
         }
+    }
+
+    #[cfg(test)]
+    pub fn knows_isrc_for_tests(&self, isrc: &str) -> bool {
+        self.isrc_recordings.lock().contains_key(isrc)
     }
 
     /// What the music database said about the track's ISRCs, as far as it was asked.

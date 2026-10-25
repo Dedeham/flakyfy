@@ -358,7 +358,7 @@ async fn the_last_look_finds_a_copy_only_the_isrc_names_and_trusts_the_name_chec
 }
 
 #[tokio::test]
-async fn a_song_whose_isrc_could_not_be_checked_is_put_back_until_its_last_attempt() {
+async fn a_song_whose_isrc_could_not_be_checked_is_always_put_back() {
     use super::super::import_matcher::ImportMatcher;
     let matcher = ImportMatcher::with_pages(Arc::new(|_start, _count| {
         Box::pin(async { Some((Vec::new(), 0)) })
@@ -376,10 +376,12 @@ async fn a_song_whose_isrc_could_not_be_checked_is_put_back_until_its_last_attem
     let later = last_look(None, Some(&matcher), &job).await.expect_err("put back");
     assert!(later.downcast_ref::<TrickleCheckLater>().is_some(), "{later}");
     job.attempts = TrickleWorker::MAX_ATTEMPTS;
-    assert_eq!(
-        last_look(None, Some(&matcher), &job).await.expect("an answer"),
-        None,
-        "the last attempt fetches"
+    let still = last_look(None, Some(&matcher), &job)
+        .await
+        .expect_err("still put back");
+    assert!(
+        still.downcast_ref::<TrickleCheckLater>().is_some(),
+        "never fetched unchecked"
     );
 }
 
@@ -394,5 +396,23 @@ async fn a_job_put_back_for_a_check_is_queued_again_and_says_why() {
     let job = rig.queue.get("alice", "a").expect("a");
     assert_eq!(job.state, import_track_states::QUEUED);
     assert_eq!(job.detail.as_deref(), Some(CHECKING));
+    assert_eq!(job.attempts, 0, "a put-back is not an attempt");
     assert!(rig.started.lock().is_empty(), "nothing was fetched");
+}
+
+#[tokio::test]
+async fn three_turns_while_the_music_database_is_busy_fetch_nothing() {
+    let rig = rig();
+    rig.worker.configure(|seams| {
+        seams.owned = Arc::new(|_| Box::pin(async { Err(TrickleCheckLater(CHECKING.to_string()).into()) }));
+    });
+    rig.add(&["a"]);
+    for _ in 0..3 {
+        rig.tick().await;
+        rig.advance(TimeDelta::minutes(10));
+    }
+    let job = rig.queue.get("alice", "a").expect("a");
+    assert_eq!(job.state, import_track_states::QUEUED);
+    assert_eq!(job.attempts, 0);
+    assert!(rig.started.lock().is_empty(), "nothing was started");
 }

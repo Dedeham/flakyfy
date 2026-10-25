@@ -467,6 +467,7 @@ impl ImportService {
             }),
             ..Default::default()
         });
+        self.forget_unheld_answers();
         self.match_and_follow(user).await;
         Ok(
             ImportActionResult::ok(format!("Added {}, {count} songs.", read.name))
@@ -580,6 +581,7 @@ impl ImportService {
                 ..Default::default()
             });
         }
+        self.forget_unheld_answers();
         self.match_and_follow(user).await;
         ImportActionResult::ok(if count == 1 {
             format!("Added {first_name}, {songs} songs.")
@@ -812,6 +814,7 @@ impl ImportService {
             self.set_get_missing(user, id, false);
         }
         self.store.remove(user, id);
+        self.forget_unheld_answers();
         ImportActionResult::ok(if list.playlist_id.is_none() {
             format!("Removed {}.", list.name)
         } else {
@@ -1049,25 +1052,33 @@ impl ImportService {
             .clone()
     }
 
-    /// One round of asking about the ISRCs of everyone whose lists wait for answers. An answer
-    /// that names a recording a library file is tagged with matches that person again on the
-    /// next pass. Answers for ISRCs no list holds any more are forgotten first. A person leaves
-    /// the round's list only once nothing of theirs waits, so a round that stops halfway loses
-    /// nobody.
-    pub async fn learn_once(&self) {
-        let lists = self.store.all();
-        let held: HashSet<String> = lists
+    /// Forgets what the music database said about ISRCs no list holds any more.
+    fn forget_unheld_answers(&self) {
+        let held: HashSet<String> = self
+            .store
+            .all()
             .iter()
             .flat_map(|list| list.tracks.iter())
             .flat_map(|track| SongIdentity::isrcs(track.isrc.iter()))
             .collect();
         self.matcher.keep_only(&held);
+    }
+
+    /// One round of asking about the ISRCs of everyone whose lists wait for answers. An answer
+    /// that names a recording a library file is tagged with matches that person again on the
+    /// next pass. Answers for ISRCs no list holds any more are forgotten first; a round stops at
+    /// the first question the music database cannot answer. A person leaves
+    /// the round's list only once nothing of theirs waits, so a round that stops halfway loses
+    /// nobody.
+    pub async fn learn_once(&self) {
+        self.forget_unheld_answers();
         let waiting: Vec<String> = self.learning.lock().clone();
         for user in waiting {
-            let tracks: Vec<ImportTrack> = lists
-                .iter()
-                .filter(|list| eq_ignore_case(&list.owner, &user))
-                .flat_map(|list| list.tracks.iter().cloned())
+            let tracks: Vec<ImportTrack> = self
+                .store
+                .lists_of(&user)
+                .into_iter()
+                .flat_map(|list| list.tracks)
                 .collect();
             let learned = self.matcher.learn_isrcs(&tracks).await;
             if learned.in_library > 0 {
@@ -1075,6 +1086,10 @@ impl ImportService {
             }
             if !self.matcher.has_pending_isrcs(&tracks) {
                 self.learning.lock().retain(|u| !eq_ignore_case(u, &user));
+            }
+            // The music database could not answer: the rest wait for the next round.
+            if learned.failed {
+                break;
             }
         }
     }

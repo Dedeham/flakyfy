@@ -810,7 +810,8 @@ async fn a_learning_round_says_what_it_settled() {
         matcher.learn_isrcs(&rows).await,
         IsrcLearning {
             settled: 2,
-            in_library: 1
+            in_library: 1,
+            failed: false
         }
     );
     assert_eq!(
@@ -1064,33 +1065,45 @@ async fn the_last_look_before_a_fetch_finds_a_copy_only_the_isrc_names() {
 }
 
 #[test]
-fn the_answers_file_is_whole_whatever_two_writers_do() {
+fn the_answers_file_has_one_writer_at_a_time() {
     let dir = tempfile::tempdir().expect("a folder");
     let file = dir.path().join("imports-isrc.json");
     let matcher = Arc::new(matcher_over(vec![]).with_isrc_file(Some(file.clone())));
-    let writers: Vec<_> = (0..2)
-        .map(|w| {
-            let matcher = Arc::clone(&matcher);
-            std::thread::spawn(move || {
-                for i in 0..100 {
-                    matcher.isrc_recordings.lock().insert(
-                        format!("GBAA{w}{i:07}"),
-                        vec![IsrcRecording {
-                            id: format!("rec-{w}-{i}"),
-                            title: "Song".into(),
-                            seconds: Some(200),
-                        }],
-                    );
-                    matcher.keep_isrc_answers();
-                }
-            })
-        })
-        .collect();
-    for writer in writers {
-        writer.join().expect("a writer");
-    }
-    let reloaded = matcher_over(vec![]).with_isrc_file(Some(file));
-    assert_eq!(reloaded.isrc_recordings.lock().len(), 200);
+    matcher.isrc_recordings.lock().insert(
+        "GBAAA0000001".into(),
+        vec![IsrcRecording {
+            id: "rec-1".into(),
+            title: "Song".into(),
+            seconds: Some(200),
+        }],
+    );
+    let held = matcher.saving.lock();
+    let writer = {
+        let matcher = Arc::clone(&matcher);
+        std::thread::spawn(move || matcher.keep_isrc_answers())
+    };
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert!(!file.exists(), "the writer waits for the gate");
+    drop(held);
+    writer.join().expect("the writer");
+    assert!(file.exists());
+}
+
+#[tokio::test]
+async fn a_code_the_library_already_answers_holds_nothing() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counted = asked.clone();
+    let live = coded(r("live", "Portishead", "Roads (Live)", 305), "GBAAA9400010");
+    let matcher = matcher_over(vec![live]).with_isrc_recordings(Arc::new(move |_isrc: String| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { None })
+    }));
+    let song = with_isrc(track("Portishead", "Roads", Some(305), None), "GBAAA9400010");
+    assert_eq!(
+        matcher.owned_by_isrc("alice", &song).await,
+        IsrcOwnership::Missing
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

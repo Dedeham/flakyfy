@@ -73,6 +73,8 @@ struct State {
     /// The people who paused theirs, by name ignoring case.
     paused: DotnetDictionary<String>,
     last_start: Option<DateTime<Utc>>,
+    /// `last_start` before the latest `take_next`, so a song put back gives its turn back.
+    start_before: Option<DateTime<Utc>>,
 }
 
 /// The queue itself.
@@ -99,6 +101,7 @@ impl TrickleQueue {
             jobs: DotnetDictionary::new(),
             paused: DotnetDictionary::new(),
             last_start: None,
+            start_before: None,
         };
         if let Some(path) = path.as_deref().filter(|p| p.exists()) {
             let file = load(path);
@@ -258,9 +261,29 @@ impl TrickleQueue {
         job.updated_utc = now;
         job.attempts += 1;
         let next = job.clone();
+        state.start_before = state.last_start;
         state.last_start = Some(now);
         self.write(&state);
         Some(next)
+    }
+
+    /// Gives back the song `take_next` just handed out, untried: queued again behind the
+    /// owner's other songs, its attempt not counted, and the trickle's pacing as it was before,
+    /// so the next song may start at once. For a song that waits on something outside Octo.
+    pub fn put_back(&self, owner: &str, key: &str, detail: &str) {
+        let now = self.now();
+        let mut state = self.state.lock();
+        let restored = state.start_before;
+        let Some(job) = state.jobs.get_mut(&key_of(owner, key)) else {
+            return;
+        };
+        job.state = import_track_states::QUEUED.to_string();
+        job.detail = Some(detail.to_string());
+        job.attempts = (job.attempts - 1).max(0);
+        job.queued_utc = now;
+        job.updated_utc = now;
+        state.last_start = restored;
+        self.write(&state);
     }
 
     pub fn update(&self, owner: &str, key: &str, change: impl FnOnce(&mut TrickleJob)) {

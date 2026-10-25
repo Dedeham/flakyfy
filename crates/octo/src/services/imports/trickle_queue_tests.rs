@@ -159,6 +159,30 @@ fn a_restart_keeps_the_queue_and_the_pause_and_a_running_song_goes_again() {
 }
 
 #[test]
+fn a_song_put_back_gives_its_turn_back_and_waits_behind_the_others() {
+    let (now, clock) = moving_clock();
+    let queue = TrickleQueue::default();
+    queue.set_clock(clock);
+    queue.add("alice", &[song("a"), song("b")]);
+    *now.lock() += TimeDelta::seconds(1);
+    let before = queue.last_start_utc();
+    let taken = queue.take_next().expect("a song");
+    assert_eq!(taken.key, "a");
+    *now.lock() += TimeDelta::seconds(1);
+    queue.put_back("alice", "a", "Checking against the music database");
+    assert_eq!(queue.last_start_utc(), before, "the pacing slot is given back");
+    let job = queue.get("alice", "a").expect("the job");
+    assert_eq!(job.state, import_track_states::QUEUED);
+    assert_eq!(job.attempts, 0);
+    assert_eq!(job.detail.as_deref(), Some("Checking against the music database"));
+    assert_eq!(
+        queue.take_next().expect("the next").key,
+        "b",
+        "it waits behind the others"
+    );
+}
+
+#[test]
 fn canceling_takes_back_only_what_has_not_run() {
     let queue = TrickleQueue::default();
     queue.add("alice", &[song("a"), song("b"), song("c")]);

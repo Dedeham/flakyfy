@@ -824,7 +824,7 @@ arrive; its missing songs can go to the trickle, which fetches them a few an hou
 same chain a heart uses (your library first, then each heart download source in order,
 Soulseek's outage hold, Lidarr). It never starts a song while anyone's own download runs, and
 waits out a Soulseek outage instead of taking a YouTube copy. Lists and the trickle live in
-`/app/config/imports.json` and `imports-trickle.json` (and what the music database said about each list's ISRCs in `imports-isrc.json`), so a restart carries on.
+`/app/config/imports.json` and `imports-trickle.json` (and the recordings the music database named for each list's ISRCs in `imports-isrc.json`), so a restart carries on.
 
 No account, app or key is needed. For Spotify, Apple Music, YouTube Music, Amazon Music, TIDAL,
 Deezer, Qobuz, SoundCloud, Pandora and YouTube, the page walks you through TuneMyMusic's free

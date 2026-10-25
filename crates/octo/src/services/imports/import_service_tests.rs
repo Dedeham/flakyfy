@@ -835,6 +835,52 @@ async fn learning_picks_up_after_a_restart() {
 }
 
 #[tokio::test]
+async fn removing_a_list_forgets_its_isrc_answers() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let rig = coded_rig(
+        Some(vec![IsrcRecording {
+            id: "rec-roads".into(),
+            title: "Roads".into(),
+            seconds: Some(305),
+        }]),
+        asked.clone(),
+    )
+    .await;
+    let id = coded_list(&rig, "alice", "GBAAA9400010");
+    rig.service.match_and_follow("alice").await;
+    rig.service.learn_once().await;
+    assert!(rig.service.matcher().knows_isrc_for_tests("GBAAA9400010"));
+    rig.service.remove("alice", &id);
+    assert!(
+        !rig.service.matcher().knows_isrc_for_tests("GBAAA9400010"),
+        "its answer is gone"
+    );
+}
+
+#[tokio::test]
+async fn a_round_that_stops_halfway_keeps_everyone_waiting() {
+    let ask: IsrcRecordings = Arc::new(|isrc: String| {
+        Box::pin(async move {
+            if isrc == "GBAAA9400011" {
+                futures::future::pending::<()>().await;
+            }
+            Some(Vec::new())
+        })
+    });
+    let rig = rig_with(Arc::new(ImportStore::default()), Some(ask)).await;
+    coded_list(&rig, "alice", "GBAAA9400010");
+    coded_list(&rig, "bob", "GBAAA9400011");
+    rig.service.match_and_follow("alice").await;
+    rig.service.match_and_follow("bob").await;
+    let service = Arc::clone(&rig.service);
+    let round = tokio::spawn(async move { service.learn_once().await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    round.abort();
+    let waiting = rig.service.learning.lock().clone();
+    assert!(waiting.iter().any(|u| u == "bob"), "{waiting:?}");
+}
+
+#[tokio::test]
 async fn getting_the_missing_songs_never_waits_for_the_music_database() {
     let asked = Arc::new(AtomicUsize::new(0));
     let rig = coded_rig(None, asked.clone()).await;

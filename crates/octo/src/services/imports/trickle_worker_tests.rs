@@ -308,7 +308,7 @@ async fn the_last_look_finds_a_copy_only_the_isrc_names_and_trusts_the_name_chec
         900,
     );
     tagged.recording_id = Some("rec-roads".into());
-    let pages = vec![tagged];
+    let pages = [tagged];
     let asked = Arc::new(AtomicUsize::new(0));
     let counted = asked.clone();
     let matcher = ImportMatcher::with_pages(Arc::new(move |start, count| {
@@ -342,15 +342,57 @@ async fn the_last_look_finds_a_copy_only_the_isrc_names_and_trusts_the_name_chec
     };
 
     // The name check found it: no question asked.
-    let named = last_look(Some(OwnedSong(Some("by-name".into()))), Some(&matcher), &job).await;
+    let named = last_look(Some(OwnedSong(Some("by-name".into()))), Some(&matcher), &job)
+        .await
+        .expect("an answer");
     assert_eq!(named, Some(OwnedSong(Some("by-name".into()))));
     assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
 
     // It did not: the ISRC's recordings find the numbered file.
-    let found = last_look(None, Some(&matcher), &job).await;
+    let found = last_look(None, Some(&matcher), &job).await.expect("an answer");
     assert_eq!(found, Some(OwnedSong(Some("nd-roads".into()))));
     assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
 
     // No matcher (no music database): nothing more to look by.
-    assert_eq!(last_look(None, None, &job).await, None);
+    assert_eq!(last_look(None, None, &job).await.expect("an answer"), None);
+}
+
+#[tokio::test]
+async fn a_song_whose_isrc_could_not_be_checked_is_put_back_until_its_last_attempt() {
+    use super::super::import_matcher::ImportMatcher;
+    let matcher = ImportMatcher::with_pages(Arc::new(|_start, _count| {
+        Box::pin(async { Some((Vec::new(), 0)) })
+    }))
+    .with_isrc_recordings(Arc::new(|_isrc: String| Box::pin(async { None })));
+    let mut job = TrickleJob {
+        owner: "alice".into(),
+        key: "k-roads".into(),
+        title: "Roads".into(),
+        artist: "Portishead".into(),
+        isrc: Some("GBAAA9400010".into()),
+        attempts: 1,
+        ..Default::default()
+    };
+    let later = last_look(None, Some(&matcher), &job).await.expect_err("put back");
+    assert!(later.downcast_ref::<TrickleCheckLater>().is_some(), "{later}");
+    job.attempts = TrickleWorker::MAX_ATTEMPTS;
+    assert_eq!(
+        last_look(None, Some(&matcher), &job).await.expect("an answer"),
+        None,
+        "the last attempt fetches"
+    );
+}
+
+#[tokio::test]
+async fn a_job_put_back_for_a_check_is_queued_again_and_says_why() {
+    let rig = rig();
+    rig.worker.configure(|seams| {
+        seams.owned = Arc::new(|_| Box::pin(async { Err(TrickleCheckLater(CHECKING.to_string()).into()) }));
+    });
+    rig.add(&["a"]);
+    rig.tick().await;
+    let job = rig.queue.get("alice", "a").expect("a");
+    assert_eq!(job.state, import_track_states::QUEUED);
+    assert_eq!(job.detail.as_deref(), Some(CHECKING));
+    assert!(rig.started.lock().is_empty(), "nothing was fetched");
 }

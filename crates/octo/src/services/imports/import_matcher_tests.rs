@@ -964,7 +964,7 @@ fn the_waiting_isrcs_of_a_long_list_are_read_quickly() {
             )
         })
         .collect();
-    for i in 20..50_000 {
+    for i in 0..49_980 {
         matcher
             .isrc_failed
             .lock()
@@ -979,6 +979,12 @@ fn the_waiting_isrcs_of_a_long_list_are_read_quickly() {
         started.elapsed()
     );
     // Every song still waits, and that is read quickly too.
+    for i in 49_980..50_000 {
+        matcher
+            .isrc_failed
+            .lock()
+            .insert(format!("GBAAA{i:07}"), i as u64);
+    }
     let started = std::time::Instant::now();
     assert!(matcher.has_pending_isrcs(&rows));
     assert!(
@@ -1040,14 +1046,89 @@ async fn the_last_look_before_a_fetch_finds_a_copy_only_the_isrc_names() {
     }]));
     let song = with_isrc(track("Portishead", "Roads", Some(305), None), "GBAAA9400010");
     assert_eq!(
-        matcher.owned_by_isrc("alice", &song).await.as_deref(),
-        Some("roads")
+        matcher.owned_by_isrc("alice", &song).await,
+        IsrcOwnership::Owned("roads".into())
     );
     let plain = track("Portishead", "Roads", Some(305), None);
     assert_eq!(
         matcher.owned_by_isrc("alice", &plain).await,
-        None,
+        IsrcOwnership::Missing,
         "no ISRC, nothing to look by"
+    );
+    let busy = matcher_over(vec![]).with_isrc_recordings(Arc::new(|_isrc: String| Box::pin(async { None })));
+    assert_eq!(
+        busy.owned_by_isrc("alice", &song).await,
+        IsrcOwnership::Unanswered,
+        "the music database could not be asked"
+    );
+}
+
+#[test]
+fn the_answers_file_is_whole_whatever_two_writers_do() {
+    let dir = tempfile::tempdir().expect("a folder");
+    let file = dir.path().join("imports-isrc.json");
+    let matcher = Arc::new(matcher_over(vec![]).with_isrc_file(Some(file.clone())));
+    let writers: Vec<_> = (0..2)
+        .map(|w| {
+            let matcher = Arc::clone(&matcher);
+            std::thread::spawn(move || {
+                for i in 0..100 {
+                    matcher.isrc_recordings.lock().insert(
+                        format!("GBAA{w}{i:07}"),
+                        vec![IsrcRecording {
+                            id: format!("rec-{w}-{i}"),
+                            title: "Song".into(),
+                            seconds: Some(200),
+                        }],
+                    );
+                    matcher.keep_isrc_answers();
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().expect("a writer");
+    }
+    let reloaded = matcher_over(vec![]).with_isrc_file(Some(file));
+    assert_eq!(reloaded.isrc_recordings.lock().len(), 200);
+}
+
+#[tokio::test]
+async fn answers_for_isrcs_no_list_holds_are_forgotten_and_empty_ones_are_not_kept_on_disk() {
+    let dir = tempfile::tempdir().expect("a folder");
+    let file = dir.path().join("imports-isrc.json");
+    let matcher = matcher_over(vec![]).with_isrc_file(Some(file.clone()));
+    matcher.isrc_recordings.lock().insert(
+        "GBAAA0000001".into(),
+        vec![IsrcRecording {
+            id: "rec-1".into(),
+            title: "Kept".into(),
+            seconds: Some(200),
+        }],
+    );
+    matcher.isrc_recordings.lock().insert(
+        "GBAAA0000002".into(),
+        vec![IsrcRecording {
+            id: "rec-2".into(),
+            title: "Gone".into(),
+            seconds: Some(200),
+        }],
+    );
+    matcher
+        .isrc_recordings
+        .lock()
+        .insert("GBAAA0000003".into(), Vec::new());
+    matcher.keep_only(&HashSet::from([
+        "GBAAA0000001".to_string(),
+        "GBAAA0000003".to_string(),
+    ]));
+    let reloaded = matcher_over(vec![]).with_isrc_file(Some(file));
+    let kept = reloaded.isrc_recordings.lock();
+    assert!(kept.contains_key("GBAAA0000001"));
+    assert!(!kept.contains_key("GBAAA0000002"), "its list is gone");
+    assert!(
+        !kept.contains_key("GBAAA0000003"),
+        "an empty answer stays in memory only"
     );
 }
 

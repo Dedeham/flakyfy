@@ -51,6 +51,17 @@ pub struct IsrcLearning {
     pub in_library: usize,
 }
 
+/// What the last look through a song's ISRC found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IsrcOwnership {
+    /// The library's copy.
+    Owned(String),
+    /// No copy, and every ISRC of the song has its answer.
+    Missing,
+    /// No copy yet, but the music database could not be asked about an ISRC of the song.
+    Unanswered,
+}
+
 /// What the music database said about each ISRC asked about, as kept on disk.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
@@ -77,7 +88,7 @@ pub struct ImportMatcher {
     read_page: Mutex<ReadPage>,
     clock: Mutex<Clock>,
     scope: Option<ScopeResolver>,
-    /// The music database's recordings for each ISRC asked about, kept while Octo runs.
+    /// The music database's recordings for each ISRC asked about, kept in the answers file across restarts.
     isrc_recordings: Arc<Mutex<HashMap<String, Vec<IsrcRecording>>>>,
     ask_isrc: Mutex<Option<IsrcRecordings>>,
     /// The ISRCs whose last ask came back with nothing, each with the turn it failed on: asked after the others, the oldest failure first.
@@ -86,6 +97,8 @@ pub struct ImportMatcher {
     failures: std::sync::atomic::AtomicU64,
     /// Where what was learned is kept across restarts, if anywhere.
     isrc_file: Option<std::path::PathBuf>,
+    /// One writer of the answers file at a time.
+    saving: Mutex<()>,
 }
 
 impl ImportMatcher {
@@ -116,6 +129,7 @@ impl ImportMatcher {
             isrc_failed: Mutex::new(HashMap::new()),
             failures: std::sync::atomic::AtomicU64::new(0),
             isrc_file: None,
+            saving: Mutex::new(()),
         }
     }
 
@@ -137,12 +151,38 @@ impl ImportMatcher {
         self
     }
 
+    /// Writes the answers that name recordings to the answers file, one writer at a time, so
+    /// the latest map is the one on disk. An answer that names none stays in memory only: the
+    /// music database often learns a new code later, and a restart asks it again.
     fn keep_isrc_answers(&self) {
-        if let Some(path) = &self.isrc_file {
-            let file = IsrcFile {
-                recordings: self.isrc_recordings.lock().clone(),
-            };
-            let _ = super::save(path, &file, "the ISRC answers");
+        let Some(path) = &self.isrc_file else {
+            return;
+        };
+        let _saving = self.saving.lock();
+        let file = IsrcFile {
+            recordings: self
+                .isrc_recordings
+                .lock()
+                .iter()
+                .filter(|(_, recordings)| !recordings.is_empty())
+                .map(|(isrc, recordings)| (isrc.clone(), recordings.clone()))
+                .collect(),
+        };
+        let _ = super::save(path, &file, "the ISRC answers");
+    }
+
+    /// Forgets every answer and failure for ISRCs not in `wanted` (the ISRCs some list still
+    /// holds), and writes the file when anything went.
+    pub fn keep_only(&self, wanted: &HashSet<String>) {
+        let mut dropped = false;
+        self.isrc_recordings.lock().retain(|isrc, _| {
+            let keep = wanted.contains(isrc);
+            dropped |= !keep;
+            keep
+        });
+        self.isrc_failed.lock().retain(|isrc, _| wanted.contains(isrc));
+        if dropped {
+            self.keep_isrc_answers();
         }
     }
 
@@ -152,7 +192,7 @@ impl ImportMatcher {
 
     /// The ISRCs of the unmatched tracks the music database has not answered yet, at most
     /// `most`, the ones whose last ask came back with nothing after the others. An ISRC a
-    /// library file carries needs no asking, except with a library scope, where the file may
+    /// library file carries needs no asking, except with the libraries kept apart, where the file may
     /// be another member's.
     fn pending_isrcs(
         &self,
@@ -243,19 +283,32 @@ impl ImportMatcher {
 
     /// The library's copy of a song, through every way a match has, the recordings its ISRC
     /// names included: asked about now when the music database was not asked yet. The last look
-    /// before a song is fetched, so a copy only its ISRC can find is never fetched again.
-    pub async fn owned_by_isrc(&self, owner: &str, track: &ImportTrack) -> Option<String> {
-        if SongIdentity::isrcs(track.isrc.iter()).is_empty() {
-            return None;
+    /// before a song is fetched, so a copy only its ISRC can find is never fetched again; when
+    /// the music database could not be asked, it says so instead of guessing.
+    pub async fn owned_by_isrc(&self, owner: &str, track: &ImportTrack) -> IsrcOwnership {
+        let isrcs = SongIdentity::isrcs(track.isrc.iter());
+        if isrcs.is_empty() {
+            return IsrcOwnership::Missing;
         }
         self.learn_isrcs(std::slice::from_ref(track)).await;
-        let index = self.library_index().await?;
+        let Some(index) = self.library_index().await else {
+            return IsrcOwnership::Unanswered;
+        };
         let recordings = self.known_recordings(track);
-        self.within(owner, |visible| {
+        let found = self.within(owner, |visible| {
             index
                 .find_known(track, &recordings, visible)
                 .map(|row| row.id.clone())
-        })
+        });
+        if let Some(id) = found {
+            return IsrcOwnership::Owned(id);
+        }
+        let known = self.isrc_recordings.lock();
+        if isrcs.iter().all(|isrc| known.contains_key(isrc)) {
+            IsrcOwnership::Missing
+        } else {
+            IsrcOwnership::Unanswered
+        }
     }
 
     /// What the music database said about the track's ISRCs, as far as it was asked.
@@ -804,7 +857,7 @@ fn best<'a>(
 /// [`IsrcRecordings`] over MusicBrainz, asked on its background lane: the recordings that
 /// carry the code, in the order MusicBrainz lists them. A code MusicBrainz does not know is no
 /// recordings, kept; a timeout, an unreadable answer or a question MusicBrainz could not take
-/// is None, so the next match asks again.
+/// is None, so the next learning round or last look asks again.
 pub fn isrc_recordings_from(
     music_brainz: Arc<crate::services::fingerprint::music_brainz_client::MusicBrainzClient>,
 ) -> IsrcRecordings {

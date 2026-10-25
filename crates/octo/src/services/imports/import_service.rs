@@ -1,6 +1,6 @@
 //! The import service: every person's imported lists, their matching and their playlists.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -10,6 +10,7 @@ use indexmap::IndexMap;
 use octo_core::common::Clock;
 use octo_core::common::acquisition_tracker::user_safe;
 use octo_core::common::dotnet::{eq_ignore_case, ordinal_ignore_case_key, to_lower_invariant};
+use octo_core::common::song_identity::SongIdentity;
 use octo_core::settings::SettingsStore;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
@@ -59,11 +60,14 @@ pub struct ImportService {
     gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// People whose lists need matching again: the trickle brought them something.
     rematch: Mutex<Vec<String>>,
-    /// People whose lists hold ISRCs the music database has not answered yet: asked about in
-    /// the loop's pass.
+    /// People whose lists hold ISRCs the music database has not answered yet: asked about in a
+    /// round beside the loop.
     learning: Mutex<Vec<String>>,
     /// The round of learning running beside the loop, if one is.
     learner: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Whether this run has looked for people to learn about yet: the first pass after a start
+    /// picks up every list that still waits for answers.
+    learning_seeded: AtomicBool,
     /// A song a streaming list misses landed: the next open or pass reads the library again.
     reread_library: AtomicBool,
     /// Library songs as Navidrome described them to each listener for a streaming list, by
@@ -137,6 +141,7 @@ impl ImportService {
             rematch: Mutex::new(Vec::new()),
             learning: Mutex::new(Vec::new()),
             learner: Mutex::new(None),
+            learning_seeded: AtomicBool::new(false),
             reread_library: AtomicBool::new(false),
             songs: Mutex::new(HashMap::new()),
             dirty_playlists: Mutex::new(Vec::new()),
@@ -1046,23 +1051,40 @@ impl ImportService {
 
     /// One round of asking about the ISRCs of everyone whose lists wait for answers. An answer
     /// that names a recording a library file is tagged with matches that person again on the
-    /// next pass.
+    /// next pass. Answers for ISRCs no list holds any more are forgotten first. A person leaves
+    /// the round's list only once nothing of theirs waits, so a round that stops halfway loses
+    /// nobody.
     pub async fn learn_once(&self) {
-        let waiting: Vec<String> = std::mem::take(&mut *self.learning.lock());
+        let lists = self.store.all();
+        let held: HashSet<String> = lists
+            .iter()
+            .flat_map(|list| list.tracks.iter())
+            .flat_map(|track| SongIdentity::isrcs(track.isrc.iter()))
+            .collect();
+        self.matcher.keep_only(&held);
+        let waiting: Vec<String> = self.learning.lock().clone();
         for user in waiting {
-            let tracks: Vec<ImportTrack> = self
-                .store
-                .lists_of(&user)
-                .into_iter()
-                .flat_map(|list| list.tracks)
+            let tracks: Vec<ImportTrack> = lists
+                .iter()
+                .filter(|list| eq_ignore_case(&list.owner, &user))
+                .flat_map(|list| list.tracks.iter().cloned())
                 .collect();
             let learned = self.matcher.learn_isrcs(&tracks).await;
             if learned.in_library > 0 {
                 self.rematch_later(&user);
             }
-            if self.matcher.has_pending_isrcs(&tracks) {
-                self.learn_later(&user);
+            if !self.matcher.has_pending_isrcs(&tracks) {
+                self.learning.lock().retain(|u| !eq_ignore_case(u, &user));
             }
+        }
+    }
+
+    /// Waits for the round of learning running now, if there is one.
+    #[cfg(test)]
+    pub async fn drain_learner(&self) {
+        let task = self.learner.lock().take();
+        if let Some(task) = task {
+            let _ = task.await;
         }
     }
 
@@ -1071,6 +1093,14 @@ impl ImportService {
     pub async fn loop_once(self: &Arc<Self>) -> anyhow::Result<()> {
         if self.reread_library.swap(false, Ordering::Relaxed) {
             self.matcher.forget();
+        }
+        // The first pass after a start picks up every list that still waits for answers.
+        if !self.learning_seeded.swap(true, Ordering::Relaxed) {
+            for list in self.store.all() {
+                if self.matcher.has_pending_isrcs(&list.tracks) {
+                    self.learn_later(&list.owner);
+                }
+            }
         }
         // Learning runs beside the loop: one round at a time, never holding up a pass.
         let running = self

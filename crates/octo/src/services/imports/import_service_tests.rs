@@ -799,6 +799,42 @@ async fn learning_never_holds_up_the_loop() {
 }
 
 #[tokio::test]
+async fn the_loop_runs_one_learning_round_at_a_time() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let (counted, held) = (asked.clone(), gate.clone());
+    let ask: IsrcRecordings = Arc::new(move |_isrc: String| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        let held = held.clone();
+        Box::pin(async move {
+            held.notified().await;
+            Some(Vec::new())
+        })
+    });
+    let rig = rig_with(Arc::new(ImportStore::default()), Some(ask)).await;
+    coded_list(&rig, "alice", "GBAAA9400010");
+    rig.service.match_and_follow("alice").await;
+    rig.service.loop_once().await.expect("a pass");
+    rig.service.loop_once().await.expect("a pass");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(asked.load(Ordering::SeqCst), 1, "one round at a time");
+    gate.notify_waiters();
+    rig.service.drain_learner().await;
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn learning_picks_up_after_a_restart() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let rig = coded_rig(Some(Vec::new()), asked.clone()).await;
+    coded_list(&rig, "alice", "GBAAA9400010");
+    // No match since the start: the first pass finds the waiting list by itself.
+    rig.service.loop_once().await.expect("a pass");
+    rig.service.drain_learner().await;
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn getting_the_missing_songs_never_waits_for_the_music_database() {
     let asked = Arc::new(AtomicUsize::new(0));
     let rig = coded_rig(None, asked.clone()).await;

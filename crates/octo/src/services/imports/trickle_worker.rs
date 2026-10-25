@@ -32,6 +32,15 @@ use crate::services::soulseek::{ExternalIdRegistry, ISoulseekLink, SoulseekMetad
 #[error("{0}")]
 pub struct TrickleHeld(pub String);
 
+/// A job whose song could not be checked against the music database yet: put back, to be
+/// checked again on its next turn.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct TrickleCheckLater(pub String);
+
+/// What a job says while its song is checked against the music database.
+const CHECKING: &str = "Checking against the music database";
+
 /// What the trickle is doing, in a word the dashboard and the apps know, and when it starts its
 /// next song.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,12 +173,13 @@ impl TrickleWorker {
             soulseek,
         } = services;
         let start_queue = queue.clone();
+        let look_queue = queue.clone();
         let start_tracker = tracker.clone();
         let row_tracker = tracker.clone();
         let out_settings = settings.clone();
         let seams = TrickleSeams {
             owned: Arc::new(move |job| {
-                let (owned, matcher) = (owned.clone(), matcher.clone());
+                let (owned, matcher, queue) = (owned.clone(), matcher.clone(), look_queue.clone());
                 Box::pin(async move {
                     let by_name = owned
                         .find(
@@ -180,7 +190,12 @@ impl TrickleWorker {
                         )
                         .await
                         .map(|copy| OwnedSong(copy.navidrome_id));
-                    Ok(last_look(by_name, matcher.as_deref(), &job).await)
+                    if by_name.is_none() && matcher.is_some() && job.isrc.is_some() {
+                        queue.update(&job.owner, &job.key, |j| {
+                            j.detail = Some(CHECKING.to_string());
+                        });
+                    }
+                    last_look(by_name, matcher.as_deref(), &job).await
                 })
             }),
             start: Arc::new(move |job| {
@@ -408,6 +423,14 @@ impl TrickleWorker {
         }
         .await;
         if let Err(e) = outcome {
+            if let Some(later) = e.downcast_ref::<TrickleCheckLater>() {
+                self.queue.update(&job.owner, &job.key, |j| {
+                    j.state = import_track_states::QUEUED.to_string();
+                    j.detail = Some(later.0.clone());
+                });
+                *self.current.lock() = None;
+                return;
+            }
             if let Some(held) = e.downcast_ref::<TrickleHeld>() {
                 info!(
                     "Trickle for '{} - {}' ({}) skipped: {held}",
@@ -570,16 +593,19 @@ impl TrickleWorker {
 }
 
 /// The library's copy of a job's song: the name check's, else the one the recordings its ISRC
-/// names lead to.
+/// names lead to. While the music database could not be asked, the job is put back to be
+/// checked again, until its last attempt, which fetches.
 async fn last_look(
     by_name: Option<OwnedSong>,
     matcher: Option<&super::ImportMatcher>,
     job: &TrickleJob,
-) -> Option<OwnedSong> {
+) -> anyhow::Result<Option<OwnedSong>> {
     if by_name.is_some() {
-        return by_name;
+        return Ok(by_name);
     }
-    let matcher = matcher?;
+    let Some(matcher) = matcher else {
+        return Ok(None);
+    };
     let track = super::ImportTrack {
         key: job.key.clone(),
         title: job.title.clone(),
@@ -589,10 +615,14 @@ async fn last_look(
         isrc: job.isrc.clone(),
         library_id: None,
     };
-    matcher
-        .owned_by_isrc(&job.owner, &track)
-        .await
-        .map(|id| OwnedSong(Some(id)))
+    match matcher.owned_by_isrc(&job.owner, &track).await {
+        super::import_matcher::IsrcOwnership::Owned(id) => Ok(Some(OwnedSong(Some(id)))),
+        super::import_matcher::IsrcOwnership::Missing => Ok(None),
+        super::import_matcher::IsrcOwnership::Unanswered if job.attempts < TrickleWorker::MAX_ATTEMPTS => {
+            Err(TrickleCheckLater(CHECKING.to_string()).into())
+        }
+        super::import_matcher::IsrcOwnership::Unanswered => Ok(None),
+    }
 }
 
 #[cfg(test)]

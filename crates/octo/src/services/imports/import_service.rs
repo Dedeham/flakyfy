@@ -1,6 +1,6 @@
 //! The import service: every person's imported lists, their matching and their playlists.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -10,7 +10,6 @@ use indexmap::IndexMap;
 use octo_core::common::Clock;
 use octo_core::common::acquisition_tracker::user_safe;
 use octo_core::common::dotnet::{eq_ignore_case, ordinal_ignore_case_key, to_lower_invariant};
-use octo_core::common::song_identity::SongIdentity;
 use octo_core::settings::SettingsStore;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
@@ -153,6 +152,14 @@ impl ImportService {
         service.trickle.on_finished(Arc::new(move |job| {
             if let Some(service) = weak.upgrade() {
                 service.on_fetched(job);
+            }
+        }));
+        // A song held for MusicBrainz puts its owner in the next learning round, whose first
+        // answer ends the hold.
+        let weak = Arc::downgrade(&service);
+        service.trickle.on_held(Arc::new(move |owner| {
+            if let Some(service) = weak.upgrade() {
+                service.learn_later(owner);
             }
         }));
         // A heart can bring a song a streaming list is missing. Once Navidrome shows it, the
@@ -1052,34 +1059,25 @@ impl ImportService {
             .clone()
     }
 
-    /// Forgets what the music database said about ISRCs no list holds any more.
+    /// Forgets what the music database said about ISRCs no list holds and no waiting song
+    /// carries any more.
     fn forget_unheld_answers(&self) {
-        let held: HashSet<String> = self
-            .store
-            .all()
-            .iter()
-            .flat_map(|list| list.tracks.iter())
-            .flat_map(|track| SongIdentity::isrcs(track.isrc.iter()))
-            .collect();
+        let mut held = self.store.held_isrcs();
+        held.extend(self.queue.open_isrcs());
         self.matcher.keep_only(&held);
     }
 
-    /// One round of asking about the ISRCs of everyone whose lists wait for answers. An answer
+    /// One round of asking about the ISRCs of everyone whose songs wait for answers. An answer
     /// that names a recording a library file is tagged with matches that person again on the
-    /// next pass. Answers for ISRCs no list holds any more are forgotten first; a round stops at
-    /// the first question the music database cannot answer. A person leaves
-    /// the round's list only once nothing of theirs waits, so a round that stops halfway loses
-    /// nobody.
+    /// next pass. Answers for ISRCs nothing holds any more are forgotten before and after; a
+    /// round stops at the first question the music database cannot answer, and that person goes
+    /// behind everyone else. A person leaves the round's list only once nothing of theirs waits,
+    /// so a round that stops halfway loses nobody.
     pub async fn learn_once(&self) {
         self.forget_unheld_answers();
         let waiting: Vec<String> = self.learning.lock().clone();
         for user in waiting {
-            let tracks: Vec<ImportTrack> = self
-                .store
-                .lists_of(&user)
-                .into_iter()
-                .flat_map(|list| list.tracks)
-                .collect();
+            let tracks = self.learning_tracks(&user);
             let learned = self.matcher.learn_isrcs(&tracks).await;
             if learned.in_library > 0 {
                 self.rematch_later(&user);
@@ -1087,11 +1085,38 @@ impl ImportService {
             if !self.matcher.has_pending_isrcs(&tracks) {
                 self.learning.lock().retain(|u| !eq_ignore_case(u, &user));
             }
-            // The music database could not answer: the rest wait for the next round.
+            // The music database could not answer: the rest wait for the next round, this person
+            // behind them, so an ISRC that never gets an answer keeps nobody else waiting.
             if learned.failed {
+                let mut learning = self.learning.lock();
+                if let Some(at) = learning.iter().position(|u| eq_ignore_case(u, &user)) {
+                    let me = learning.remove(at);
+                    learning.push(me);
+                }
                 break;
             }
         }
+        // An answer that came in for a list removed meanwhile is not kept.
+        self.forget_unheld_answers();
+    }
+
+    /// This person's songs whose ISRCs may wait for an answer: every list's, and the songs the
+    /// trickle still has queued, which may carry an ISRC no list holds any more.
+    fn learning_tracks(&self, user: &str) -> Vec<ImportTrack> {
+        let mut tracks: Vec<ImportTrack> = self
+            .store
+            .lists_of(user)
+            .into_iter()
+            .flat_map(|list| list.tracks)
+            .collect();
+        tracks.extend(
+            self.queue
+                .snapshot(Some(user))
+                .iter()
+                .filter(|job| job.state == import_track_states::QUEUED)
+                .map(TrickleJob::as_track),
+        );
+        tracks
     }
 
     /// Waits for the round of learning running now, if there is one.

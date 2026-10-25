@@ -99,6 +99,9 @@ pub struct ImportMatcher {
     isrc_failed: Mutex<HashMap<String, u64>>,
     /// Counts the failed asks, so the oldest failure is asked first.
     failures: std::sync::atomic::AtomicU64,
+    /// Whether the music database's latest answer was none: the trickle holds the songs it has
+    /// to check until it answers again.
+    music_database_out: std::sync::atomic::AtomicBool,
     /// Where what was learned is kept across restarts, if anywhere.
     isrc_file: Option<std::path::PathBuf>,
     /// One writer of the answers file at a time.
@@ -132,6 +135,7 @@ impl ImportMatcher {
             ask_isrc: Mutex::new(None),
             isrc_failed: Mutex::new(HashMap::new()),
             failures: std::sync::atomic::AtomicU64::new(0),
+            music_database_out: std::sync::atomic::AtomicBool::new(false),
             isrc_file: None,
             saving: Mutex::new(()),
         }
@@ -252,6 +256,8 @@ impl ImportMatcher {
         for isrc in wanted {
             match ask(isrc.clone()).await {
                 Some(recordings) => {
+                    self.music_database_out
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                     self.isrc_failed.lock().remove(&isrc);
                     learning.settled += 1;
                     if index.as_ref().is_some_and(|index| {
@@ -266,6 +272,8 @@ impl ImportMatcher {
                     self.isrc_recordings.lock().insert(isrc, recordings);
                 }
                 None => {
+                    self.music_database_out
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     let turn = self.failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     self.isrc_failed.lock().insert(isrc, turn);
                     learning.failed = true;
@@ -284,6 +292,34 @@ impl ImportMatcher {
     pub fn has_pending_isrcs(&self, tracks: &[ImportTrack]) -> bool {
         let index = self.index.lock().as_ref().map(|(index, _)| Arc::clone(index));
         !self.pending_isrcs(index.as_deref(), tracks, 1).is_empty()
+    }
+
+    /// Whether the music database is out: its latest question went unanswered.
+    pub fn music_database_out(&self) -> bool {
+        self.music_database_out.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The keys of these tracks that wait for the music database while it is out: an ISRC of
+    /// theirs has no answer yet. Empty while it answers, so nothing waits.
+    pub async fn waiting_on_music_database(&self, tracks: &[ImportTrack]) -> HashSet<String> {
+        if !self.music_database_out() {
+            return HashSet::new();
+        }
+        let index = self.library_index().await;
+        let pending: HashSet<String> = self
+            .pending_isrcs(index.as_deref(), tracks, usize::MAX)
+            .into_iter()
+            .collect();
+        tracks
+            .iter()
+            .filter(|track| {
+                track.library_id.is_none()
+                    && SongIdentity::isrcs(track.isrc.iter())
+                        .iter()
+                        .any(|isrc| pending.contains(isrc))
+            })
+            .map(|track| track.key.clone())
+            .collect()
     }
 
     /// The library's copy of a song, through every way a match has, the recordings its ISRC

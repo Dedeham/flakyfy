@@ -1078,11 +1078,16 @@ fn the_answers_file_has_one_writer_at_a_time() {
         }],
     );
     let held = matcher.saving.lock();
+    let (started, running) = std::sync::mpsc::channel();
     let writer = {
         let matcher = Arc::clone(&matcher);
-        std::thread::spawn(move || matcher.keep_isrc_answers())
+        std::thread::spawn(move || {
+            started.send(()).expect("the test is listening");
+            matcher.keep_isrc_answers()
+        })
     };
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    running.recv().expect("the writer started");
+    std::thread::sleep(std::time::Duration::from_millis(200));
     assert!(!file.exists(), "the writer waits for the gate");
     drop(held);
     writer.join().expect("the writer");
@@ -1167,4 +1172,35 @@ async fn with_the_libraries_apart_a_code_another_members_file_carries_is_still_a
         0,
         "the library's own copy answers it"
     );
+}
+
+#[tokio::test]
+async fn musicbrainz_is_out_from_its_first_unanswered_question_to_its_next_answer() {
+    let answers = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let on = answers.clone();
+    let matcher = matcher_over(vec![]).with_isrc_recordings(Arc::new(move |_isrc: String| {
+        let answer = on.load(Ordering::SeqCst).then(Vec::new);
+        Box::pin(async move { answer })
+    }));
+    let waiting = with_isrc(track("Portishead", "Roads", Some(305), None), "GBAAA9400010");
+    let plain = track("Portishead", "Glory Box", Some(301), None);
+    let songs = vec![waiting.clone(), plain];
+    assert!(!matcher.music_database_out());
+    assert!(
+        matcher.waiting_on_music_database(&songs).await.is_empty(),
+        "nothing waits while it answers"
+    );
+
+    matcher.learn_isrcs(&songs).await;
+    assert!(matcher.music_database_out());
+    assert_eq!(
+        matcher.waiting_on_music_database(&songs).await,
+        HashSet::from([waiting.key.clone()]),
+        "only the song with a code to check waits"
+    );
+
+    answers.store(true, Ordering::SeqCst);
+    matcher.learn_isrcs(&songs).await;
+    assert!(!matcher.music_database_out(), "its first answer ends the hold");
+    assert!(matcher.waiting_on_music_database(&songs).await.is_empty());
 }

@@ -1,6 +1,6 @@
 //! The trickle worker.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use octo_core::settings::{AppSettings, ImportSettings};
@@ -19,6 +19,7 @@ struct Rig {
     finished: Arc<Mutex<Vec<TrickleJob>>>,
     busy: Arc<AtomicBool>,
     soulseek_out: Arc<AtomicBool>,
+    held: Arc<Mutex<HashSet<String>>>,
 }
 
 type Owned = Arc<dyn Fn(&TrickleJob) -> Option<String> + Send + Sync>;
@@ -61,6 +62,7 @@ fn rig_with(owned: Owned, outcome: Outcome) -> Rig {
     let started: Arc<Mutex<Vec<String>>> = Arc::default();
     let busy = Arc::new(AtomicBool::new(false));
     let out = Arc::new(AtomicBool::new(false));
+    let held: Arc<Mutex<HashSet<String>>> = Arc::default();
     let seams = TrickleSeams {
         owned: Arc::new(move |job| {
             let found = owned(&job).map(|id| OwnedSong(Some(id)));
@@ -93,6 +95,13 @@ fn rig_with(owned: Owned, outcome: Outcome) -> Rig {
                 Box::pin(async move { value })
             })
         },
+        held: {
+            let held = held.clone();
+            Arc::new(move |_jobs| {
+                let keys = held.lock().clone();
+                Box::pin(async move { keys })
+            })
+        },
         clock,
     };
     let worker = TrickleWorker::new(queue.clone(), settings.clone(), seams);
@@ -109,6 +118,7 @@ fn rig_with(owned: Owned, outcome: Outcome) -> Rig {
         finished,
         busy,
         soulseek_out: out,
+        held,
     }
 }
 
@@ -375,6 +385,12 @@ async fn a_song_whose_isrc_could_not_be_checked_is_always_put_back() {
     };
     let later = last_look(None, Some(&matcher), &job).await.expect_err("put back");
     assert!(later.downcast_ref::<TrickleCheckLater>().is_some(), "{later}");
+    let later = later.downcast_ref::<TrickleCheckLater>().expect("a check later");
+    assert_eq!(later.detail, WAITING_FOR_ANSWER);
+    assert!(
+        later.turn_back,
+        "only songs like it wait, so it gives its turn back"
+    );
     job.attempts = TrickleWorker::MAX_ATTEMPTS;
     let still = last_look(None, Some(&matcher), &job)
         .await
@@ -389,7 +405,15 @@ async fn a_song_whose_isrc_could_not_be_checked_is_always_put_back() {
 async fn a_job_put_back_for_a_check_is_queued_again_and_says_why() {
     let rig = rig();
     rig.worker.configure(|seams| {
-        seams.owned = Arc::new(|_| Box::pin(async { Err(TrickleCheckLater(CHECKING.to_string()).into()) }));
+        seams.owned = Arc::new(|_| {
+            Box::pin(async {
+                Err(TrickleCheckLater {
+                    detail: CHECKING.to_string(),
+                    turn_back: true,
+                }
+                .into())
+            })
+        });
     });
     rig.add(&["a"]);
     rig.tick().await;
@@ -404,7 +428,15 @@ async fn a_job_put_back_for_a_check_is_queued_again_and_says_why() {
 async fn three_turns_while_the_music_database_is_busy_fetch_nothing() {
     let rig = rig();
     rig.worker.configure(|seams| {
-        seams.owned = Arc::new(|_| Box::pin(async { Err(TrickleCheckLater(CHECKING.to_string()).into()) }));
+        seams.owned = Arc::new(|_| {
+            Box::pin(async {
+                Err(TrickleCheckLater {
+                    detail: CHECKING.to_string(),
+                    turn_back: true,
+                }
+                .into())
+            })
+        });
     });
     rig.add(&["a"]);
     for _ in 0..3 {
@@ -415,4 +447,169 @@ async fn three_turns_while_the_music_database_is_busy_fetch_nothing() {
     assert_eq!(job.state, import_track_states::QUEUED);
     assert_eq!(job.attempts, 0);
     assert!(rig.started.lock().is_empty(), "nothing was started");
+}
+
+#[tokio::test]
+async fn songs_waiting_for_musicbrainz_are_held_and_the_rest_keep_going() {
+    let looked = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = looked.clone();
+    let rig = rig_with(
+        Arc::new(move |job| {
+            seen.lock().push(job.key.clone());
+            None
+        }),
+        Arc::new(|_| Some(AcquisitionState::Done)),
+    );
+    let told = Arc::new(Mutex::new(Vec::<String>::new()));
+    let heard = told.clone();
+    rig.worker
+        .on_held(Arc::new(move |owner| heard.lock().push(owner.to_string())));
+    rig.held.lock().insert("a".into());
+    rig.add(&["a", "b"]);
+
+    // "b" has nothing to wait for and goes; "a" waits and says why.
+    assert!(rig.tick().await);
+    assert_eq!(*rig.started.lock(), ["b"]);
+    let a = rig.queue.get("alice", "a").expect("a");
+    assert_eq!(a.state, import_track_states::QUEUED);
+    assert_eq!(a.detail.as_deref(), Some(WAITING_FOR_ANSWER));
+    assert!(told.lock().iter().any(|owner| owner == "alice"));
+
+    // Only "a" is left: the trickle waits for MusicBrainz and never looks at it again.
+    for _ in 0..3 {
+        rig.advance(TimeDelta::minutes(10));
+        assert!(!rig.tick().await);
+    }
+    assert_eq!(
+        *looked.lock(),
+        ["b"],
+        "a held song is not checked again while held"
+    );
+    assert_eq!(
+        rig.worker.status_for("alice").state,
+        trickle_states::WAITING_FOR_MUSIC_DATABASE
+    );
+
+    // MusicBrainz answers: the hold ends and the words come off.
+    rig.held.lock().clear();
+    rig.queue.set_paused("alice", true);
+    assert!(!rig.tick().await);
+    assert_eq!(rig.queue.get("alice", "a").expect("a").detail, None);
+    assert_eq!(rig.worker.status_for("alice").state, trickle_states::PAUSED);
+    rig.queue.set_paused("alice", false);
+    assert!(rig.tick().await);
+    assert_eq!(*rig.started.lock(), ["b", "a"]);
+}
+
+#[tokio::test]
+async fn some_songs_held_still_reads_as_running() {
+    let rig = rig();
+    rig.held.lock().insert("a".into());
+    rig.add(&["a", "b", "c"]);
+    assert!(rig.tick().await);
+    assert_eq!(rig.worker.status_for("alice").state, trickle_states::RUNNING);
+}
+
+#[tokio::test]
+async fn a_song_taken_back_while_it_is_checked_never_starts_and_never_comes_back() {
+    let rig = rig();
+    let queue = rig.queue.clone();
+    rig.worker.configure(move |seams| {
+        seams.owned = Arc::new(move |job| {
+            queue.cancel_queued(&job.owner, None);
+            Box::pin(async { Ok(None) })
+        });
+    });
+    rig.add(&["a"]);
+    rig.tick().await;
+    assert!(rig.started.lock().is_empty(), "nothing started");
+    assert!(rig.queue.get("alice", "a").is_none(), "taken back");
+
+    let again = self::rig();
+    let queue = again.queue.clone();
+    again.worker.configure(move |seams| {
+        seams.owned = Arc::new(move |job| {
+            queue.cancel_queued(&job.owner, None);
+            Box::pin(async {
+                Err(TrickleCheckLater {
+                    detail: WAITING_FOR_ANSWER.to_string(),
+                    turn_back: true,
+                }
+                .into())
+            })
+        });
+    });
+    again.add(&["a"]);
+    again.tick().await;
+    assert!(
+        again.queue.get("alice", "a").is_none(),
+        "a put-back brings nothing back"
+    );
+}
+
+#[tokio::test]
+async fn a_song_starts_with_its_check_words_cleared_and_its_attempt_counted() {
+    let rig = rig();
+    let at_start: Arc<Mutex<Option<TrickleJob>>> = Arc::default();
+    let (queue, seen) = (rig.queue.clone(), at_start.clone());
+    let checking = rig.queue.clone();
+    rig.worker.configure(move |seams| {
+        seams.owned = Arc::new(move |job| {
+            checking.update(&job.owner, &job.key, |j| j.detail = Some(CHECKING.to_string()));
+            Box::pin(async { Ok(None) })
+        });
+        seams.start = Arc::new(move |job| {
+            *seen.lock() = queue.get(&job.owner, &job.key);
+            Box::pin(async { Err(anyhow::anyhow!("Stopped for the test.")) })
+        });
+    });
+    rig.add(&["a"]);
+    rig.tick().await;
+    let started = at_start.lock().clone().expect("it started");
+    assert_eq!(started.detail, None);
+    assert_eq!(started.attempts, 1);
+}
+
+#[tokio::test]
+async fn a_song_put_back_while_the_library_cannot_be_read_waits_for_its_next_turn() {
+    let rig = rig();
+    rig.worker.configure(|seams| {
+        seams.owned = Arc::new(|_| {
+            Box::pin(async {
+                Err(TrickleCheckLater {
+                    detail: READING_LIBRARY.to_string(),
+                    turn_back: false,
+                }
+                .into())
+            })
+        });
+    });
+    rig.add(&["a"]);
+    assert!(rig.tick().await);
+    assert!(!rig.tick().await, "no second look until its next turn");
+    assert_eq!(
+        rig.queue.get("alice", "a").expect("a").detail.as_deref(),
+        Some(READING_LIBRARY)
+    );
+    rig.advance(TimeDelta::minutes(5));
+    assert!(rig.tick().await);
+}
+
+#[tokio::test]
+async fn the_last_look_waits_to_read_the_library_when_it_cannot() {
+    use super::super::import_matcher::ImportMatcher;
+    let matcher = ImportMatcher::with_pages(Arc::new(|_start, _count| Box::pin(async { None })))
+        .with_isrc_recordings(Arc::new(|_isrc: String| Box::pin(async { Some(Vec::new()) })));
+    let job = TrickleJob {
+        owner: "alice".into(),
+        key: "k-roads".into(),
+        title: "Roads".into(),
+        artist: "Portishead".into(),
+        isrc: Some("GBAAA9400010".into()),
+        ..Default::default()
+    };
+    let later = last_look(None, Some(&matcher), &job).await.expect_err("put back");
+    let later = later.downcast_ref::<TrickleCheckLater>().expect("a check later");
+    assert_eq!(later.detail, READING_LIBRARY);
+    assert!(!later.turn_back, "every song would wait the same way");
 }

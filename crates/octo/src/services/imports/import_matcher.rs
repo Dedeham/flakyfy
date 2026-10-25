@@ -299,26 +299,32 @@ impl ImportMatcher {
         self.music_database_out.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The keys of these tracks that wait for the music database while it is out: an ISRC of
-    /// theirs has no answer yet. Empty while it answers, so nothing waits.
-    pub async fn waiting_on_music_database(&self, tracks: &[ImportTrack]) -> HashSet<String> {
+    /// Which of these tracks wait for the music database while it is out, by their place in
+    /// `tracks`: an ISRC of theirs has no answer yet. Empty while it answers, so nothing waits.
+    /// Reads only the library index already kept, never the library itself: without one, a
+    /// song the library carries an ISRC for waits too, and its last look still finds it.
+    pub fn waiting_on_music_database(&self, tracks: &[ImportTrack]) -> HashSet<usize> {
         if !self.music_database_out() {
             return HashSet::new();
         }
-        let index = self.library_index().await;
+        let index = self.index.lock().as_ref().map(|(index, _)| Arc::clone(index));
         let pending: HashSet<String> = self
             .pending_isrcs(index.as_deref(), tracks, usize::MAX)
             .into_iter()
             .collect();
+        if pending.is_empty() {
+            return HashSet::new();
+        }
         tracks
             .iter()
-            .filter(|track| {
+            .enumerate()
+            .filter(|(_, track)| {
                 track.library_id.is_none()
                     && SongIdentity::isrcs(track.isrc.iter())
                         .iter()
                         .any(|isrc| pending.contains(isrc))
             })
-            .map(|track| track.key.clone())
+            .map(|(at, _)| at)
             .collect()
     }
 

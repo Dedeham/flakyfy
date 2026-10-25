@@ -97,9 +97,15 @@ fn rig_with(owned: Owned, outcome: Outcome) -> Rig {
         },
         held: {
             let held = held.clone();
-            Arc::new(move |_jobs| {
+            Arc::new(move |jobs: Vec<TrickleJob>| {
                 let keys = held.lock().clone();
-                Box::pin(async move { keys })
+                let places: HashSet<usize> = jobs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, job)| keys.contains(&job.key))
+                    .map(|(at, _)| at)
+                    .collect();
+                Box::pin(async move { places })
             })
         },
         clock,
@@ -612,4 +618,79 @@ async fn the_last_look_waits_to_read_the_library_when_it_cannot() {
     let later = later.downcast_ref::<TrickleCheckLater>().expect("a check later");
     assert_eq!(later.detail, READING_LIBRARY);
     assert!(!later.turn_back, "every song would wait the same way");
+}
+
+#[tokio::test]
+async fn another_persons_song_with_the_same_key_and_no_isrc_is_never_held() {
+    use super::super::import_matcher::ImportMatcher;
+    let matcher = Arc::new(
+        ImportMatcher::with_pages(Arc::new(|_start, _count| {
+            Box::pin(async { Some((Vec::new(), 0)) })
+        }))
+        .with_isrc_recordings(Arc::new(|_isrc: String| Box::pin(async { None }))),
+    );
+    let coded = ImportTrack {
+        key: "song:portishead roads".into(),
+        title: "Roads".into(),
+        artist: "Portishead".into(),
+        seconds: Some(305),
+        isrc: Some("GBAAA9400010".into()),
+        ..Default::default()
+    };
+    let plain = ImportTrack {
+        isrc: None,
+        ..coded.clone()
+    };
+    matcher.learn_isrcs(std::slice::from_ref(&coded)).await;
+    let rig = rig();
+    let seam = held_by(Some(matcher));
+    rig.worker.configure(move |seams| seams.held = seam);
+    rig.queue.add("alice", std::slice::from_ref(&coded));
+    rig.queue.add("bob", std::slice::from_ref(&plain));
+    assert!(rig.tick().await);
+    assert_eq!(
+        rig.queue.get("bob", &plain.key).expect("bob's").state,
+        import_track_states::DONE
+    );
+    assert_eq!(
+        rig.queue.get("alice", &coded.key).expect("alice's").state,
+        import_track_states::QUEUED
+    );
+    assert_eq!(
+        rig.worker.status_for("bob").state,
+        trickle_states::IDLE,
+        "nothing of bob's waits on MusicBrainz"
+    );
+}
+
+#[tokio::test]
+async fn every_song_held_reads_as_waiting_for_musicbrainz_even_while_others_download() {
+    let rig = rig();
+    rig.held.lock().insert("a".into());
+    rig.add(&["a"]);
+    rig.tick().await;
+    rig.busy.store(true, Ordering::SeqCst);
+    rig.advance(TimeDelta::minutes(10));
+    rig.tick().await;
+    assert_eq!(
+        rig.worker.status_for("alice").state,
+        trickle_states::WAITING_FOR_MUSIC_DATABASE
+    );
+}
+
+#[tokio::test]
+async fn a_song_found_in_the_library_during_its_check_is_not_taken_back_by_a_cancel() {
+    let rig = rig_with(
+        Arc::new(|_| Some("nd-owned".to_string())),
+        Arc::new(|_| Some(AcquisitionState::Done)),
+    );
+    rig.add(&["a", "b"]);
+    rig.tick().await;
+    let slot = rig.queue.last_start_utc();
+    assert_eq!(rig.queue.cancel_queued("alice", None), 1, "only b, still queued");
+    assert_eq!(
+        rig.queue.get("alice", "a").expect("a").state,
+        import_track_states::DONE
+    );
+    assert_eq!(rig.queue.last_start_utc(), slot, "the used turn stays used");
 }

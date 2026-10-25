@@ -304,6 +304,16 @@ impl TrickleQueue {
         true
     }
 
+    /// The song just taken needs no attempt (the library has it): it is no longer being checked,
+    /// and its turn stays used.
+    pub fn end_check(&self, owner: &str, key: &str) {
+        let mut state = self.state.lock();
+        if state.checking.as_deref() == Some(key_of(owner, key).as_str()) {
+            state.checking = None;
+            state.start_before = None;
+        }
+    }
+
     /// Gives back the song `take_next` just handed out, while it is still being checked: queued
     /// again behind the owner's other songs, with these words. With `turn_back` the trickle's
     /// pacing is as it was before, so the next song may start at once (only songs like this one
@@ -446,10 +456,11 @@ impl TrickleQueue {
             }
             seen.push(key);
             let id = key_of(owner, key);
-            let is_checking = checking.as_deref() == Some(id.as_str());
             let Some(job) = state.jobs.get_mut(&id) else {
                 continue;
             };
+            let is_checking =
+                checking.as_deref() == Some(id.as_str()) && job.state == import_track_states::DOWNLOADING;
             if !when(job, is_checking) {
                 continue;
             }
@@ -496,7 +507,9 @@ impl TrickleQueue {
             .iter()
             .filter(|(id, job)| {
                 eq_ignore_case(&job.owner, owner)
-                    && (job.state == import_track_states::QUEUED || checking.as_deref() == Some(id.as_str()))
+                    && (job.state == import_track_states::QUEUED
+                        || (job.state == import_track_states::DOWNLOADING
+                            && checking.as_deref() == Some(id.as_str())))
                     && keys.is_none_or(|only| only.contains(&job.key))
             })
             .map(|(id, _)| id.clone())

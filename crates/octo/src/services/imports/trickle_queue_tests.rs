@@ -321,3 +321,35 @@ fn words_go_on_queued_songs_only_and_open_songs_name_their_isrcs() {
     assert_eq!(queue.get("alice", "a").expect("a").detail, None);
     assert_eq!(queue.open_isrcs(), HashSet::from(["GBAAA9400010".to_string()]));
 }
+
+#[test]
+fn skipping_the_song_being_checked_gives_its_turn_back() {
+    let (now, clock) = moving_clock();
+    let queue = TrickleQueue::default();
+    queue.set_clock(clock);
+    queue.add("alice", &[song("a"), song("b")]);
+    assert_eq!(queue.take_next().expect("a").key, "a");
+    assert!(queue.begin_attempt("alice", "a"));
+    let a_start = queue.last_start_utc();
+    *now.lock() += TimeDelta::seconds(1);
+    assert_eq!(queue.take_next().expect("b").key, "b");
+    assert_eq!(queue.skip("alice", &["b"]), 1);
+    assert_eq!(queue.last_start_utc(), a_start, "its turn is given back");
+}
+
+#[test]
+fn a_song_that_ended_its_check_is_left_alone_by_cancel_and_skip() {
+    let queue = TrickleQueue::default();
+    queue.add("alice", &[song("a")]);
+    queue.take_next().expect("a");
+    queue.end_check("alice", "a");
+    queue.update("alice", "a", |job| {
+        job.state = import_track_states::DONE.to_string()
+    });
+    assert_eq!(queue.cancel_queued("alice", None), 0);
+    assert_eq!(queue.skip("alice", &["a"]), 0);
+    assert_eq!(
+        queue.get("alice", "a").expect("a").state,
+        import_track_states::DONE
+    );
+}

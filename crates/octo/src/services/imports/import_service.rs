@@ -1134,6 +1134,8 @@ impl ImportService {
         if self.reread_library.swap(false, Ordering::Relaxed) {
             self.matcher.forget();
         }
+        // An answer the trickle's last look learned for a list removed meanwhile goes too.
+        self.forget_unheld_answers();
         // The first pass after a start picks up every list that still waits for answers.
         if !self.learning_seeded.swap(true, Ordering::Relaxed) {
             for list in self.store.all() {

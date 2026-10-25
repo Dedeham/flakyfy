@@ -1538,6 +1538,7 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
  * put from one state to the next. */
 .imp-trickle-head { align-items: flex-start; }
 .imp-trickle-head > .imp-actions { margin-top: -7px; }
+.imp-trickle-head > .imp-actions:not(:has(> :not([hidden]))) { display: none; }
 @media (pointer: coarse) { .imp-trickle-head > .imp-actions { margin-top: -12px; } }
 /* A narrow card puts them under its words, so the line keeps a readable width. */
 @container (max-width: 480px) {

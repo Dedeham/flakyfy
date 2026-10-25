@@ -931,8 +931,8 @@ async fn a_song_held_for_musicbrainz_puts_its_owner_in_the_next_learning_round()
     let rig = rig().await;
     rig.trickle.configure(|seams| {
         seams.held = Arc::new(|jobs| {
-            let keys: std::collections::HashSet<String> = jobs.iter().map(|job| job.key.clone()).collect();
-            Box::pin(async move { keys })
+            let places: std::collections::HashSet<usize> = (0..jobs.len()).collect();
+            Box::pin(async move { places })
         });
     });
     rig.queue

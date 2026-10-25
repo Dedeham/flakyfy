@@ -1187,20 +1187,56 @@ async fn musicbrainz_is_out_from_its_first_unanswered_question_to_its_next_answe
     let songs = vec![waiting.clone(), plain];
     assert!(!matcher.music_database_out());
     assert!(
-        matcher.waiting_on_music_database(&songs).await.is_empty(),
+        matcher.waiting_on_music_database(&songs).is_empty(),
         "nothing waits while it answers"
     );
 
     matcher.learn_isrcs(&songs).await;
     assert!(matcher.music_database_out());
     assert_eq!(
-        matcher.waiting_on_music_database(&songs).await,
-        HashSet::from([waiting.key.clone()]),
+        matcher.waiting_on_music_database(&songs),
+        HashSet::from([0]),
         "only the song with a code to check waits"
     );
 
     answers.store(true, Ordering::SeqCst);
     matcher.learn_isrcs(&songs).await;
     assert!(!matcher.music_database_out(), "its first answer ends the hold");
-    assert!(matcher.waiting_on_music_database(&songs).await.is_empty());
+    assert!(matcher.waiting_on_music_database(&songs).is_empty());
+}
+
+#[tokio::test]
+async fn holding_names_songs_by_place_so_a_shared_key_without_an_isrc_goes() {
+    let matcher =
+        matcher_over(vec![]).with_isrc_recordings(Arc::new(|_isrc: String| Box::pin(async { None })));
+    let coded = with_isrc(track("Portishead", "Roads", Some(305), None), "GBAAA9400010");
+    let plain = track("Portishead", "Roads", Some(305), None);
+    assert_eq!(coded.key, plain.key, "text and CSV lists share word keys");
+    matcher.learn_isrcs(std::slice::from_ref(&coded)).await;
+    assert_eq!(
+        matcher.waiting_on_music_database(&[coded, plain]),
+        HashSet::from([0])
+    );
+}
+
+#[tokio::test]
+async fn working_out_the_hold_never_reads_the_library() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = reads.clone();
+    let matcher = ImportMatcher::with_pages(Arc::new(move |_start, _count| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { None })
+    }))
+    .with_isrc_recordings(Arc::new(|_isrc: String| Box::pin(async { None })));
+    let coded = with_isrc(track("Portishead", "Roads", Some(305), None), "GBAAA9400010");
+    matcher.learn_isrcs(std::slice::from_ref(&coded)).await;
+    assert!(matcher.music_database_out());
+    let before = reads.load(Ordering::SeqCst);
+    for _ in 0..2 {
+        assert_eq!(
+            matcher.waiting_on_music_database(std::slice::from_ref(&coded)),
+            HashSet::from([0])
+        );
+    }
+    assert_eq!(reads.load(Ordering::SeqCst), before, "no library read");
 }

@@ -405,7 +405,7 @@ struct DownShim {
 
 #[async_trait]
 impl PreviewSource for DownShim {
-    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, Failure> {
         Ok(Some(facts("One Dance", Some("Drake"), Some(174))))
     }
 
@@ -461,7 +461,7 @@ struct CountingShim {
 
 #[async_trait]
 impl PreviewSource for CountingShim {
-    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, Failure> {
         Ok(Some(facts("One Dance", Some("Drake"), Some(174))))
     }
 
@@ -502,7 +502,7 @@ struct JunkShim;
 
 #[async_trait]
 impl PreviewSource for JunkShim {
-    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, Failure> {
         Ok(Some(facts("One Dance", Some("Drake"), Some(174))))
     }
 
@@ -600,10 +600,7 @@ fn noise_flac(dir: &Path) -> Option<std::path::PathBuf> {
 async fn an_unreachable_shim_finds_no_preview() {
     let closed = format!("http://{}", crate::services::test_support::refused_address());
     let resolver = YouTubeResolver::with_base_url(Some(&closed));
-    assert_eq!(
-        resolver.find(&request(Some(174))).await,
-        Err(LookupFailed { busy: false })
-    );
+    assert_eq!(resolver.find(&request(Some(174))).await, Err(Failure::Other));
     assert!(
         !resolver
             .fetch("ki0Ocze98U8", Path::new("/nonexistent/preview"))
@@ -646,10 +643,7 @@ async fn a_shim_that_cannot_answer_is_an_error_not_no_video() {
     )
     .await;
     let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
-    assert_eq!(
-        resolver.find(&request(Some(174))).await,
-        Err(LookupFailed { busy: true })
-    );
+    assert_eq!(resolver.find(&request(Some(174))).await, Err(Failure::Busy));
     let outcome = check(
         &resolver,
         &AudioFingerprinter::new(),
@@ -670,10 +664,7 @@ async fn a_shim_that_fails_without_saying_busy_is_not_sent() {
     )
     .await;
     let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
-    assert_eq!(
-        resolver.find(&request(Some(174))).await,
-        Err(LookupFailed { busy: false })
-    );
+    assert_eq!(resolver.find(&request(Some(174))).await, Err(Failure::Other));
     let outcome = check(
         &resolver,
         &AudioFingerprinter::new(),
@@ -683,6 +674,14 @@ async fn a_shim_that_fails_without_saying_busy_is_not_sent() {
     )
     .await;
     assert_eq!(outcome, PreviewOutcome::Unreachable);
+}
+
+/// Each way a lookup fails comes to the outcome the check defines for it.
+#[test]
+fn each_lookup_failure_maps_to_its_preview_outcome() {
+    assert_eq!(outcome_of(Failure::Busy), PreviewOutcome::Busy);
+    assert_eq!(outcome_of(Failure::Unreachable), PreviewOutcome::Unreachable);
+    assert_eq!(outcome_of(Failure::Other), PreviewOutcome::Unreachable);
 }
 
 /// Both lookups answering with nothing is the one case that is "no video".

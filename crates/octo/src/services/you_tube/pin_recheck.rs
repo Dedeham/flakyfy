@@ -16,7 +16,7 @@ use octo_core::soulseek::SoulseekRouting;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use super::you_tube_resolver::{Checked, Failure, YouTubeHit, YouTubeResolver};
+use super::you_tube_resolver::{Failure, Lookup, YouTubeHit, YouTubeResolver};
 use crate::services::soulseek::ExternalIdRegistry;
 
 /// Whether a request reads from the first byte on: no `Range`, or a single range `bytes=0-`
@@ -163,23 +163,23 @@ impl PinRecheck {
             .music_song_checked(&artist, &title, r.duration)
             .await
         {
-            Checked::Hit(hit) if !r.refuses_video(&hit.video_id) => Some(hit),
+            Lookup::Found(hit) if !r.refuses_video(&hit.video_id) => Some(hit),
             // YouTube Music answered with nothing, or with a video the song refuses: the shim's
             // ranked search decides.
-            Checked::Hit(_) | Checked::Nothing => {
+            Lookup::Found(_) | Lookup::None => {
                 match self
                     .resolver
                     .search_ranked(&format!("{artist} {title}"), r.duration, &r.refused_videos)
                     .await
                 {
-                    Checked::Hit(hit) if !r.refuses_video(&hit.video_id) => Some(hit),
-                    Checked::Hit(_) | Checked::Nothing => None,
-                    Checked::Failed(Failure::Other) => return Checks::Failed,
-                    Checked::Failed(Failure::Busy | Failure::Unreachable) => return Checks::Stop,
+                    Lookup::Found(hit) if !r.refuses_video(&hit.video_id) => Some(hit),
+                    Lookup::Found(_) | Lookup::None => None,
+                    Lookup::Failed(Failure::Other) => return Checks::Failed,
+                    Lookup::Failed(Failure::Busy | Failure::Unreachable) => return Checks::Stop,
                 }
             }
-            Checked::Failed(Failure::Busy | Failure::Unreachable) => return Checks::Stop,
-            Checked::Failed(Failure::Other) => return Checks::Failed,
+            Lookup::Failed(Failure::Busy | Failure::Unreachable) => return Checks::Stop,
+            Lookup::Failed(Failure::Other) => return Checks::Failed,
         };
 
         match hit {

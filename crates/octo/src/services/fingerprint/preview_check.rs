@@ -19,7 +19,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
 use crate::services::you_tube::you_tube_resolver::{
-    Lookup, ShimRefused, ShimStream, YouTubeHit, YouTubeResolver,
+    Failure, Lookup, ShimRefused, ShimStream, YouTubeHit, YouTubeResolver,
 };
 
 /// Seconds one chromaprint item covers: a frame every 1365 samples at 11025 Hz.
@@ -156,13 +156,6 @@ pub enum PreviewOutcome {
     },
 }
 
-/// A lookup for the song's video that could not be answered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LookupFailed {
-    /// The shim said so itself (HTTP 503 busy).
-    pub busy: bool,
-}
-
 /// Why a preview's fingerprint could not be had.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewFailure {
@@ -181,7 +174,7 @@ pub trait PreviewSource: Send + Sync {
     /// names it, or else the video a play would pick. `Ok(None)` only when YouTube Music and
     /// yt-dlp both answered and neither had the song; `Err` when either could not answer and the
     /// other did not find it.
-    async fn find(&self, request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed>;
+    async fn find(&self, request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, Failure>;
 
     /// Saves the video's audio at `dest`. False when the shim could not send it.
     async fn fetch(&self, video_id: &str, dest: &Path) -> bool;
@@ -215,7 +208,7 @@ pub trait PreviewSource: Send + Sync {
 
 #[async_trait]
 impl PreviewSource for YouTubeResolver {
-    async fn find(&self, request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
+    async fn find(&self, request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, Failure> {
         let pinned = request.video_id.filter(|id| !id.trim().is_empty());
         let is_pinned = |hit: &YouTubeHit| pinned.is_none_or(|id| id == hit.video_id);
         // The order a play picks in: YouTube Music's row for the song, then yt-dlp's search.
@@ -223,7 +216,7 @@ impl PreviewSource for YouTubeResolver {
         let music = self
             .music_song_lookup(request.artist, request.title, request.seconds, request.background)
             .await;
-        let mut failure: Option<LookupFailed> = None;
+        let mut failure: Option<Failure> = None;
         match music {
             Lookup::Found(row) if is_pinned(&row) => {
                 return Ok(Some(PreviewFacts::from_hit(
@@ -231,7 +224,7 @@ impl PreviewSource for YouTubeResolver {
                     Some(request.artist.to_string()),
                 )));
             }
-            Lookup::Failed { busy } => failure = Some(LookupFailed { busy }),
+            Lookup::Failed(why) => failure = Some(why),
             _ => {}
         }
         let query = format!("{} {}", request.artist, request.title);
@@ -240,9 +233,12 @@ impl PreviewSource for YouTubeResolver {
                 let channel = hit.channel.clone();
                 return Ok(Some(PreviewFacts::from_hit(hit, channel)));
             }
-            Lookup::Failed { busy } => {
-                failure = Some(LookupFailed {
-                    busy: busy || failure.is_some_and(|f| f.busy),
+            Lookup::Failed(why) => {
+                // A busy answer from either lookup is the one reported.
+                failure = Some(if failure == Some(Failure::Busy) {
+                    Failure::Busy
+                } else {
+                    why
                 });
             }
             _ => {}
@@ -472,6 +468,15 @@ pub fn judge(comparison: &Comparison, trusted: bool) -> Heard {
     }
 }
 
+/// What a lookup that could not answer comes to: a busy shim is waited out, any other failure
+/// says the shim could not be asked.
+fn outcome_of(failure: Failure) -> PreviewOutcome {
+    match failure {
+        Failure::Busy => PreviewOutcome::Busy,
+        Failure::Unreachable | Failure::Other => PreviewOutcome::Unreachable,
+    }
+}
+
 /// Compares the download at `path` with the song's preview, fetched in the shim's background lane
 /// when the request is `background`. Every failure is [`PreviewOutcome::Unavailable`],
 /// [`PreviewOutcome::NotSent`], [`PreviewOutcome::Busy`], [`PreviewOutcome::Unreachable`] or
@@ -487,8 +492,7 @@ pub async fn check(
     let mut preview = match source.find(request).await {
         Ok(Some(preview)) => preview,
         Ok(None) => return PreviewOutcome::Unavailable("no YouTube video for the song".into()),
-        Err(LookupFailed { busy: true }) => return PreviewOutcome::Busy,
-        Err(LookupFailed { busy: false }) => return PreviewOutcome::Unreachable,
+        Err(why) => return outcome_of(why),
     };
     let Some(file) = fingerprinter
         .raw_fingerprint(path, FILE_SECONDS, timeout_seconds)

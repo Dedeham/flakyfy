@@ -43,11 +43,12 @@ use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
 use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::fingerprint::preview_check::{
-    self, FILE_SECONDS, Heard, LookupFailed, PreviewFacts, PreviewFailure, PreviewRequest, PreviewSource,
+    self, FILE_SECONDS, Heard, PreviewFacts, PreviewFailure, PreviewRequest, PreviewSource,
 };
 use crate::services::library::library_walk;
 use crate::services::state_file;
 use crate::services::you_tube::YouTubeResolver;
+use crate::services::you_tube::you_tube_resolver::Failure;
 
 /// What AcoustID says of one library file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,9 +126,9 @@ impl YoutubeChecker for AppYoutubeChecker {
             // Both lookups answered and neither had the song.
             Ok(None) => return Compared::NoCopy,
             // The shim said its lane is full: waited out.
-            Err(LookupFailed { busy: true }) => return Compared::Busy,
+            Err(Failure::Busy) => return Compared::Busy,
             // A lookup could not answer: not an answer, so the song is tried again.
-            Err(LookupFailed { busy: false }) => return Compared::Unavailable,
+            Err(Failure::Unreachable | Failure::Other) => return Compared::Unavailable,
         };
         let timeout = self
             .settings

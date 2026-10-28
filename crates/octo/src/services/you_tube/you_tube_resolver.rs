@@ -48,10 +48,8 @@ pub enum Lookup<T> {
     Found(T),
     /// It answered: there is none.
     None,
-    /// It could not answer. `busy` when the shim said so (HTTP 503 busy).
-    Failed {
-        busy: bool,
-    },
+    /// It could not answer, and why.
+    Failed(Failure),
 }
 
 impl<T> Lookup<T> {
@@ -67,7 +65,7 @@ impl<T> Lookup<T> {
 /// A lookup that never finished (its task panicked) could not answer, so it is never read as "there is none".
 impl<T> Default for Lookup<T> {
     fn default() -> Self {
-        Lookup::Failed { busy: false }
+        Lookup::Failed(Failure::Other)
     }
 }
 
@@ -112,18 +110,7 @@ pub struct YouTubeResolver {
     music_bg_gate: Arc<Semaphore>,
 }
 
-/// What a background check of the shim came to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Checked<T> {
-    /// The shim answered with a pick.
-    Hit(T),
-    /// The shim answered, and nothing matches.
-    Nothing,
-    /// The shim could not answer, so nothing is known.
-    Failed(Failure),
-}
-
-/// Why a background check of the shim got no answer.
+/// Why a lookup through the shim got no answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
     /// The shim answered 503 `{"error":"busy"}`.
@@ -343,7 +330,7 @@ impl YouTubeResolver {
                     return Ok(Lookup::None);
                 }
                 let busy = status.as_u16() == 503 && is_busy_body(&resp.text().await.unwrap_or_default());
-                return Ok(Lookup::Failed { busy });
+                return Ok(Lookup::Failed(if busy { Failure::Busy } else { Failure::Other }));
             }
             let root: Value = serde_json::from_str(&resp.text().await?)?;
             Ok(parse_hit(&root, true)?.map_or(Lookup::None, Lookup::Found))
@@ -351,7 +338,7 @@ impl YouTubeResolver {
         .await;
         outcome.unwrap_or_else(|e| {
             warn!("shim /search failed for '{query}': {e}");
-            Lookup::Failed { busy: false }
+            Lookup::Failed(Failure::Other)
         })
     }
 
@@ -390,7 +377,7 @@ impl YouTubeResolver {
         let rows = match rows.await {
             Lookup::Found(rows) => rows,
             Lookup::None => Vec::new(),
-            Lookup::Failed { busy } => return Lookup::Failed { busy },
+            Lookup::Failed(failure) => return Lookup::Failed(failure),
         };
         let query = format!("{artist} {title}");
         let Some(row) = pick_song(artist, title, length, &rows) else {
@@ -411,15 +398,15 @@ impl YouTubeResolver {
     /// [`Self::music_song`] as a background check, which tells "no row is the song" from "could
     /// not ask": it goes through the shim's background slot (`bg=1`), is not shared with other
     /// lookups, and a busy answer, a failure, an unreachable shim, an address that is not set or
-    /// no answer within [`Self::MUSIC_TIMEOUT`] is [`Checked::Failed`] with its [`Failure`].
+    /// no answer within [`Self::MUSIC_TIMEOUT`] is [`Lookup::Failed`] with its [`Failure`].
     pub async fn music_song_checked(
         &self,
         artist: &str,
         title: &str,
         length: Option<i32>,
-    ) -> Checked<YouTubeHit> {
+    ) -> Lookup<YouTubeHit> {
         if !self.music.configured() || (artist.trim().is_empty() && title.trim().is_empty()) {
-            return Checked::Failed(Failure::Other);
+            return Lookup::Failed(Failure::Other);
         }
         let query = format!("{artist} {title}");
         let lookup = async {
@@ -432,37 +419,37 @@ impl YouTubeResolver {
             Ok(Ok(rows)) => rows,
             Ok(Err(failure)) => {
                 debug!("YouTube Music could not answer the background check for '{query}'");
-                return Checked::Failed(failure);
+                return Lookup::Failed(failure);
             }
             Err(_) => {
                 debug!("YouTube Music timed out on the background check for '{query}'");
-                return Checked::Failed(Failure::Other);
+                return Lookup::Failed(Failure::Other);
             }
         };
         match pick_song(artist, title, length, &rows) {
-            Some(row) => Checked::Hit(YouTubeHit {
+            Some(row) => Lookup::Found(YouTubeHit {
                 video_id: row.video_id.clone(),
                 title: Some(row.title.clone()),
                 duration: row.duration_seconds,
                 pick: SoulseekRouting::VIDEO_PICK,
                 ..Default::default()
             }),
-            None => Checked::Nothing,
+            None => Lookup::None,
         }
     }
 
     /// The shim's ranked pick for `query` as a background check, leaving the videos in `skip`
     /// out: `/search` with `bg=1` and `resolve=0`, so it ranks only (no stream URL, no cache).
-    /// A 404 (no candidate) is [`Checked::Nothing`]; any other failure is [`Checked::Failed`]
+    /// A 404 (no candidate) is [`Lookup::None`]; any other failure is [`Lookup::Failed`]
     /// with its [`Failure`].
     pub async fn search_ranked(
         &self,
         query: &str,
         duration_hint: Option<i32>,
         skip: &[String],
-    ) -> Checked<YouTubeHit> {
+    ) -> Lookup<YouTubeHit> {
         if query.trim().is_empty() {
-            return Checked::Failed(Failure::Other);
+            return Lookup::Failed(Failure::Other);
         }
         let mut url = self.query_url("search", query, duration_hint, true);
         url.push_str("&resolve=0");
@@ -473,7 +460,7 @@ impl YouTubeResolver {
             Ok(resp) => resp,
             Err(e) => {
                 debug!("shim ranked /search failed for '{query}': {e}");
-                return Checked::Failed(if e.is_connect() {
+                return Lookup::Failed(if e.is_connect() {
                     Failure::Unreachable
                 } else {
                     Failure::Other
@@ -482,28 +469,28 @@ impl YouTubeResolver {
         };
         let status = resp.status();
         if status.as_u16() == 404 {
-            return Checked::Nothing;
+            return Lookup::None;
         }
         let body = resp.text().await.unwrap_or_default();
         let root: Option<Value> = serde_json::from_str(&body).ok();
         if status.as_u16() == 503
             && root.as_ref().and_then(|r| r.get("error")).and_then(Value::as_str) == Some("busy")
         {
-            return Checked::Failed(Failure::Busy);
+            return Lookup::Failed(Failure::Busy);
         }
         if !status.is_success() {
             debug!("shim ranked /search HTTP {} for '{query}'", status.as_u16());
-            return Checked::Failed(Failure::Other);
+            return Lookup::Failed(Failure::Other);
         }
         let parsed = root
             .ok_or_else(|| anyhow::anyhow!("not JSON"))
             .and_then(|root| Ok(parse_hit(&root, true)?));
         match parsed {
-            Ok(Some(hit)) => Checked::Hit(hit),
-            Ok(None) => Checked::Nothing,
+            Ok(Some(hit)) => Lookup::Found(hit),
+            Ok(None) => Lookup::None,
             Err(e) => {
                 debug!("shim ranked /search failed for '{query}': {e}");
-                Checked::Failed(Failure::Other)
+                Lookup::Failed(Failure::Other)
             }
         }
     }
@@ -544,7 +531,7 @@ impl YouTubeResolver {
             if background { "bg" } else { "play" }
         );
         Some(self.music_lookups.run(&key, async move {
-            let failed = Lookup::Failed { busy: false };
+            let failed = Lookup::Failed(Failure::Other);
             // As many at once as the shim runs, so the time cap counts the lookup itself and
             // not a wait in the shim's queue.
             let Ok(Ok(_permit)) = tokio::time::timeout(Self::MUSIC_TIMEOUT, gate.acquire_owned()).await
@@ -558,7 +545,7 @@ impl YouTubeResolver {
                     Ok(Ok(rows)) => Lookup::Found(rows),
                     Ok(Err(Failure::Busy)) => {
                         debug!("YouTube Music was busy for the background '{query}'");
-                        Lookup::Failed { busy: true }
+                        Lookup::Failed(Failure::Busy)
                     }
                     Ok(Err(_)) | Err(_) => {
                         debug!("YouTube Music could not answer the background '{query}'");
@@ -572,7 +559,7 @@ impl YouTubeResolver {
                 Ok(Ok(YtmAnswer::Rows(rows))) => Lookup::Found(rows),
                 Ok(Ok(YtmAnswer::Busy)) => {
                     debug!("YouTube Music was busy for '{query}'");
-                    Lookup::Failed { busy: true }
+                    Lookup::Failed(Failure::Busy)
                 }
                 Ok(Ok(YtmAnswer::Failed)) => {
                     debug!("YouTube Music could not answer for '{query}'");
@@ -886,7 +873,7 @@ mod tests {
 
     #[test]
     fn a_lookup_that_never_finished_reads_as_one_that_could_not_answer() {
-        assert_eq!(Lookup::<i32>::default(), Lookup::Failed { busy: false });
+        assert_eq!(Lookup::<i32>::default(), Lookup::Failed(Failure::Other));
     }
 
     #[test]
@@ -1528,7 +1515,7 @@ mod tests {
         let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
         assert_eq!(
             resolver.music_song_lookup("Adele", "Hello", None, true).await,
-            Lookup::Failed { busy: true }
+            Lookup::Failed(Failure::Busy)
         );
     }
 }

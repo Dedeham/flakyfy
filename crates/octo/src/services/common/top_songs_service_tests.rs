@@ -40,7 +40,6 @@ struct Charts {
     deezer_routes: Routes,
     hints: Arc<ArtworkHints>,
     listeners: Arc<ChartCountryStore>,
-    now: Arc<Mutex<DateTime<Utc>>>,
     settings: Arc<SettingsStore>,
 }
 
@@ -89,12 +88,6 @@ impl Charts {
         });
         let hints = Arc::new(ArtworkHints::new());
         let listeners = Arc::new(ChartCountryStore::new(None));
-        let now = Arc::new(Mutex::new(
-            DateTime::parse_from_rfc3339("2026-10-22T09:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc),
-        ));
-        let clock_now = Arc::clone(&now);
         let service = TopSongsService::new(
             deezer,
             last_fm,
@@ -104,8 +97,7 @@ impl Charts {
             Arc::clone(&hints),
             Arc::clone(&settings),
         )
-        .with_listeners(Arc::clone(&listeners))
-        .with_clock(Clock::new(move || *clock_now.lock()));
+        .with_listeners(Arc::clone(&listeners));
         Charts {
             service,
             apple,
@@ -113,7 +105,6 @@ impl Charts {
             deezer_routes,
             hints,
             listeners,
-            now,
             settings,
         }
     }
@@ -539,75 +530,226 @@ async fn menus_are_learned_per_country() {
     assert!(home.iter().any(|g| g.id == "18"));
 }
 
-/// Twelve countries besides `us`, the server's, and those `skip` names.
-fn others(skip: &[&str]) -> Vec<&'static str> {
-    chart_settings::APPLE_COUNTRIES
-        .iter()
+/// How many other countries `who` has loading now.
+fn counted(charts: &Charts, who: &str) -> usize {
+    charts
+        .service
+        .inner
+        .others_working
+        .lock()
+        .get(who)
         .copied()
-        .filter(|c| *c != "us" && !skip.contains(c))
-        .take(OTHER_COUNTRIES_PER_HOUR)
-        .collect()
+        .unwrap_or(0)
+}
+
+/// Starts counting `country`'s chart `34` for `who`, expecting it to count.
+fn count_chart(charts: &Charts, who: &str, country: &str) -> OtherWork {
+    let work = charts
+        .service
+        .begin_other_work(who, country, &TopSongsService::chart_work(country, "34"))
+        .unwrap_or_else(|| panic!("{country} is refused for {who}"));
+    assert!(matches!(work, OtherWork::Counted(_)), "{country} counts");
+    work
 }
 
 #[tokio::test]
-async fn the_thirteenth_other_country_in_an_hour_is_refused() {
+async fn a_third_other_country_waits_for_the_first_two() {
     let charts = Charts::new("us", None, None).await;
-    for code in others(&["jp"]) {
-        assert!(charts.service.may_read("anna", code, "34"), "{code}");
-    }
+    let first = count_chart(&charts, "anna", "jp");
+    let _second = count_chart(&charts, "anna", "br");
 
-    assert!(!charts.service.may_read("anna", "jp", "34"));
-    assert!(!charts.service.may_choose("anna", "jp"));
     assert!(
-        charts.service.may_read("anna", others(&[])[0], "18"),
-        "a country read this hour is counted once"
+        charts
+            .service
+            .begin_other_work("anna", "de", &TopSongsService::chart_work("de", "34"))
+            .is_none()
     );
     assert!(
-        charts.service.may_read("bob", "jp", "34"),
-        "the hour is per listener"
+        charts
+            .service
+            .begin_other_work("bob", "de", &TopSongsService::chart_work("de", "34"))
+            .is_some(),
+        "the limit is per listener"
     );
+
+    drop(first);
+
+    assert_eq!(counted(&charts, "anna"), 1);
+    count_chart(&charts, "anna", "de");
 }
 
 #[tokio::test]
-async fn a_held_chart_is_never_refused() {
+async fn a_dropped_request_keeps_its_place_until_the_build_ends() {
+    let charts = Charts::new("us", None, None).await;
+    let release = Arc::new(tokio::sync::Notify::new());
+    let key = TopSongsService::chart_work("jp", "34");
+    let hold = |service: TopSongsService, work: OtherWork| {
+        let release = Arc::clone(&release);
+        let key = key.clone();
+        async move {
+            service
+                .cached(
+                    Kept::Other,
+                    key,
+                    CHART_TTL,
+                    CHART_BUILD_TIMEOUT,
+                    &LaneCell::behind(),
+                    work,
+                    async move {
+                        release.notified().await;
+                        (TopList::default(), true)
+                    },
+                )
+                .await
+        }
+    };
+
+    // The request that started the build goes away while the build is held open.
+    let work = count_chart(&charts, "anna", "jp");
+    let request = tokio::spawn(hold(charts.service.clone(), work));
+    tokio::task::yield_now().await;
+    request.abort();
+    let _ = request.await;
+    let _second = count_chart(&charts, "anna", "br");
+
+    assert!(
+        charts
+            .service
+            .begin_other_work("anna", "de", &TopSongsService::chart_work("de", "34"))
+            .is_none(),
+        "the dropped request's build still counts"
+    );
+
+    // Another request joins the build; when it ends the place is free.
+    let joined = tokio::spawn(hold(charts.service.clone(), OtherWork::Free));
+    tokio::task::yield_now().await;
+    release.notify_one();
+    joined.await.unwrap();
+
+    assert_eq!(counted(&charts, "anna"), 1);
+    count_chart(&charts, "anna", "de");
+}
+
+#[tokio::test]
+async fn get_charts_counts_the_menu_it_learns() {
     let charts = Charts::new("us", None, None).await;
     charts
         .serve("/jp/new/top-charts/songs", None, fixture!("jp_all"))
         .await;
-    charts.service.chart_in(Some("jp".into()), "34").await;
-    for code in others(&["jp"]) {
-        charts.service.may_read("anna", code, "34");
-    }
+    let work = charts
+        .service
+        .begin_other_work("anna", "jp", &TopSongsService::menu_work("jp"))
+        .expect("allowed");
+    assert!(matches!(work, OtherWork::Counted(_)));
+    assert_eq!(counted(&charts, "anna"), 1);
 
-    assert!(charts.service.may_read("anna", "JP", "34"));
-    assert!(!charts.service.may_read("anna", "jp", "18"));
+    charts.service.menu_in_counted(Some("jp".into()), work).await;
+
+    // The learning is still going, or just ended: the count ends with it, not before.
+    let freed = {
+        let mut freed = false;
+        for _ in 0..200 {
+            if counted(&charts, "anna") == 0 {
+                freed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        freed
+    };
+    assert!(freed, "the learning ended and released its place");
+    assert!(charts.service.inner.menus.get("jp").is_some());
+
+    // A menu already held starts nothing, so a counted request drops its place at once.
+    let work = charts
+        .service
+        .begin_other_work("anna", "de", &TopSongsService::menu_work("de"))
+        .expect("allowed");
+    charts.service.set_menu("de", english_menu());
+    charts.service.menu_in_counted(Some("de".into()), work).await;
+    assert_eq!(counted(&charts, "anna"), 0);
 }
 
 #[tokio::test]
-async fn own_pinned_and_server_countries_are_never_counted() {
+async fn a_joined_build_is_free() {
     let charts = Charts::new("us", None, None).await;
-    charts.choose("anna", "br", &["jp", "kr"]);
-    for code in others(&["br", "jp", "kr"]) {
-        charts.service.may_read("anna", code, "34");
-    }
+    let release = Arc::new(tokio::sync::Notify::new());
+    let key = TopSongsService::chart_work("jp", "34");
+    let work = count_chart(&charts, "anna", "jp");
+    let building = {
+        let (service, release, key) = (charts.service.clone(), Arc::clone(&release), key.clone());
+        tokio::spawn(async move {
+            service
+                .cached(
+                    Kept::Other,
+                    key,
+                    CHART_TTL,
+                    CHART_BUILD_TIMEOUT,
+                    &LaneCell::behind(),
+                    work,
+                    async move {
+                        release.notified().await;
+                        (TopList::default(), true)
+                    },
+                )
+                .await
+        })
+    };
+    tokio::task::yield_now().await;
+    let _second = count_chart(&charts, "anna", "br");
 
-    for code in ["br", "jp", "kr", "us"] {
-        assert!(charts.service.may_read("anna", code, "34"), "{code}");
-    }
-    assert!(!charts.service.may_read("anna", "de", "34"));
+    // A third country is refused for anna, but a build already running for jp is free for anyone.
+    assert!(
+        charts
+            .service
+            .begin_other_work("anna", "de", &TopSongsService::chart_work("de", "34"))
+            .is_none()
+    );
+    assert!(matches!(
+        charts.service.begin_other_work("anna", "jp", &key),
+        Some(OtherWork::Free)
+    ));
+    assert!(matches!(
+        charts.service.begin_other_work("bob", "jp", &key),
+        Some(OtherWork::Free)
+    ));
+
+    release.notify_one();
+    building.await.unwrap();
 }
 
 #[tokio::test]
-async fn the_hour_frees_up() {
+async fn held_own_pinned_and_server_countries_are_never_counted() {
     let charts = Charts::new("us", None, None).await;
-    for code in others(&["jp"]) {
-        charts.service.may_read("anna", code, "34");
+    charts.choose("anna", "br", &["kr"]);
+    let _first = count_chart(&charts, "anna", "jp");
+    let _second = count_chart(&charts, "anna", "de");
+    // A chart already held.
+    charts
+        .service
+        .cached(
+            Kept::Other,
+            TopSongsService::chart_work("fr", "34"),
+            CHART_TTL,
+            CHART_BUILD_TIMEOUT,
+            &LaneCell::behind(),
+            OtherWork::Free,
+            async { (TopList::default(), true) },
+        )
+        .await;
+
+    for code in ["br", "kr", "us", "fr"] {
+        assert!(
+            matches!(
+                charts
+                    .service
+                    .begin_other_work("ANNA", code, &TopSongsService::chart_work(code, "34")),
+                Some(OtherWork::Free)
+            ),
+            "{code}"
+        );
     }
-    assert!(!charts.service.may_read("anna", "jp", "34"));
-
-    *charts.now.lock() += TimeDelta::minutes(61);
-
-    assert!(charts.service.may_read("anna", "jp", "34"));
+    assert_eq!(counted(&charts, "anna"), 2);
 }
 
 #[tokio::test]
@@ -852,6 +994,7 @@ async fn a_joined_background_build_turns_urgent() {
                     CHART_TTL,
                     CHART_BUILD_TIMEOUT,
                     &lane,
+                    OtherWork::Free,
                     async move {
                         apple.gate().wait_in(&reads_in, || false).await;
                         log.lock().push("build".into());
@@ -876,6 +1019,7 @@ async fn a_joined_background_build_turns_urgent() {
                     CHART_TTL,
                     CHART_BUILD_TIMEOUT,
                     &LaneCell::now(),
+                    OtherWork::Free,
                     async move {
                         counted.fetch_add(1, Ordering::SeqCst);
                         (TopList::default(), true)

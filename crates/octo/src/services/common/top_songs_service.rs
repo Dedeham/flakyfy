@@ -20,7 +20,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 use octo_core::charts::apple_pages::{ChartGenre, RoomKind};
 use octo_core::charts::chart_settings::{
     self, ChartCountry, ChartKind, OVERALL, english_menu, genre_name, is_latin_script, kind, max_songs,
@@ -31,7 +31,7 @@ use octo_core::charts::top_songs::{
     library_query, merge, one_row_per_library_song,
 };
 use octo_core::common::dotnet::is_blank;
-use octo_core::common::{Clock, SongIdentity, skipped_takes};
+use octo_core::common::{SongIdentity, skipped_takes};
 use octo_core::models::domain::Song;
 use octo_core::settings::SettingsStore;
 use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
@@ -72,10 +72,10 @@ pub const LIBRARY_SEARCHES_AT_ONCE: usize = 4;
 /// How often a failing Apple list is warned about.
 const WARN_EVERY: Duration = Duration::from_secs(60 * 60);
 
-/// New countries one listener may have read for them in an hour, besides their own, their
-/// pinned ones and the server's.
-pub const OTHER_COUNTRIES_PER_HOUR: usize = 12;
-const OTHER_COUNTRIES_WINDOW: TimeDelta = TimeDelta::hours(1);
+/// How many other countries one listener may have loading at once, besides their own, their
+/// pinned ones and the server's. A country counts from when its list starts loading until that
+/// load ends.
+const OTHER_WORK_AT_ONCE: usize = 2;
 
 /// One ranked song. Plays and listeners are Last.fm's, when it gave them.
 #[derive(Debug, Clone, Default)]
@@ -153,9 +153,36 @@ struct Inner {
     warned: Mutex<HashMap<String, Instant>>,
     /// Each listener's own and pinned chart countries.
     listeners: Arc<ChartCountryStore>,
-    /// Per listener, the other countries read for them in the last hour, and when.
-    others_read: Mutex<HashMap<String, Vec<(String, DateTime<Utc>)>>>,
-    clock: Clock,
+    /// Per listener, how many other countries are loading for them now.
+    others_working: Arc<Mutex<HashMap<String, usize>>>,
+}
+
+/// One other country's load, counted against its listener until it is dropped.
+pub struct OtherGuard {
+    working: Arc<Mutex<HashMap<String, usize>>>,
+    who: String,
+}
+
+impl Drop for OtherGuard {
+    fn drop(&mut self) {
+        let mut working = self.working.lock();
+        if let Some(count) = working.get_mut(&self.who) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                working.remove(&self.who);
+            }
+        }
+    }
+}
+
+/// What a listener's request for another country's list costs them. It moves into the work it
+/// starts and lasts as long as that work does.
+pub enum OtherWork {
+    /// Nothing: their own, pinned or the server's country, a list already held, or a load
+    /// already running that this request only joins.
+    Free,
+    /// One of their [`OTHER_WORK_AT_ONCE`] other countries loading.
+    Counted(OtherGuard),
 }
 
 /// What a chart build came back with: the list, whether every source answered, and why not.
@@ -196,8 +223,7 @@ impl TopSongsService {
                 fetches: Mutex::new(HashMap::new()),
                 warned: Mutex::new(HashMap::new()),
                 listeners: Arc::new(ChartCountryStore::new(None)),
-                others_read: Mutex::new(HashMap::new()),
-                clock: Clock::system(),
+                others_working: Arc::new(Mutex::new(HashMap::new())),
             }),
         }
     }
@@ -215,14 +241,6 @@ impl TopSongsService {
     pub fn with_genre_names(mut self, store: Arc<GenreNames>) -> Self {
         if let Some(inner) = Arc::get_mut(&mut self.inner) {
             inner.genre_names = store;
-        }
-        self
-    }
-
-    /// The service reading the time from `clock`. Call it before the service is cloned.
-    pub fn with_clock(mut self, clock: Clock) -> Self {
-        if let Some(inner) = Arc::get_mut(&mut self.inner) {
-            inner.clock = clock;
         }
         self
     }
@@ -271,6 +289,7 @@ impl TopSongsService {
             ARTIST_TTL,
             ARTIST_BUILD_TIMEOUT,
             &LaneCell::behind(),
+            OtherWork::Free,
             async move {
                 let (list, whole) = this.build_artist(&name, known).await;
                 (list, whole)
@@ -383,52 +402,60 @@ impl TopSongsService {
         self.inner.apple.has_country(code)
     }
 
-    /// Whether a chart of `country` may be read for this listener now. Their own country, their
-    /// pinned ones, the server's and a chart already held always may; any other country counts
-    /// once an hour against [`OTHER_COUNTRIES_PER_HOUR`], so no one listener fills Apple's queue.
-    pub fn may_read(&self, user: &str, country: &str, chart: &str) -> bool {
-        let code = country.trim().to_ascii_lowercase();
-        let key = chart_key(Some(code.as_str()), chart);
-        let held = self.inner.cache.get(&key).is_some() || self.inner.others.get(&key).is_some();
-        self.spend_other_country(user, &code, held)
+    /// The key of the load of a country's chart, for [`Self::begin_other_work`].
+    pub fn chart_work(country: &str, chart: &str) -> String {
+        chart_key(Some(country), chart)
     }
 
-    /// Whether this listener may choose `country` as their own or pin it now: a new country
-    /// counts against the same hour as [`Self::may_read`].
-    pub fn may_choose(&self, user: &str, country: &str) -> bool {
-        self.spend_other_country(user, country, false)
+    /// The key of the load of a country's genre menu, for [`Self::begin_other_work`].
+    pub fn menu_work(country: &str) -> String {
+        format!("menu|{country}")
     }
 
-    fn spend_other_country(&self, user: &str, country: &str, free: bool) -> bool {
-        let user = user.trim().to_lowercase();
+    /// Starts counting a load of `country`'s list (`key`, from [`Self::chart_work`] or
+    /// [`Self::menu_work`]) for `who`. Their own country, their pinned ones, the server's, a list
+    /// already held and a load already running are free. Any other load counts until the work
+    /// it moves into ends, and at most [`OTHER_WORK_AT_ONCE`] count at once, so no one listener
+    /// fills Apple's queue. None when `who` has that many loading already.
+    pub fn begin_other_work(&self, who: &str, country: &str, key: &str) -> Option<OtherWork> {
+        let who = who.trim().to_lowercase();
         let country = country.trim().to_ascii_lowercase();
-        let mine = self.inner.listeners.get(&user);
-        if free
-            || mine.country == country
+        let mine = self.inner.listeners.get(&who);
+        if mine.country == country
             || mine.pinned.contains(&country)
             || self.server_country().as_deref() == Some(country.as_str())
+            || self.held_or_running(key, &country)
         {
-            return true;
+            return Some(OtherWork::Free);
         }
-        let now = self.inner.clock.now();
-        let mut read = self.inner.others_read.lock();
-        for countries in read.values_mut() {
-            countries.retain(|(_, at)| now - *at < OTHER_COUNTRIES_WINDOW);
+        let mut working = self.inner.others_working.lock();
+        let count = working.get(&who).copied().unwrap_or(0);
+        if count >= OTHER_WORK_AT_ONCE {
+            drop(working);
+            info!("Other countries still loading for {who}; refused {country}");
+            return None;
         }
-        read.retain(|_, countries| !countries.is_empty());
-        let countries = read.entry(user.clone()).or_default();
-        if countries.iter().any(|(c, _)| *c == country) {
-            return true;
+        working.insert(who.clone(), count + 1);
+        Some(OtherWork::Counted(OtherGuard {
+            working: Arc::clone(&self.inner.others_working),
+            who,
+        }))
+    }
+
+    /// Whether the list `key` is held, or its load is running.
+    fn held_or_running(&self, key: &str, country: &str) -> bool {
+        if key.starts_with("menu|") {
+            return self.inner.menus.get(country).is_some() || self.inner.learning.lock().contains(country);
         }
-        if countries.len() >= OTHER_COUNTRIES_PER_HOUR {
-            info!(
-                "Charts for {user}: {country} refused, {} other countries read in the last hour",
-                countries.len()
-            );
-            return false;
-        }
-        countries.push((country, now));
-        true
+        self.inner.cache.get(key).is_some()
+            || self.inner.others.get(key).is_some()
+            || self.running(key)
+            || self.running(&format!("other|{key}"))
+    }
+
+    /// Whether a build runs under this build key.
+    fn running(&self, building: &str) -> bool {
+        self.inner.urgent.lock().contains_key(building)
     }
 
     /// The server's genre menu (see [`Self::menu_in`]).
@@ -440,13 +467,23 @@ impl TopSongsService {
     /// while Apple's is not known yet (learned behind the answer, never waited on). None is the
     /// country Apple's own redirect picks.
     pub async fn menu_in(&self, country: Option<String>) -> (Option<String>, Arc<Vec<ChartGenre>>) {
+        self.menu_in_counted(country, OtherWork::Free).await
+    }
+
+    /// [`Self::menu_in`], the learning it starts counted as `work` until it ends. Dropped at once
+    /// when nothing is started.
+    pub async fn menu_in_counted(
+        &self,
+        country: Option<String>,
+        work: OtherWork,
+    ) -> (Option<String>, Arc<Vec<ChartGenre>>) {
         let Some(code) = country.clone() else {
             return (None, Arc::new(english_menu()));
         };
         if let Some(menu) = self.inner.menus.get(&code) {
             return (country, Arc::new(self.named(&menu)));
         }
-        self.learn_behind(Some(code));
+        self.learn_behind_counted(Some(code), work);
         (country, Arc::new(english_menu()))
     }
 
@@ -557,12 +594,19 @@ impl TopSongsService {
     /// [`Self::learn_in`] in the background, one at a time per country; Apple's own memo of what
     /// failed keeps a server that cannot reach it from asking again for a while.
     fn learn_behind(&self, country: Option<String>) {
+        self.learn_behind_counted(country, OtherWork::Free);
+    }
+
+    /// [`Self::learn_behind`], with `work` held until the learning ends. Dropped at once when a
+    /// learning of that country is already going.
+    fn learn_behind_counted(&self, country: Option<String>, work: OtherWork) {
         let key = country.clone().unwrap_or_else(|| "auto".into());
         if !self.inner.learning.lock().insert(key.clone()) {
             return;
         }
         let this = self.clone();
         tokio::spawn(async move {
+            let _work = work;
             // Lets the country go even when the learning stops part way, so it can start again.
             let _done = Learned(this.clone(), key);
             this.learn_in(country).await;
@@ -607,6 +651,19 @@ impl TopSongsService {
     /// Every listener of one country shares one list. Its Apple reads go in `lane`; a request
     /// that joins a build already running in the background turns that build urgent.
     pub async fn chart_on(&self, country: Option<String>, id: &str, lane: &LaneCell) -> Arc<TopList> {
+        self.chart_in_counted(country, id, lane, OtherWork::Free).await
+    }
+
+    /// [`Self::chart_on`], the build it starts counted as `work` until it ends or times out,
+    /// whether or not the request that asked is still waiting. Dropped at once when nothing is
+    /// started.
+    pub async fn chart_in_counted(
+        &self,
+        country: Option<String>,
+        id: &str,
+        lane: &LaneCell,
+        work: OtherWork,
+    ) -> Arc<TopList> {
         let Some(chart_kind) = kind(id) else {
             return Arc::default();
         };
@@ -626,33 +683,41 @@ impl TopSongsService {
         // Another country's list is kept apart from the server's, so a failed read of it never
         // stands in for the server's own (which has stand-ins) under the same key.
         let place = if backup { Kept::Server } else { Kept::Other };
-        self.cached(place, key, CHART_TTL, CHART_BUILD_TIMEOUT, lane, async move {
-            let started = Instant::now();
-            let built = this
-                .build_chart(&id_owned, chart_kind, country.clone(), backup, &build_lane)
-                .await;
-            let Built {
-                mut list,
-                whole,
-                error,
-            } = built;
-            list.chart = Some(id_owned.clone());
-            list.name = Some(name);
-            list.country = list.country.or(country.clone());
-            this.record(&id_owned, country.as_deref(), &list, error.as_deref());
-            info!(
-                "Chart {id_owned} for {}: {} songs from {} in {} ms",
-                list.country.as_deref().unwrap_or("the server's country"),
-                list.songs.len(),
-                if list.source.is_empty() {
-                    "nowhere"
-                } else {
-                    list.source.as_str()
-                },
-                started.elapsed().as_millis()
-            );
-            (list, whole)
-        })
+        self.cached(
+            place,
+            key,
+            CHART_TTL,
+            CHART_BUILD_TIMEOUT,
+            lane,
+            work,
+            async move {
+                let started = Instant::now();
+                let built = this
+                    .build_chart(&id_owned, chart_kind, country.clone(), backup, &build_lane)
+                    .await;
+                let Built {
+                    mut list,
+                    whole,
+                    error,
+                } = built;
+                list.chart = Some(id_owned.clone());
+                list.name = Some(name);
+                list.country = list.country.or(country.clone());
+                this.record(&id_owned, country.as_deref(), &list, error.as_deref());
+                info!(
+                    "Chart {id_owned} for {}: {} songs from {} in {} ms",
+                    list.country.as_deref().unwrap_or("the server's country"),
+                    list.songs.len(),
+                    if list.source.is_empty() {
+                        "nowhere"
+                    } else {
+                        list.source.as_str()
+                    },
+                    started.elapsed().as_millis()
+                );
+                (list, whole)
+            },
+        )
         .await
     }
 
@@ -816,6 +881,7 @@ impl TopSongsService {
         ttl: Duration,
         timeout: Duration,
         lane: &LaneCell,
+        work: OtherWork,
         build: F,
     ) -> Arc<TopList>
     where
@@ -837,6 +903,8 @@ impl TopSongsService {
             let mut urgent = self.inner.urgent.lock();
             let (running, joined) = self.inner.builds.run_joined(&building, async move {
                 let _forget = Forget(service, build_key);
+                // Counted until the build ends or times out, not until the request goes away.
+                let _work = work;
                 let (list, whole) = match tokio::time::timeout(timeout, build).await {
                     Ok(built) => built,
                     Err(_) => {

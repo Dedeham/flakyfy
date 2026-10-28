@@ -7,6 +7,7 @@ use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, Request as MockRequest, ResponseTemplate};
 
 use super::super::test_app::*;
+use super::{TopSongsService, who_of};
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::App;
 
@@ -123,6 +124,11 @@ async fn deezer() -> MockServer {
 }
 
 async fn harness(charts: &str, discovery: bool) -> Harness {
+    harness_over(charts, discovery, None).await
+}
+
+/// [`harness`] reading Apple at `apple_url` instead of the stock stand-in.
+async fn harness_over(charts: &str, discovery: bool, apple_url: Option<String>) -> Harness {
     let (navidrome, apple, deezer) = (navidrome().await, apple().await, deezer().await);
     let settings = AppSettings {
         subsonic: SubsonicSettings {
@@ -141,7 +147,7 @@ async fn harness(charts: &str, discovery: bool) -> Harness {
     let state = AppState::for_tests_with(
         settings,
         TestServices {
-            apple_music_base_url: Some(apple.uri()),
+            apple_music_base_url: Some(apple_url.unwrap_or_else(|| apple.uri())),
             deezer_base_url: Some(deezer.uri()),
             ..Default::default()
         },
@@ -565,32 +571,103 @@ async fn an_unknown_country_is_error_10() {
     );
 }
 
+/// An Apple that holds every page until `release` is given permits, noting each path asked.
+async fn held_apple() -> (
+    String,
+    std::sync::Arc<tokio::sync::Semaphore>,
+    std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
+) {
+    let release = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+    let asked: std::sync::Arc<parking_lot::Mutex<Vec<String>>> = std::sync::Arc::default();
+    let (gate, seen) = (std::sync::Arc::clone(&release), std::sync::Arc::clone(&asked));
+    let router = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+        let (gate, seen) = (std::sync::Arc::clone(&gate), std::sync::Arc::clone(&seen));
+        async move {
+            seen.lock().push(uri.path().to_string());
+            if let Ok(permit) = gate.acquire().await {
+                permit.forget();
+            }
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/html")],
+                fixture!("us_all"),
+            )
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port");
+    let url = format!("http://{}", listener.local_addr().expect("an address"));
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    (url, release, asked)
+}
+
 #[tokio::test]
-async fn the_thirteenth_other_country_in_an_hour_is_refused() {
-    let h = harness("", true).await;
-    let others: Vec<&str> = octo_core::charts::chart_settings::APPLE_COUNTRIES
-        .iter()
-        .copied()
-        .filter(|c| *c != "us")
-        .take(13)
-        .collect();
-    for code in &others[..12] {
-        let answer = top(&h, &format!("getTopChart?{ALICE}&country={code}")).await;
-        assert_eq!(answer["status"], "ok", "{code}");
+async fn a_third_loading_country_is_told_to_try_again() {
+    let (url, release, asked) = held_apple().await;
+    let h = harness_over("", true, Some(url)).await;
+    let ask = |user: &str, country: &str| {
+        let app = h.app.clone();
+        let url = format!("/rest/getTopChart?u={user}&t=good&s=salt&v=1.16.1&c=test&country={country}");
+        tokio::spawn(async move { get(&app, &url).await.json()["subsonic-response"].clone() })
+    };
+
+    // Two other countries are loading: Apple is holding both pages.
+    let japan = ask("alice", "jp");
+    let brazil = ask("alice", "br");
+    for _ in 0..500 {
+        let seen = asked.lock().clone();
+        if seen.iter().any(|p| p.starts_with("/jp/")) && seen.iter().any(|p| p.starts_with("/br/")) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
-    let refused = top(&h, &format!("getTopChart?{ALICE}&country={}", others[12])).await;
+    let refused = top(&h, &format!("getTopChart?{ALICE}&country=de")).await;
 
     assert_eq!(refused["error"]["code"], 0);
     assert_eq!(
         refused["error"]["message"],
-        "Too many countries in an hour. Try again later."
+        "Still loading your other countries. Try again in a moment."
     );
-    assert_eq!(top(&h, &format!("getTopChart?{ALICE}")).await["status"], "ok");
+    assert!(
+        !asked.lock().iter().any(|p| p.starts_with("/de/")),
+        "the refused country was never asked of Apple"
+    );
+
+    // When they finish the place is free again.
+    release.add_permits(100);
+    assert_eq!(japan.await.unwrap()["status"], "ok");
+    assert_eq!(brazil.await.unwrap()["status"], "ok");
     assert_eq!(
-        top(&h, &format!("getTopChart?{BOB}&country={}", others[12])).await["status"],
+        top(&h, &format!("getTopChart?{ALICE}&country=de")).await["status"],
         "ok"
     );
+    assert_eq!(top(&h, &format!("getTopChart?{ALICE}")).await["status"], "ok");
+}
+
+#[tokio::test]
+async fn an_unnamed_caller_counts_by_credential() {
+    let named = who_of(" Alice ", Some("key"), "t", "s");
+    assert_eq!(named, "alice");
+
+    let one = who_of("", Some("key-one"), "", "");
+    let two = who_of("", Some("key-two"), "", "");
+    assert_eq!(one.len(), 16);
+    assert!(one.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_ne!(one, two);
+    assert_eq!(one, who_of("", Some("key-one"), "ignored", "ignored"));
+    let by_token = who_of("", None, "token", "salt");
+    assert_ne!(by_token, who_of("", None, "token", "other-salt"));
+    assert_eq!(by_token, who_of("", Some(""), "token", "salt"));
+
+    // Each credential has its own two places.
+    let h = harness("", true).await;
+    let service = &h._state.top_songs;
+    let key = |country: &str| TopSongsService::chart_work(country, "34");
+    let _first = service.begin_other_work(&one, "jp", &key("jp")).unwrap();
+    let _second = service.begin_other_work(&one, "br", &key("br")).unwrap();
+    assert!(service.begin_other_work(&one, "de", &key("de")).is_none());
+    assert!(service.begin_other_work(&two, "de", &key("de")).is_some());
 }
 
 #[tokio::test]

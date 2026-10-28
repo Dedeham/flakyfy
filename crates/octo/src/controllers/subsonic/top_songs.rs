@@ -15,6 +15,7 @@ use octo_subsonic::subsonic_response_builder::{
     ChartChoiceRow, ChartsHeader, RankedRow, TopSongRow, TopSongsHeader,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tracing::{debug, info};
 
 use super::caller_checks::{SubsonicCall, listener_name, refuse_unless_signed_in, signed_in_user};
@@ -23,6 +24,7 @@ use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;
 use crate::services::charts::apple_music_pages::LaneCell;
+use crate::services::common::top_songs_service::OtherWork;
 use crate::services::common::{TopList, TopSongsService};
 use crate::services::subsonic::SubsonicProxyService;
 
@@ -52,11 +54,44 @@ fn refuse(state: &AppState, code: i32, message: &str) -> Response {
         .into_response()
 }
 
-const TOO_MANY_COUNTRIES: &str = "Too many countries in an hour. Try again later.";
+const STILL_LOADING_COUNTRIES: &str = "Still loading your other countries. Try again in a moment.";
+
+/// Who a country load counts for: the lowercased user, or when the call names nobody, a
+/// fingerprint of its credential (the API key, else the token and salt).
+fn counted_who(username: &str, call: &SubsonicCall) -> String {
+    who_of(
+        username,
+        call.param_opt("apiKey"),
+        call.param("t"),
+        call.param("s"),
+    )
+}
+
+/// [`counted_who`] from the credential's parts.
+fn who_of(username: &str, api_key: Option<&str>, token: &str, salt: &str) -> String {
+    let name = username.trim().to_lowercase();
+    if !name.is_empty() {
+        return name;
+    }
+    let mut credential = Sha256::new();
+    match api_key.filter(|key| !key.is_empty()) {
+        Some(key) => credential.update(key.as_bytes()),
+        None => {
+            credential.update(token.as_bytes());
+            credential.update(salt.as_bytes());
+        }
+    }
+    credential.finalize()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
 
 /// The country a chart call asks for: `country` when sent (Apple must have it, and the listener
-/// must not have asked for too many other countries this hour), else the caller's own, as for
-/// `auto`. Err holds the answer for one that is refused.
+/// must not have two other countries loading already), else the caller's own, as for `auto`.
+/// With it, what loading it counts as: kept by the work that call starts. `for_menu` says the
+/// call loads the country's genre menu rather than one chart. Err holds the answer for one that
+/// is refused.
 #[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
 async fn asked_country(
     state: &AppState,
@@ -64,22 +99,28 @@ async fn asked_country(
     service: &TopSongsService,
     username: &str,
     chart: &str,
-) -> Result<Option<String>, Response> {
+    for_menu: bool,
+) -> Result<(Option<String>, OtherWork), Response> {
     let Some(sent) = call
         .param_opt("country")
         .map(str::trim)
         .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("auto"))
     else {
-        return Ok(service.country_of(username).await);
+        return Ok((service.country_of(username).await, OtherWork::Free));
     };
     let code = sent.to_ascii_lowercase();
     if !service.has_country(&code) {
         return Err(refuse(state, 10, "Unknown country."));
     }
-    if !service.may_read(username, &code, chart) {
-        return Err(refuse(state, 0, TOO_MANY_COUNTRIES));
-    }
-    Ok(Some(code))
+    let key = if for_menu {
+        TopSongsService::menu_work(&code)
+    } else {
+        TopSongsService::chart_work(&code, chart)
+    };
+    let Some(work) = service.begin_other_work(&counted_who(username, call), &code, &key) else {
+        return Err(refuse(state, 0, STILL_LOADING_COUNTRIES));
+    };
+    Ok((Some(code), work))
 }
 
 /// The signed-in listener a save is for, or the answer when there is none.
@@ -168,11 +209,13 @@ pub async fn get_top_chart(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(empty_answer(&state));
     };
     let username = signed_in_user(&state, &call).await?;
-    let country = match asked_country(&state, &call, service, &username, &chart).await {
-        Ok(country) => country,
+    let (country, work) = match asked_country(&state, &call, service, &username, &chart, false).await {
+        Ok(asked) => asked,
         Err(refused) => return Ok(refused),
     };
-    let list = service.chart_on(country, &chart, &LaneCell::now()).await;
+    let list = service
+        .chart_in_counted(country, &chart, &LaneCell::now(), work)
+        .await;
     let count = count(&call, TOP_SONGS_DEFAULT_COUNT, chart_settings::max_songs(&chart));
     Ok(answer(&state, &call, &list, count).await)
 }
@@ -193,11 +236,11 @@ pub async fn get_charts(State(state): State<AppState>, req: Request) -> AppResul
         return Ok(no_charts(&state));
     };
     let username = signed_in_user(&state, &call).await?;
-    let country = match asked_country(&state, &call, service, &username, OVERALL).await {
-        Ok(country) => country,
+    let (country, work) = match asked_country(&state, &call, service, &username, OVERALL, true).await {
+        Ok(asked) => asked,
         Err(refused) => return Ok(refused),
     };
-    Ok(charts_answer(&state, service, &username, country).await)
+    Ok(charts_answer(&state, service, &username, country, work).await)
 }
 
 /// getCharts while search discovery is off: no charts.
@@ -234,14 +277,20 @@ pub async fn set_chart_country(State(state): State<AppState>, req: Request) -> A
         Err(refused) => return Ok(refused),
     };
     let service = &state.top_songs;
+    let mut work = OtherWork::Free;
     let home = if code == "auto" {
         service.country().await
     } else {
         if !service.has_country(&code) {
             return Ok(refuse(&state, 10, "Unknown country."));
         }
-        if !service.may_choose(&username, &code) {
-            return Ok(refuse(&state, 0, TOO_MANY_COUNTRIES));
+        match service.begin_other_work(
+            &counted_who(&username, &call),
+            &code,
+            &TopSongsService::menu_work(&code),
+        ) {
+            Some(started) => work = started,
+            None => return Ok(refuse(&state, 0, STILL_LOADING_COUNTRIES)),
         }
         Some(code.clone())
     };
@@ -256,7 +305,7 @@ pub async fn set_chart_country(State(state): State<AppState>, req: Request) -> A
     });
     info!("Chart country for {username}: {code}");
     Ok(match top_songs(&state) {
-        Some(service) => charts_answer(&state, service, &username, None).await,
+        Some(service) => charts_answer(&state, service, &username, None, work).await,
         None => no_charts(&state),
     })
 }
@@ -287,6 +336,7 @@ pub async fn pin_chart_country(State(state): State<AppState>, req: Request) -> A
         None => return Ok(refuse(&state, 10, "Required parameter is missing: pinned")),
     };
     let service = &state.top_songs;
+    let mut work = OtherWork::Free;
     if pin {
         if !service.has_country(&code) {
             return Ok(refuse(&state, 10, "Unknown country."));
@@ -304,8 +354,13 @@ pub async fn pin_chart_country(State(state): State<AppState>, req: Request) -> A
                     &format!("You can pin at most {MAX_PINNED} countries."),
                 ));
             }
-            if !service.may_choose(&username, &code) {
-                return Ok(refuse(&state, 0, TOO_MANY_COUNTRIES));
+            match service.begin_other_work(
+                &counted_who(&username, &call),
+                &code,
+                &TopSongsService::menu_work(&code),
+            ) {
+                Some(started) => work = started,
+                None => return Ok(refuse(&state, 0, STILL_LOADING_COUNTRIES)),
             }
         }
     }
@@ -335,19 +390,25 @@ pub async fn pin_chart_country(State(state): State<AppState>, req: Request) -> A
             saved.pinned.join(", ")
         }
     );
+    // A country just pinned starts loading its genre menu, counted until that ends.
+    if pin {
+        service.menu_in_counted(Some(code.clone()), work).await;
+    }
     Ok(match top_songs(&state) {
-        Some(service) => charts_answer(&state, service, &username, None).await,
+        Some(service) => charts_answer(&state, service, &username, None, OtherWork::Free).await,
         None => no_charts(&state),
     })
 }
 
 /// getCharts' answer for a country (None: the listener's own). A chart that is on is this
-/// listener's playlist when the country is their own or one they pinned.
+/// listener's playlist when the country is their own or one they pinned. `work` is what loading
+/// the country's menu counts as.
 async fn charts_answer(
     state: &AppState,
     service: &TopSongsService,
     username: &str,
     asked: Option<String>,
+    work: OtherWork,
 ) -> Response {
     let own = service.country_of(username).await;
     let mine = service.listeners().get(username);
@@ -358,7 +419,7 @@ async fn charts_answer(
         .filter(|c| asked != own && mine.pinned.iter().any(|p| p == c))
         .map(str::to_string);
     let theirs = asked == own || pinned.is_some();
-    let (country, menu) = service.menu_in(asked).await;
+    let (country, menu) = service.menu_in_counted(asked, work).await;
     let lists = state.settings.current().generated_playlists.clone();
     let on: Vec<String> = lists.chart_ids();
     let mut ids: Vec<String> = vec![

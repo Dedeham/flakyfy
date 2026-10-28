@@ -18,7 +18,7 @@ use octo_media::audio::{AudioFingerprinter, RawFingerprint};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
-use crate::services::you_tube::you_tube_resolver::{ShimStream, YouTubeHit, YouTubeResolver};
+use crate::services::you_tube::you_tube_resolver::{ShimRefused, ShimStream, YouTubeHit, YouTubeResolver};
 
 /// Seconds one chromaprint item covers: a frame every 1365 samples at 11025 Hz.
 pub const ITEM_SECONDS: f64 = 4096.0 / 3.0 / 11025.0;
@@ -133,9 +133,11 @@ pub enum PreviewOutcome {
     /// Nothing to compare with: no video, or fpcalc could not read one of the two. The download is judged
     /// as it was before.
     Unavailable(String),
-    /// The song's video was found but the shim did not send it, or what it sent could not be read.
-    /// Nothing is said about the file; asking again later may get it.
+    /// The song's video was found but the shim did not send it. Nothing is said about the file;
+    /// asking again later may get it.
     NotSent(String),
+    /// The shim's background lane was full, so the preview was not fetched now. Asked again later.
+    Busy,
     Compared {
         heard: Heard,
         comparison: Comparison,
@@ -143,6 +145,17 @@ pub enum PreviewOutcome {
         trusted: bool,
         preview: PreviewFacts,
     },
+}
+
+/// Why a preview's fingerprint could not be had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewFailure {
+    /// The shim did not send the video's audio.
+    NotSent,
+    /// The audio arrived but fpcalc could not read it.
+    Unreadable,
+    /// The shim's background lane was full, so the video was not fetched now.
+    Busy,
 }
 
 /// Where previews come from: the yt-dlp shim.
@@ -158,6 +171,27 @@ pub trait PreviewSource: Send + Sync {
     /// [`Self::fetch`] for work nobody waits on, in the shim's background lane where it has one.
     async fn fetch_in_background(&self, video_id: &str, dest: &Path) -> bool {
         self.fetch(video_id, dest).await
+    }
+
+    /// Saves the video's audio at `dest`, in the shim's background lane when `background` is
+    /// true. [`PreviewFailure::Busy`] when the shim said its lane is full, else
+    /// [`PreviewFailure::NotSent`].
+    async fn fetch_preview(
+        &self,
+        video_id: &str,
+        dest: &Path,
+        background: bool,
+    ) -> Result<(), PreviewFailure> {
+        let fetched = if background {
+            self.fetch_in_background(video_id, dest).await
+        } else {
+            self.fetch(video_id, dest).await
+        };
+        if fetched {
+            Ok(())
+        } else {
+            Err(PreviewFailure::NotSent)
+        }
     }
 }
 
@@ -189,26 +223,47 @@ impl PreviewSource for YouTubeResolver {
     }
 
     async fn fetch(&self, video_id: &str, dest: &Path) -> bool {
-        save_preview(self.open_stream(video_id, None).await, video_id, dest).await
+        self.fetch_preview(video_id, dest, false).await.is_ok()
     }
 
     async fn fetch_in_background(&self, video_id: &str, dest: &Path) -> bool {
-        save_preview(self.open_stream_in_background(video_id).await, video_id, dest).await
+        self.fetch_preview(video_id, dest, true).await.is_ok()
+    }
+
+    async fn fetch_preview(
+        &self,
+        video_id: &str,
+        dest: &Path,
+        background: bool,
+    ) -> Result<(), PreviewFailure> {
+        let opened = if background {
+            self.try_open_stream_in_background(video_id).await
+        } else {
+            self.try_open_stream(video_id).await
+        };
+        save_preview(opened, video_id, dest).await
     }
 }
 
 /// Writes an opened preview to `dest`, at most [`MAX_PREVIEW_BYTES`] within [`FETCH_TIMEOUT`].
-/// False when nothing was opened, the shim refused, or nothing arrived.
-async fn save_preview(opened: Option<ShimStream>, video_id: &str, dest: &Path) -> bool {
-    let Some(opened) = opened else {
-        return false;
+/// [`PreviewFailure::Busy`] when the shim said its lane is full; any other failure to open,
+/// receive or finish is [`PreviewFailure::NotSent`].
+async fn save_preview(
+    opened: Result<ShimStream, ShimRefused>,
+    video_id: &str,
+    dest: &Path,
+) -> Result<(), PreviewFailure> {
+    let opened = match opened {
+        Ok(opened) => opened,
+        Err(ShimRefused { busy: true }) => return Err(PreviewFailure::Busy),
+        Err(_) => return Err(PreviewFailure::NotSent),
     };
     if opened.status_code != 200 {
         debug!(
             "shim /stream answered {} for preview {video_id}",
             opened.status_code
         );
-        return false;
+        return Err(PreviewFailure::NotSent);
     }
     let read = async {
         let mut file = tokio::fs::File::create(dest).await?;
@@ -227,14 +282,15 @@ async fn save_preview(opened: Option<ShimStream>, video_id: &str, dest: &Path) -
         anyhow::Ok(written)
     };
     match tokio::time::timeout(FETCH_TIMEOUT, read).await {
-        Ok(Ok(written)) => written > 0,
+        Ok(Ok(written)) if written > 0 => Ok(()),
+        Ok(Ok(_)) => Err(PreviewFailure::NotSent),
         Ok(Err(error)) => {
             warn!("could not read preview {video_id} from the shim: {error}");
-            false
+            Err(PreviewFailure::NotSent)
         }
         Err(_) => {
             warn!("preview {video_id} took longer than {FETCH_TIMEOUT:?} to read from the shim");
-            false
+            Err(PreviewFailure::NotSent)
         }
     }
 }
@@ -384,8 +440,8 @@ pub fn judge(comparison: &Comparison, trusted: bool) -> Heard {
 }
 
 /// Compares the download at `path` with the song's preview, fetched in the shim's background lane
-/// when `background` is true. Every failure is [`PreviewOutcome::Unavailable`] or
-/// [`PreviewOutcome::NotSent`], which change nothing about the file.
+/// when `background` is true. Every failure is [`PreviewOutcome::Unavailable`],
+/// [`PreviewOutcome::NotSent`] or [`PreviewOutcome::Busy`], which change nothing about the file.
 pub async fn check(
     source: &dyn PreviewSource,
     fingerprinter: &AudioFingerprinter,
@@ -403,7 +459,7 @@ pub async fn check(
     else {
         return PreviewOutcome::Unavailable("the download could not be fingerprinted".into());
     };
-    let Some(heard) = fingerprint_preview(
+    let heard = match fingerprint_preview(
         source,
         fingerprinter,
         &preview.video_id,
@@ -411,11 +467,15 @@ pub async fn check(
         background,
     )
     .await
-    else {
-        return PreviewOutcome::NotSent(format!(
-            "preview {} was not sent or could not be read",
-            preview.video_id
-        ));
+    {
+        Ok(heard) => heard,
+        Err(PreviewFailure::NotSent) => {
+            return PreviewOutcome::NotSent(format!("preview {} was not sent", preview.video_id));
+        }
+        Err(PreviewFailure::Unreadable) => {
+            return PreviewOutcome::Unavailable(format!("preview {} could not be read", preview.video_id));
+        }
+        Err(PreviewFailure::Busy) => return PreviewOutcome::Busy,
     };
     if preview.seconds.is_none_or(|s| s <= 0) {
         preview.seconds = Some(heard.seconds.round() as i32);
@@ -433,26 +493,23 @@ pub async fn check(
 }
 
 /// The preview's raw fingerprint, read through a temporary file that is removed afterwards.
-/// `background` fetches it in the shim's background lane.
+/// `background` fetches it in the shim's background lane. [`PreviewFailure::NotSent`] and
+/// [`PreviewFailure::Busy`] when the fetch failed, [`PreviewFailure::Unreadable`] when fpcalc could
+/// not read what was fetched.
 pub(crate) async fn fingerprint_preview(
     source: &dyn PreviewSource,
     fingerprinter: &AudioFingerprinter,
     video_id: &str,
     timeout_seconds: i32,
     background: bool,
-) -> Option<RawFingerprint> {
+) -> Result<RawFingerprint, PreviewFailure> {
     let dest = preview_path();
-    let fetched = if background {
-        source.fetch_in_background(video_id, &dest).await
-    } else {
-        source.fetch(video_id, &dest).await
-    };
-    let print = if fetched {
-        fingerprinter
+    let print = match source.fetch_preview(video_id, &dest, background).await {
+        Ok(()) => fingerprinter
             .raw_fingerprint(&dest, PREVIEW_SECONDS, timeout_seconds)
             .await
-    } else {
-        None
+            .ok_or(PreviewFailure::Unreadable),
+        Err(failure) => Err(failure),
     };
     let _ = std::fs::remove_file(&dest);
     print

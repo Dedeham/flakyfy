@@ -39,6 +39,13 @@ pub struct ShimStream {
     pub content_range: Option<String>,
 }
 
+/// A `/stream` the shim did not open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShimRefused {
+    /// The shim said its lane is full (HTTP 503 with `{"error":"busy"}`).
+    pub busy: bool,
+}
+
 /// Pure HTTP client for the yt-dlp-shim sidecar service. Octo never spawns
 /// yt-dlp itself: the shim wraps it behind /search and /stream endpoints
 /// in its own container, so any process-management quirks stay isolated.
@@ -394,14 +401,37 @@ impl YouTubeResolver {
         self.open_stream_with(video_id, None, true).await
     }
 
+    /// [`Self::open_stream_in_background`] that tells a full background lane (HTTP 503 with
+    /// `{"error":"busy"}`) from any other refusal.
+    pub async fn try_open_stream_in_background(&self, video_id: &str) -> Result<ShimStream, ShimRefused> {
+        self.try_open_stream(video_id, None, true).await
+    }
+
+    /// [`Self::open_stream`] that tells a full background lane from any other refusal.
+    pub async fn try_open_stream(&self, video_id: &str) -> Result<ShimStream, ShimRefused> {
+        self.try_open_stream_with(video_id, None, false).await
+    }
+
     async fn open_stream_with(
         &self,
         video_id: &str,
         range_header: Option<&str>,
         background: bool,
     ) -> Option<ShimStream> {
+        self.try_open_stream_with(video_id, range_header, background)
+            .await
+            .ok()
+    }
+
+    async fn try_open_stream_with(
+        &self,
+        video_id: &str,
+        range_header: Option<&str>,
+        background: bool,
+    ) -> Result<ShimStream, ShimRefused> {
+        let refused = ShimRefused { busy: false };
         if video_id.trim().is_empty() {
-            return None;
+            return Err(refused);
         }
         let mut url = format!("{}/stream?id={}", self.base_url, escape(video_id));
         if background {
@@ -415,7 +445,7 @@ impl YouTubeResolver {
             Ok(resp) => resp,
             Err(e) => {
                 warn!("shim /stream failed for {video_id}: {e}");
-                return None;
+                return Err(refused);
             }
         };
         // Accept 200 (full body), 206 (partial content) and 416 (a range past the end, whose
@@ -424,7 +454,14 @@ impl YouTubeResolver {
         let status = resp.status().as_u16();
         if !matches!(status, 200 | 206 | 416) {
             warn!("shim /stream HTTP {status} for {video_id}");
-            return None;
+            let busy = status == 503
+                && resp
+                    .text()
+                    .await
+                    .ok()
+                    .and_then(|body| serde_json::from_str::<Value>(&body).ok())
+                    .is_some_and(|root| root.get("error").and_then(Value::as_str) == Some("busy"));
+            return Err(ShimRefused { busy });
         }
         let header = |name: reqwest::header::HeaderName| {
             resp.headers()
@@ -435,7 +472,7 @@ impl YouTubeResolver {
         let content_type = header(reqwest::header::CONTENT_TYPE).unwrap_or_else(|| "audio/mp4".to_string());
         let content_range = header(reqwest::header::CONTENT_RANGE);
         let content_length = resp.content_length();
-        Some(ShimStream {
+        Ok(ShimStream {
             response: resp,
             content_type,
             content_length,

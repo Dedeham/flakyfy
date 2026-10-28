@@ -462,16 +462,93 @@ async fn the_background_lane_is_used_only_when_asked_for() {
     assert!(
         fingerprint_preview(&shim, &fingerprinter, "vid", 30, true)
             .await
-            .is_none()
+            .is_err()
     );
     assert_eq!(shim.background_fetches.load(Ordering::Relaxed), 1);
     assert_eq!(shim.fetches.load(Ordering::Relaxed), 0);
     assert!(
         fingerprint_preview(&shim, &fingerprinter, "vid", 30, false)
             .await
-            .is_none()
+            .is_err()
     );
     assert_eq!(shim.fetches.load(Ordering::Relaxed), 1);
+}
+
+/// A shim whose fetch writes a few junk bytes and says it sent the video.
+struct JunkShim;
+
+#[async_trait]
+impl PreviewSource for JunkShim {
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Option<PreviewFacts> {
+        Some(facts("One Dance", Some("Drake"), Some(174)))
+    }
+
+    async fn fetch(&self, _video_id: &str, dest: &Path) -> bool {
+        std::fs::write(dest, b"not audio at all").is_ok()
+    }
+}
+
+/// Audio that arrives but cannot be read is a different failure from audio that never arrives.
+#[tokio::test]
+async fn a_preview_that_arrives_but_cannot_be_read_is_unavailable_not_retried() {
+    let fingerprinter = AudioFingerprinter::new();
+    let on_path = std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| {
+            dir.join(format!("fpcalc{}", std::env::consts::EXE_SUFFIX))
+                .is_file()
+        })
+    });
+    if !on_path {
+        eprintln!("skipped: fpcalc is not on the PATH");
+        return;
+    }
+    let failure = fingerprint_preview(&JunkShim, &fingerprinter, "vid", 30, false)
+        .await
+        .err();
+    assert_eq!(failure, Some(PreviewFailure::Unreadable));
+}
+
+/// A shim whose lane is full says so with HTTP 503 and `{"error":"busy"}`; any other refusal is
+/// a preview that was not sent. Neither needs fpcalc.
+#[tokio::test]
+async fn a_full_background_lane_is_busy_and_any_other_refusal_is_not_sent() {
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let shim = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/stream"))
+        .and(query_param("id", "full"))
+        .respond_with(ResponseTemplate::new(503).set_body_string(r#"{"error":"busy"}"#))
+        .mount(&shim)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/stream"))
+        .and(query_param("id", "broken"))
+        .respond_with(ResponseTemplate::new(502).set_body_string(r#"{"error":"ytdlp_failed"}"#))
+        .mount(&shim)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/stream"))
+        .and(query_param("id", "unsaid"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("try later"))
+        .mount(&shim)
+        .await;
+    let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+    let dest = std::env::temp_dir().join(format!("octo-preview-test-{}", std::process::id()));
+    assert_eq!(
+        resolver.fetch_preview("full", &dest, true).await,
+        Err(PreviewFailure::Busy)
+    );
+    assert_eq!(
+        resolver.fetch_preview("broken", &dest, true).await,
+        Err(PreviewFailure::NotSent)
+    );
+    assert_eq!(
+        resolver.fetch_preview("unsaid", &dest, true).await,
+        Err(PreviewFailure::NotSent)
+    );
+    assert!(!dest.exists());
 }
 
 /// 40 seconds of pink noise as FLAC, or None where ffmpeg or fpcalc is missing.

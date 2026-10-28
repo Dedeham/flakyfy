@@ -43,7 +43,7 @@ use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
 use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::fingerprint::preview_check::{
-    self, FILE_SECONDS, Heard, PreviewFacts, PreviewRequest, PreviewSource,
+    self, FILE_SECONDS, Heard, PreviewFacts, PreviewFailure, PreviewRequest, PreviewSource,
 };
 use crate::services::library::library_walk;
 use crate::services::state_file;
@@ -161,11 +161,20 @@ pub async fn hear(
     else {
         return Compared::NoCopy;
     };
-    let Some(heard) =
-        preview_check::fingerprint_preview(source, fingerprinter, &preview.video_id, timeout_seconds, true)
-            .await
-    else {
-        return Compared::Unavailable;
+    let heard = match preview_check::fingerprint_preview(
+        source,
+        fingerprinter,
+        &preview.video_id,
+        timeout_seconds,
+        true,
+    )
+    .await
+    {
+        Ok(heard) => heard,
+        // A shim that did not send it, or whose lane was full, is asked again later.
+        Err(PreviewFailure::NotSent | PreviewFailure::Busy) => return Compared::Unavailable,
+        // A preview that cannot be read will not become readable.
+        Err(PreviewFailure::Unreadable) => return Compared::NoCopy,
     };
     if preview.seconds.is_none_or(|s| s <= 0) {
         preview.seconds = Some(heard.seconds.round() as i32);

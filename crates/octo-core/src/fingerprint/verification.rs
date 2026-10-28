@@ -67,11 +67,14 @@ pub enum InconclusiveReason {
     /// AcoustID had never heard the sound, and the song's YouTube preview, one that can be
     /// believed, sounds nothing like the file.
     DiffersFromYouTube,
+    /// AcoustID ties the sound to the song, but only through submissions that one person made, so it is
+    /// not proof on its own.
+    LoneLink,
 }
 
 impl InconclusiveReason {
     /// Every member, in declaration order.
-    pub const ALL: [InconclusiveReason; 10] = [
+    pub const ALL: [InconclusiveReason; 11] = [
         Self::None,
         Self::Disabled,
         Self::NotFingerprinted,
@@ -82,6 +85,7 @@ impl InconclusiveReason {
         Self::SoundsLikeAnother,
         Self::LengthOff,
         Self::DiffersFromYouTube,
+        Self::LoneLink,
     ];
 
     /// The reason's name, which the notice queue stores.
@@ -97,6 +101,7 @@ impl InconclusiveReason {
             Self::SoundsLikeAnother => "SoundsLikeAnother",
             Self::LengthOff => "LengthOff",
             Self::DiffersFromYouTube => "DiffersFromYouTube",
+            Self::LoneLink => "LoneLink",
         }
     }
 }
@@ -395,6 +400,7 @@ impl VerificationResult {
                     | InconclusiveReason::BelowThreshold
                     | InconclusiveReason::SourceDisagreed
                     | InconclusiveReason::LengthOff
+                    | InconclusiveReason::LoneLink
             )
     }
 
@@ -520,6 +526,7 @@ mod tests {
             (InconclusiveReason::SourceDisagreed, true),
             (InconclusiveReason::LengthOff, true),
             (InconclusiveReason::SoundsLikeAnother, false),
+            (InconclusiveReason::LoneLink, true),
         ];
         for (reason, expected) in cases {
             let result = VerificationResult {

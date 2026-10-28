@@ -30,7 +30,7 @@ use super::action_helpers::{
     is_successful_subsonic_response, materialize_station, playlist_names, playlist_stations,
     queue_refresh_if_stale, serve_station_songs, suggested_sources, xml_value,
 };
-use super::caller_checks::listener_name;
+use super::caller_checks::listener_name_of;
 use crate::app::AppState;
 use crate::middleware::family_gate::{GateReading, Unverified};
 use crate::services::family::audio_gate::ExplicitMark;
@@ -72,7 +72,7 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
         }
     };
 
-    let username = listener_name(&state, &call).await;
+    let username = listener_name_of(&state, &call.parameters, &call.proxy, &call.parts.headers).await;
 
     // This listener's Review and Duplicates playlists carry Octo's glyph cover.
     let notices = notice_titles(&state, &username);
@@ -619,7 +619,7 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
     let format = call.format.as_str();
     let builder = &state.subsonic_response_builder;
     let id = call.param_or("id", "").to_string();
-    let username = listener_name(state, &call).await;
+    let username = listener_name_of(state, &call.parameters, &call.proxy, &call.parts.headers).await;
 
     if id.starts_with("oi") && is_octo_playlist_id(&id, false) {
         if !signed_in(state, &call, format).await {

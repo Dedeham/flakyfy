@@ -187,7 +187,7 @@ impl TopSongsService {
                 settings,
                 cache: MemoryCache::new(512),
                 others: MemoryCache::new(256),
-                menus: MemoryCache::new(chart_settings::APPLE_COUNTRIES.len() + 16),
+                menus: MemoryCache::new(chart_settings::APPLE_COUNTRIES.len() as u64 + 16),
                 learning: Mutex::new(HashSet::new()),
                 genre_names: Arc::new(GenreNames::new(None)),
                 naming: Mutex::new(HashSet::new()),
@@ -833,39 +833,40 @@ impl TopSongsService {
         let (service, build_key) = (self.clone(), building.clone());
         // The lane is recorded under the same lock that starts the build, so a build that ends
         // at once cannot leave its lane behind.
-        let mut urgent = self.inner.urgent.lock();
-        let (running, joined) = self.inner.builds.run_joined(&building, async move {
-            let _forget = Forget(service, build_key);
-            let (list, whole) = match tokio::time::timeout(timeout, build).await {
-                Ok(built) => built,
-                Err(_) => {
-                    // Top songs are an addition, never a reason for anything to fail.
-                    debug!("top songs '{cache_key}' timed out");
-                    return (Arc::new(TopList::default()), false);
-                }
-            };
-            let list = Arc::new(list);
-            let keep = if whole && !list.songs.is_empty() {
-                ttl
+        let (running, started) = {
+            let mut urgent = self.inner.urgent.lock();
+            let (running, joined) = self.inner.builds.run_joined(&building, async move {
+                let _forget = Forget(service, build_key);
+                let (list, whole) = match tokio::time::timeout(timeout, build).await {
+                    Ok(built) => built,
+                    Err(_) => {
+                        // Top songs are an addition, never a reason for anything to fail.
+                        debug!("top songs '{cache_key}' timed out");
+                        return (Arc::new(TopList::default()), false);
+                    }
+                };
+                let list = Arc::new(list);
+                let keep = if whole && !list.songs.is_empty() {
+                    ttl
+                } else {
+                    SHORT_TTL
+                };
+                this.kept(place).set(cache_key, list.clone(), 1, keep);
+                (list, whole)
+            });
+            if joined {
+                (running, urgent.get(&building).cloned())
             } else {
-                SHORT_TTL
-            };
-            this.kept(place).set(cache_key, list.clone(), 1, keep);
-            (list, whole)
-        });
-        if joined {
-            let started = urgent.get(&building).cloned();
-            drop(urgent);
-            // A request waiting on a background build makes it interactive.
-            if lane.is_now()
-                && let Some(started) = started
-                && started.make_now()
-            {
-                self.inner.apple.gate().wake_behind();
+                urgent.insert(building, lane.clone());
+                (running, None)
             }
-        } else {
-            urgent.insert(building, lane.clone());
-            drop(urgent);
+        };
+        // A request waiting on a background build makes it interactive.
+        if lane.is_now()
+            && let Some(started) = started
+            && started.make_now()
+        {
+            self.inner.apple.gate().wake_behind();
         }
         let (list, _) = running.await;
         list

@@ -17,6 +17,7 @@ use crate::services::fingerprint::preview_check::{Comparison, PreviewFacts};
 use crate::services::library::library_action_executor::{LibraryActionOutcome, LibraryActionRequest};
 use crate::services::library::library_action_journal::LibraryActionState;
 use crate::services::library::library_action_test_support::slash_root;
+use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::library::notice_playlist_worker::NoticePlaylistWorker;
 use crate::services::library::notice_queue::{NoticeEntry, NoticeState};
 use crate::services::local::{LocalSongMapping, ParsedExternalId, ParsedSongId};
@@ -1225,7 +1226,7 @@ async fn a_confident_other_song_is_replaced_and_leaves_a_note() {
     assert_eq!(note.state, NoticeState::Acted);
     assert_eq!(note.cause, InconclusiveReason::SoundsLikeAnother);
     assert_eq!(note.origin, NoticeOrigin::LibrarySweep);
-    assert_eq!(note.local_path, path);
+    assert_eq!(note.local_path, get_full_path(&path));
     assert_eq!(note.navidrome_id.as_deref(), Some("nd-a.flac"));
     assert_eq!(
         note.reason,

@@ -851,6 +851,37 @@ impl NoticeQueue {
         self.mark_dirty();
     }
 
+    /// How every note of a replacement the library sweep made begins.
+    pub const REPLACED_PREFIX: &'static str = "Octo replaced this";
+
+    /// The words a library sweep note carries once its replacement was put back.
+    pub const PUT_BACK_REASON: &'static str = "Put back: the original was kept";
+
+    /// The replacement the library sweep made of song `navidrome_id` was put back: its note
+    /// says so. The note stays answered, so the sweep never asks about that file again. True
+    /// when a note took the words.
+    pub fn mark_put_back(&self, navidrome_id: &str) -> bool {
+        let mut changed = false;
+        {
+            let mut entries = self.entries.lock();
+            for entry in entries.values_mut() {
+                if entry.kind == NoticeKind::Review
+                    && entry.origin == NoticeOrigin::LibrarySweep
+                    && entry.state == NoticeState::Acted
+                    && entry.navidrome_id.as_deref() == Some(navidrome_id)
+                    && entry.reason.starts_with(Self::REPLACED_PREFIX)
+                {
+                    entry.reason = Self::PUT_BACK_REASON.to_string();
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
     pub fn duplicate_key(username: &str, group_key: &str, track_id: &str) -> String {
         format!(
             "dup|{}|{group_key}|{track_id}",

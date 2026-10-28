@@ -700,6 +700,8 @@ fn library_edits(
             verification: Some(tagging.download_verification.clone()),
             cover_finder: Some(cover_finder),
             write_gate: Some(stores.library_write_gate.clone()),
+            rejected_peers: Some(stores.rejected_peers.clone()),
+            notices: Some(stores.notice_queue.clone()),
         },
     ));
     (rescan, edits)

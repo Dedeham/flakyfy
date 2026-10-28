@@ -361,6 +361,7 @@ fn apply_tags_to_confirmed_with_tagging_off_still_records_the_recording_id() {
         Some(title),
         Some(2023),
     );
+    found.sources = 2;
     found.credits = vec![
         AcoustIdCredit::new("Bizarrap", Some("a1"), " & "),
         AcoustIdCredit::new("Rauw Alejandro", Some("a2"), ""),
@@ -409,6 +410,7 @@ fn apply_tags_to_confirmed_and_tagging_on_takes_the_releases_track_and_album_art
         Some("Mezzanine"),
         Some(1998),
     );
+    found.sources = 2;
     found.release = Some(AcoustIdRelease::new(
         Some("rel-1".into()),
         Some("rg-1".into()),

@@ -1536,6 +1536,17 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .imp-card { padding: var(--s-xl); display: flex; flex-direction: column; gap: var(--s-l); }
 .set-card.imp-card > :not([hidden]):not([type="hidden"]) ~ :not([type="hidden"]) { border-top: 0; }
 .imp-card > .set-row { padding: 0; }
+/* The trickle's buttons sit on its title's line however long the line under it runs, so they stay
+ * put from one state to the next. */
+.imp-trickle-head { align-items: flex-start; }
+.imp-trickle-head > .imp-actions { margin-top: -7px; }
+.imp-trickle-head > .imp-actions:not(:has(> :not([hidden]))) { display: none; }
+@media (pointer: coarse) { .imp-trickle-head > .imp-actions { margin-top: -12px; } }
+/* A narrow card puts them under its words, so the line keeps a readable width. */
+@container (max-width: 480px) {
+  .imp-trickle-head { flex-direction: column; align-items: stretch; gap: var(--s-l); }
+  .imp-trickle-head > .imp-actions { margin-top: 0; justify-content: flex-start; }
+}
 .imp-row { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.6fr) 112px 92px 104px 136px; gap: var(--s-l); align-items: center; }
 .imp-row.picked, .imp-track.picked { background: var(--accent-selected); }
 .imp-row .key, .imp-track .key, .imp-trickle-row .key { font-family: inherit; color: var(--ink); overflow-wrap: anywhere; }

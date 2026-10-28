@@ -1230,9 +1230,24 @@ impl LibraryReviewSweepWorker {
                 }
                 // The shim found the song's video but did not send it: tried again, and asked about
                 // as before once it failed as often as an AcoustID lookup may.
-                PreviewOutcome::NotSent(why) => {
+                // Plays come first: a busy shim, or one that cannot be asked, is waited out
+                // without spending one of the song's tries.
+                waited @ (PreviewOutcome::Busy | PreviewOutcome::Unreachable) => {
+                    if pick.passed != pick.cursor {
+                        self.record(generation, |s| set_cursor(s, lane, &pick.passed));
+                    }
+                    let reason = if waited == PreviewOutcome::Busy {
+                        "YouTube is busy with plays; trying that song again."
+                    } else {
+                        "The YouTube shim is not answering; trying that song again."
+                    };
+                    return self.hold("Waiting", Some(reason), interval);
+                }
+                // The file could not be read for the comparison, and a video found but not sent
+                // is no better: either is tried three times, and asked about as before.
+                tried @ (PreviewOutcome::NotSent(_) | PreviewOutcome::FileUnreadable) => {
                     debug!(
-                        "Library review sweep: no preview for '{} - {}' yet: {why}",
+                        "Library review sweep: no preview for '{} - {}' yet: {tried:?}",
                         song.artist, song.title
                     );
                     if self.lookup_failures.load(Ordering::SeqCst) + 1 < Self::MAX_LOOKUP_FAILURES_PER_FILE {

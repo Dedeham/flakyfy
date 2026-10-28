@@ -381,6 +381,97 @@ async fn a_failure_of_the_shim_is_not_an_answer() {
 }
 
 #[tokio::test]
+async fn a_busy_shim_rests_nothing_and_gives_up_nothing() {
+    let check = Check::new();
+    for name in ["a.flac", "b.flac"] {
+        check.tagged(name);
+    }
+    // Four failures, a busy answer, then a fifth failure: the busy answer reset nothing, so the
+    // fifth is what makes the check rest.
+    let mut script = vec![Compared::Unavailable; 4];
+    script.push(Compared::Busy);
+    script.push(Compared::Unavailable);
+    let checker = FakeChecker::answering(script);
+    let (worker, _) = check.simple(checker.clone());
+
+    worker.start();
+    for _ in 0..4 {
+        worker.tick().await;
+    }
+    let wait = worker.tick().await;
+    assert_eq!(wait, Duration::from_secs(3600 / 60));
+    let status = worker.status();
+    assert_eq!(status.state, "Waiting");
+    assert!(
+        status
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("busy with plays")),
+        "{status:?}"
+    );
+    // Not counted, no cursor moved, nothing given up on.
+    assert_eq!(
+        worker.store().read(|s| (s.done, s.no_copy, s.cursor.clone())),
+        (0, 0, String::new())
+    );
+
+    let wait = worker.tick().await;
+    assert_eq!(wait, LibraryYoutubeCheck::REST_WHEN_UNAVAILABLE);
+    assert_eq!(checker.asked(), ["a.flac"; 6]);
+}
+
+#[tokio::test]
+async fn an_unreadable_library_file_is_tried_three_times_then_has_no_copy() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![Compared::FileUnreadable; 3]);
+    let (worker, _) = check.simple(checker.clone());
+
+    worker.start();
+    for _ in 0..2 {
+        worker.tick().await;
+        let status = worker.status();
+        assert_eq!(status.state, "Running");
+        assert!(
+            status
+                .reason
+                .as_deref()
+                .is_some_and(|r| r.contains("fpcalc could not read")),
+            "{status:?}"
+        );
+        assert_eq!(
+            worker.store().read(|s| (s.done, s.cursor.clone())),
+            (0, String::new())
+        );
+    }
+    worker.tick().await;
+
+    assert_eq!(checker.asked(), ["a.flac"; 3]);
+    assert_eq!(worker.store().read(|s| (s.done, s.no_copy)), (1, 1));
+}
+
+#[tokio::test]
+async fn a_read_that_works_resets_the_count_of_unreadable_tries() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    check.tagged("b.flac");
+    let checker = FakeChecker::answering(vec![
+        Compared::FileUnreadable,
+        Compared::FileUnreadable,
+        heard(Heard::Match, 0.95),
+        Compared::FileUnreadable,
+        Compared::FileUnreadable,
+        heard(Heard::Match, 0.95),
+    ]);
+    let (worker, _) = check.simple(checker);
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert_eq!(worker.store().read(|s| (s.alike, s.no_copy)), (2, 0));
+}
+
+#[tokio::test]
 async fn five_failures_in_a_row_make_it_rest_an_hour() {
     let check = Check::new();
     for name in ["a.flac", "b.flac"] {
@@ -1104,7 +1195,7 @@ async fn a_file_fpcalc_cannot_read_has_no_preview_to_compare_with() {
     )
     .await;
 
-    assert_eq!(answer, Compared::NoCopy);
+    assert_eq!(answer, Compared::FileUnreadable);
 }
 
 impl OneVideo {

@@ -142,6 +142,11 @@ pub enum PreviewOutcome {
     NotSent(String),
     /// The shim's background lane was full, so the preview was not fetched now. Asked again later.
     Busy,
+    /// The shim could not be asked for the song's video at all. Asked again later, and never the
+    /// song's fault.
+    Unreachable,
+    /// fpcalc could not read the file being checked.
+    FileUnreadable,
     Compared {
         heard: Heard,
         comparison: Comparison,
@@ -468,7 +473,8 @@ pub fn judge(comparison: &Comparison, trusted: bool) -> Heard {
 
 /// Compares the download at `path` with the song's preview, fetched in the shim's background lane
 /// when the request is `background`. Every failure is [`PreviewOutcome::Unavailable`],
-/// [`PreviewOutcome::NotSent`] or [`PreviewOutcome::Busy`], which change nothing about the file.
+/// [`PreviewOutcome::NotSent`], [`PreviewOutcome::Busy`], [`PreviewOutcome::Unreachable`] or
+/// [`PreviewOutcome::FileUnreadable`], which change nothing about the file.
 pub async fn check(
     source: &dyn PreviewSource,
     fingerprinter: &AudioFingerprinter,
@@ -481,15 +487,13 @@ pub async fn check(
         Ok(Some(preview)) => preview,
         Ok(None) => return PreviewOutcome::Unavailable("no YouTube video for the song".into()),
         Err(LookupFailed { busy: true }) => return PreviewOutcome::Busy,
-        Err(LookupFailed { busy: false }) => {
-            return PreviewOutcome::NotSent("the YouTube shim could not be asked".into());
-        }
+        Err(LookupFailed { busy: false }) => return PreviewOutcome::Unreachable,
     };
     let Some(file) = fingerprinter
         .raw_fingerprint(path, FILE_SECONDS, timeout_seconds)
         .await
     else {
-        return PreviewOutcome::Unavailable("the download could not be fingerprinted".into());
+        return PreviewOutcome::FileUnreadable;
     };
     let heard = match fingerprint_preview(
         source,

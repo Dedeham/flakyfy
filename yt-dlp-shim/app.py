@@ -43,7 +43,7 @@ from typing import Optional
 
 import requests
 from requests.adapters import HTTPAdapter
-from flask import Flask, Response, abort, jsonify, request, stream_with_context
+from flask import Flask, Response, abort, has_request_context, jsonify, request, stream_with_context
 
 import ytm
 
@@ -330,13 +330,25 @@ log.info(
 )
 
 
+class GateFull(Exception):
+    """The yt-dlp gate dropped a request: no slot came free in time."""
+
+
+@app.errorhandler(GateFull)
+def _gate_full(_error):
+    return jsonify(error="busy"), 503
+
+
 def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
          bg: bool = False, capture: bool = False):
     """Run yt-dlp with a hard timeout. Returns stdout or None on any failure.
 
     With capture=True the CompletedProcess is returned instead, so a caller can
     read stderr and tell a 403 apart from an unavailable video. Still None when
-    the gate is full or the run times out, since there is no process to report.
+    the run times out, since there is no process to report.
+
+    A full gate is None too, except inside a request: there GateFull is raised, which the
+    handler answers as 503 {"error":"busy"}, apart from the 502 of a failed run.
 
     Logs gate-wait and wall time so a real box can show whether interactive
     resolves are queuing behind background prewarm (grep `gate_wait_ms`), and
@@ -347,6 +359,8 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
     if not _GATE.acquire(bg, wait):
         log.warning("yt-dlp gate full after %ds (bg=%d), dropping: %s",
                     wait, int(bg), " ".join(args))
+        if has_request_context():
+            raise GateFull()
         return None
     gate_ms = (time.monotonic() - t_acquire) * 1000.0
     try:
@@ -654,8 +668,12 @@ def _search_with_hint(q: str, duration_hint: Optional[int], bg: bool = False, sk
     candidates = _rank_by_length(candidates, q, duration_hint)
     payload = _payload_from(candidates[0])
     if payload.get("video_id") and resolve:
-        # Warm the URL cache for the coming /stream (single-flight + cached).
-        _resolve_url(payload["video_id"], bg)
+        # Warm the URL cache for the coming /stream (single-flight + cached). A full gate leaves
+        # it cold; the search itself still answers.
+        try:
+            _resolve_url(payload["video_id"], bg)
+        except GateFull:
+            pass
     return _with_facts(payload)
 
 
@@ -927,7 +945,10 @@ def _seed_writable_ytdlp() -> None:
 
 
 def _ytdlp_version() -> str:
-    out = _run(["--version"], timeout=30, label="version", bg=False)
+    try:
+        out = _run(["--version"], timeout=30, label="version", bg=False)
+    except GateFull:
+        out = None
     return (out or "").strip()
 
 
@@ -952,7 +973,10 @@ def _maybe_self_update(reason: str) -> bool:
 
     before = _ytdlp_version()
     log.warning("%s: attempting yt-dlp self-update (current %s)", reason, before or "unknown")
-    _run(["-U"], timeout=180, label="self-update", bg=True)
+    try:
+        _run(["-U"], timeout=180, label="self-update", bg=True)
+    except GateFull:
+        log.warning("%s: the gate was full, so yt-dlp was not updated", reason)
     after = _ytdlp_version()
     if after and after != before:
         # The old player cache belongs to the old binary; keep them together.
@@ -1066,7 +1090,11 @@ def _pieced_answer(video_id, url, upstream_headers, first, wanted, total, synthe
             # The signed URL ran out partway through a long song: one fresh URL, then on.
             piece.close()
             _url_cache_evict_if(video_id, current["url"])
-            current["url"] = _resolve_url(video_id)
+            try:
+                current["url"] = _resolve_url(video_id)
+            except GateFull:
+                # Mid-answer there is no way to say busy: the piece simply fails.
+                current["url"] = None
             piece = _open_upstream(current["url"], headers, video_id) if current["url"] else None
         if piece is None or piece.status_code != 206:
             if piece is not None:
@@ -1501,7 +1529,10 @@ def download():
         # Background on purpose, regardless of what triggered it: this holds its
         # slot for up to five minutes, and a single star-triggered download must
         # never be able to sit in a slot a play is waiting for.
-        return _run(ytdlp_args, timeout=300, label="download", bg=True, capture=True)
+        try:
+            return _run(ytdlp_args, timeout=300, label="download", bg=True, capture=True)
+        except GateFull:
+            return None
 
     cp = _attempt()
     if cp is None or cp.returncode != 0 or not os.path.exists(path):

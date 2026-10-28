@@ -724,8 +724,22 @@ impl SoulseekDownloadService {
             preview,
         } = outcome
         else {
-            if let PreviewOutcome::Unavailable(why) | PreviewOutcome::NotSent(why) = outcome {
-                info!("no preview check for '{artist} - {title}': {why}");
+            match &outcome {
+                PreviewOutcome::Unavailable(why) | PreviewOutcome::NotSent(why) => {
+                    info!("no preview check for '{artist} - {title}': {why}");
+                }
+                PreviewOutcome::Busy => {
+                    info!("no preview check for '{artist} - {title}': the shim is busy");
+                }
+                PreviewOutcome::Unreachable => {
+                    info!("no preview check for '{artist} - {title}': the YouTube shim could not be asked");
+                }
+                PreviewOutcome::FileUnreadable => {
+                    info!(
+                        "no preview check for '{artist} - {title}': the download could not be fingerprinted"
+                    );
+                }
+                PreviewOutcome::NotAsked | PreviewOutcome::Compared { .. } => {}
             }
             return None;
         };

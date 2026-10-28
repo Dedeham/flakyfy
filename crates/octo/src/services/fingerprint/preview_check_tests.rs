@@ -408,6 +408,27 @@ impl PreviewSource for DownShim {
     }
 }
 
+/// A file fpcalc cannot read is its own answer, whatever the shim can send.
+#[tokio::test]
+async fn a_file_fpcalc_cannot_read_is_its_own_answer() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let broken = dir.path().join("broken.flac");
+    std::fs::write(&broken, b"not audio").expect("written");
+    let shim = DownShim {
+        fetches: AtomicUsize::new(0),
+    };
+    let outcome = check(
+        &shim,
+        &AudioFingerprinter::new(),
+        &broken,
+        &request(Some(174)),
+        30,
+    )
+    .await;
+    assert_eq!(outcome, PreviewOutcome::FileUnreadable);
+    assert_eq!(shim.fetches.load(Ordering::Relaxed), 0);
+}
+
 /// A shim that is down changes nothing: the file is judged as it was before.
 #[tokio::test]
 async fn a_shim_that_cannot_send_the_preview_leaves_the_file_alone() {
@@ -654,10 +675,7 @@ async fn a_shim_that_fails_without_saying_busy_is_not_sent() {
         30,
     )
     .await;
-    assert_eq!(
-        outcome,
-        PreviewOutcome::NotSent("the YouTube shim could not be asked".into())
-    );
+    assert_eq!(outcome, PreviewOutcome::Unreachable);
 }
 
 /// Both lookups answering with nothing is the one case that is "no video".

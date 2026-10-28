@@ -34,6 +34,8 @@ struct FakeVerifier {
     /// What the YouTube preview says of a sound AcoustID never heard (None: no source to ask),
     /// and how many times it was asked.
     preview_answer: Mutex<Option<PreviewOutcome>>,
+    /// Answers given first, one per ask, before `preview_answer` takes over.
+    preview_script: Mutex<std::collections::VecDeque<PreviewOutcome>>,
     previews_asked: AtomicUsize,
     /// Whether each preview request asked for the shim's background lane.
     preview_backgrounds: Mutex<Vec<bool>>,
@@ -48,6 +50,7 @@ impl FakeVerifier {
             isrc_answer: Mutex::new(None),
             isrcs_asked: Mutex::new(Vec::new()),
             preview_answer: Mutex::new(None),
+            preview_script: Mutex::new(std::collections::VecDeque::new()),
             previews_asked: AtomicUsize::new(0),
             preview_backgrounds: Mutex::new(Vec::new()),
         })
@@ -109,6 +112,9 @@ impl IReviewSweepVerifier for FakeVerifier {
     ) -> PreviewOutcome {
         self.preview_backgrounds.lock().push(request.background);
         self.previews_asked.fetch_add(1, Ordering::SeqCst);
+        if let Some(scripted) = self.preview_script.lock().pop_front() {
+            return scripted;
+        }
         self.preview_answer
             .lock()
             .clone()
@@ -2332,6 +2338,78 @@ async fn a_preview_the_shim_did_not_send_is_tried_again_then_asked_about() {
     // Checked now: the next look moves on.
     worker.tick().await;
     assert_eq!(verifier.previews_asked(), 3);
+}
+
+#[tokio::test]
+async fn a_busy_shim_is_waited_out_without_spending_a_try() {
+    let verifier = FakeVerifier::never_heard(Some(PreviewOutcome::NotSent("shim".into())));
+    *verifier.preview_script.lock() = std::iter::repeat_n(PreviewOutcome::Busy, 3).collect();
+
+    let (_sweep, worker, queue) = never_heard_song(verifier.clone(), settings_of(60)).await;
+    for _ in 0..2 {
+        assert_eq!(worker.status().state, "Waiting");
+        assert!(
+            worker
+                .status()
+                .reason
+                .as_deref()
+                .is_some_and(|r| r.contains("busy with plays")),
+            "{:?}",
+            worker.status()
+        );
+        worker.tick().await;
+    }
+    // Three busy answers spent no try: nothing is asked, and the song is still unchecked.
+    assert_eq!(verifier.previews_asked(), 3);
+    assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
+    assert_eq!(worker.status().found, 0);
+
+    // The shim then sends nothing three times: only now do the three tries run out.
+    worker.tick().await;
+    worker.tick().await;
+    assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
+    worker.tick().await;
+    assert_eq!(verifier.previews_asked(), 6);
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].cause, InconclusiveReason::NoEntry);
+}
+
+#[tokio::test]
+async fn a_shim_that_cannot_be_asked_is_waited_out_without_spending_a_try() {
+    let verifier = FakeVerifier::never_heard(Some(PreviewOutcome::Unreachable));
+
+    let (_sweep, worker, queue) = never_heard_song(verifier.clone(), settings_of(60)).await;
+    for _ in 0..5 {
+        worker.tick().await;
+    }
+
+    assert_eq!(verifier.previews_asked(), 6);
+    assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
+    let status = worker.status();
+    assert_eq!(status.state, "Waiting");
+    assert!(
+        status
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("not answering")),
+        "{status:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_library_file_the_preview_check_could_not_read_is_tried_three_times_then_asked_about() {
+    let verifier = FakeVerifier::never_heard(Some(PreviewOutcome::FileUnreadable));
+
+    let (_sweep, worker, queue) = never_heard_song(verifier.clone(), settings_of(60)).await;
+    worker.tick().await;
+    assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
+    worker.tick().await;
+
+    assert_eq!(verifier.previews_asked(), 3);
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].cause, InconclusiveReason::NoEntry);
 }
 
 #[tokio::test]

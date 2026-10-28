@@ -43,7 +43,7 @@ use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
 use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::fingerprint::preview_check::{
-    self, FILE_SECONDS, Heard, PreviewFacts, PreviewFailure, PreviewRequest, PreviewSource,
+    self, FILE_SECONDS, Heard, LookupFailed, PreviewFacts, PreviewFailure, PreviewRequest, PreviewSource,
 };
 use crate::services::library::library_walk;
 use crate::services::state_file;
@@ -70,6 +70,11 @@ pub enum Compared {
     NoCopy,
     /// The shim did not answer or did not send the preview. Not an answer: tried again.
     Unavailable,
+    /// The shim's background lane was full. Waited out without counting against the song or the
+    /// shim.
+    Busy,
+    /// fpcalc could not read the library file. Tried again a few times, then it has no copy.
+    FileUnreadable,
     /// The two were compared ([`preview_check::judge`]).
     Heard { heard: Heard, bit_error: f64 },
 }
@@ -119,8 +124,10 @@ impl YoutubeChecker for AppYoutubeChecker {
             Ok(Some(preview)) => preview,
             // Both lookups answered and neither had the song.
             Ok(None) => return Compared::NoCopy,
+            // The shim said its lane is full: waited out.
+            Err(LookupFailed { busy: true }) => return Compared::Busy,
             // A lookup could not answer: not an answer, so the song is tried again.
-            Err(_) => return Compared::Unavailable,
+            Err(LookupFailed { busy: false }) => return Compared::Unavailable,
         };
         let timeout = self
             .settings
@@ -158,7 +165,7 @@ pub async fn hear(
         .raw_fingerprint(path, FILE_SECONDS, timeout_seconds)
         .await
     else {
-        return Compared::NoCopy;
+        return Compared::FileUnreadable;
     };
     let heard = match preview_check::fingerprint_preview(
         source,
@@ -170,8 +177,9 @@ pub async fn hear(
     .await
     {
         Ok(heard) => heard,
-        // A shim that did not send it, or whose lane was full, is asked again later.
-        Err(PreviewFailure::NotSent | PreviewFailure::Busy) => return Compared::Unavailable,
+        // A shim whose lane was full is waited out; one that did not send it is asked again later.
+        Err(PreviewFailure::Busy) => return Compared::Busy,
+        Err(PreviewFailure::NotSent) => return Compared::Unavailable,
         // A preview that cannot be read will not become readable.
         Err(PreviewFailure::Unreadable) => return Compared::NoCopy,
     };
@@ -383,6 +391,8 @@ pub struct LibraryYoutubeCheck {
     /// Changes when a run starts, so work in flight for the last one drops its result.
     generation: AtomicI32,
     unavailable_in_a_row: AtomicI32,
+    /// The song fpcalc could not read, and how many times in a row.
+    unreadable_tries: Mutex<(String, i32)>,
     /// Lookups in a row AcoustID did not answer for the song at the cursor.
     lookup_misses: AtomicI32,
     /// Start and Carry on cut a rest short.
@@ -413,6 +423,8 @@ impl LibraryYoutubeCheck {
     /// Lookups AcoustID may miss for one song (its lane was full) before the song is compared
     /// with YouTube anyway.
     pub const MAX_LOOKUP_MISSES: i32 = 3;
+    /// Reads of one song fpcalc may fail before it is counted as having no copy.
+    pub const MAX_UNREADABLE_TRIES: i32 = 3;
 
     pub fn new(
         store: Arc<YoutubeCheckStore>,
@@ -437,6 +449,7 @@ impl LibraryYoutubeCheck {
             files: Mutex::new(None),
             generation: AtomicI32::new(0),
             unavailable_in_a_row: AtomicI32::new(0),
+            unreadable_tries: Mutex::new((String::new(), 0)),
             lookup_misses: AtomicI32::new(0),
             wake: Notify::new(),
             stuck: Mutex::new((String::new(), 0)),
@@ -488,6 +501,7 @@ impl LibraryYoutubeCheck {
         self.unavailable_in_a_row.store(0, Ordering::SeqCst);
         self.lookup_misses.store(0, Ordering::SeqCst);
         *self.stuck.lock() = (String::new(), 0);
+        *self.unreadable_tries.lock() = (String::new(), 0);
         // Said at once: the worker may be resting, and the page must not say "not started".
         self.hold(
             "Waiting",
@@ -690,7 +704,7 @@ impl LibraryYoutubeCheck {
                 }
                 AcoustIdAnswer::Unreadable => {
                     self.lookup_misses.store(0, Ordering::SeqCst);
-                    Compared::NoCopy
+                    Compared::FileUnreadable
                 }
                 AcoustIdAnswer::NoAnswer | AcoustIdAnswer::Unsettled => {
                     self.lookup_misses.store(0, Ordering::SeqCst);
@@ -712,6 +726,37 @@ impl LibraryYoutubeCheck {
         if generation != self.generation.load(Ordering::SeqCst) {
             return Duration::ZERO;
         }
+        // The shim's lane is full of plays: waited out, counting against nobody.
+        if answer == Compared::Busy {
+            return self.hold(
+                "Waiting",
+                Some("YouTube is busy with plays; trying that song again."),
+                interval,
+            );
+        }
+        let answer = if answer == Compared::FileUnreadable {
+            let tries = {
+                let mut unreadable = self.unreadable_tries.lock();
+                if unreadable.0 == target {
+                    unreadable.1 += 1;
+                } else {
+                    *unreadable = (target.to_string(), 1);
+                }
+                unreadable.1
+            };
+            if tries < Self::MAX_UNREADABLE_TRIES {
+                return self.hold(
+                    "Running",
+                    Some("fpcalc could not read that song; trying it again."),
+                    Self::KNOWN_STEP,
+                );
+            }
+            *self.unreadable_tries.lock() = (String::new(), 0);
+            Compared::NoCopy
+        } else {
+            *self.unreadable_tries.lock() = (String::new(), 0);
+            answer
+        };
         if answer == Compared::Unavailable {
             let in_a_row = self.unavailable_in_a_row.fetch_add(1, Ordering::SeqCst) + 1;
             if in_a_row < Self::MAX_UNAVAILABLE_IN_A_ROW {
@@ -765,7 +810,9 @@ impl LibraryYoutubeCheck {
                 Heard::Match => alike = 1,
                 Heard::Unclear => unsure = 1,
             },
-            Compared::NoCopy | Compared::Unavailable => no_copy = 1,
+            Compared::NoCopy | Compared::Unavailable | Compared::Busy | Compared::FileUnreadable => {
+                no_copy = 1
+            }
         }
         self.store.update(|s| {
             s.cursor = target.to_string();

@@ -52,7 +52,7 @@ use crate::services::cover_art::{
 };
 use octo_media::cover::CoverArtService;
 
-use crate::services::charts::{AppleMusicPages, ChartCountryStore, ChartsWarmWorker};
+use crate::services::charts::{AppleMusicPages, ChartCountryStore, ChartsWarmWorker, GenreNames};
 use crate::services::common::IAcquisitionActivity;
 use crate::services::common::TopSongsService;
 use crate::services::cover_art::{AnimatedArt, ArtworkHints, HintedArtwork};
@@ -2344,6 +2344,9 @@ impl Charts {
         )
         .with_listeners(Arc::new(ChartCountryStore::new(Some(
             config_dir.join("chart-countries.json"),
+        ))))
+        .with_genre_names(Arc::new(GenreNames::new(Some(
+            config_dir.join("genre-names.json"),
         ))));
         let playlists = ChartPlaylistService::new(
             top_songs.clone(),

@@ -23,7 +23,8 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::charts::apple_pages::{ChartGenre, RoomKind};
 use octo_core::charts::chart_settings::{
-    self, ChartCountry, ChartKind, OVERALL, english_menu, genre_name, kind, max_songs, playlist_name,
+    self, ChartCountry, ChartKind, OVERALL, english_menu, genre_name, is_latin_script, kind, max_songs,
+    playlist_name, table_genre_name,
 };
 use octo_core::charts::top_songs::{
     APPLE_SOURCE, CatalogTrack, CountedTrack, DEEZER_SOURCE, MAX_ROWS, PlannedRow, library_hit,
@@ -39,8 +40,8 @@ use serde_json::Value;
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::services::charts::ChartCountryStore;
 use crate::services::charts::apple_music_pages::{AppleMusicPages, PageError};
+use crate::services::charts::{ChartCountryStore, GenreNames};
 use crate::services::cover_art::ArtworkHints;
 use crate::services::framework::{InFlight, MemoryCache};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
@@ -140,6 +141,10 @@ struct Inner {
     /// The countries (`auto` for the server's own) whose [`TopSongsService::learn_in`] started
     /// by a request is going.
     learning: Mutex<HashSet<String>>,
+    /// English names of genres the tables lack, learned from Apple.
+    genre_names: Arc<GenreNames>,
+    /// The genre ids whose English name is being read.
+    naming: Mutex<HashSet<String>>,
     builds: InFlight<(Arc<TopList>, bool)>,
     fetches: Mutex<HashMap<String, ChartFetch>>,
     warned: Mutex<HashMap<String, Instant>>,
@@ -181,6 +186,8 @@ impl TopSongsService {
                 others: MemoryCache::new(256),
                 menus: MemoryCache::new(64),
                 learning: Mutex::new(HashSet::new()),
+                genre_names: Arc::new(GenreNames::new(None)),
+                naming: Mutex::new(HashSet::new()),
                 builds: InFlight::new(),
                 fetches: Mutex::new(HashMap::new()),
                 warned: Mutex::new(HashMap::new()),
@@ -195,6 +202,15 @@ impl TopSongsService {
     pub fn with_listeners(mut self, store: Arc<ChartCountryStore>) -> Self {
         if let Some(inner) = Arc::get_mut(&mut self.inner) {
             inner.listeners = store;
+        }
+        self
+    }
+
+    /// The service keeping the genre names it learns in `store`. Call it before the service is
+    /// cloned.
+    pub fn with_genre_names(mut self, store: Arc<GenreNames>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.genre_names = store;
         }
         self
     }
@@ -417,10 +433,70 @@ impl TopSongsService {
             return (None, Arc::new(english_menu()));
         };
         if let Some(menu) = self.inner.menus.get(&code) {
-            return (country, menu);
+            return (country, Arc::new(self.named(&menu)));
         }
         self.learn_behind(Some(code));
         (country, Arc::new(english_menu()))
+    }
+
+    /// A menu with every genre in English: a table's name, else a learned one, else Apple's own
+    /// when it is in Latin script. A genre with no such name is left out until one is known.
+    fn named(&self, menu: &[ChartGenre]) -> Vec<ChartGenre> {
+        menu.iter()
+            .filter_map(|g| {
+                let name = if table_genre_name(&g.id).is_some() {
+                    g.name.clone()
+                } else if let Some(learned) = self.inner.genre_names.get(&g.id) {
+                    learned
+                } else if is_latin_script(&g.name) {
+                    g.name.clone()
+                } else {
+                    return None;
+                };
+                Some(ChartGenre {
+                    id: g.id.clone(),
+                    name,
+                })
+            })
+            .collect()
+    }
+
+    /// Starts reading the English name of each genre of `menu` that has none, in the background.
+    fn name_missing(&self, menu: &[ChartGenre]) {
+        let missing = self.unnamed(menu);
+        if missing.is_empty() {
+            return;
+        }
+        let this = self.clone();
+        tokio::spawn(async move { this.learn_names(missing).await });
+    }
+
+    /// The ids of `menu` that have no English name yet.
+    fn unnamed(&self, menu: &[ChartGenre]) -> Vec<String> {
+        menu.iter()
+            .filter(|g| {
+                table_genre_name(&g.id).is_none()
+                    && self.inner.genre_names.get(&g.id).is_none()
+                    && !is_latin_script(&g.name)
+            })
+            .map(|g| g.id.clone())
+            .collect()
+    }
+
+    /// Reads and saves the English name of each genre, at most one read per id at a time. An id
+    /// Apple does not answer for is asked again the next time its country's menu is learned.
+    async fn learn_names(&self, ids: Vec<String>) {
+        for id in ids {
+            if !self.inner.naming.lock().insert(id.clone()) {
+                continue;
+            }
+            let found = self.inner.apple.genre_english_name(&id).await;
+            self.inner.naming.lock().remove(&id);
+            if let Some(name) = found {
+                self.inner.genre_names.set(&id, &name);
+                info!("Learned the English name of Apple genre {id}: {name}");
+            }
+        }
     }
 
     /// [`Self::learn_in`] for the server's own country.
@@ -444,13 +520,15 @@ impl TopSongsService {
             return (None, Arc::new(english_menu()));
         };
         if let Some(menu) = self.inner.menus.get(&code) {
-            return (country, menu);
+            self.name_missing(&menu);
+            return (country, Arc::new(self.named(&menu)));
         }
         match self.inner.apple.chart(Some(&code), OVERALL).await {
             Ok(page) if !page.genres.is_empty() => {
                 let menu = Arc::new(page.genres.clone());
                 self.inner.menus.set(code, menu.clone(), 1, MENU_TTL);
-                (country, menu)
+                self.name_missing(&menu);
+                (country, Arc::new(self.named(&menu)))
             }
             _ => (country, Arc::new(english_menu())),
         }
@@ -591,6 +669,7 @@ impl TopSongsService {
                     self.inner
                         .menus
                         .set(page.country.clone(), Arc::new(page.genres.clone()), 1, MENU_TTL);
+                    self.name_missing(&page.genres);
                 }
                 let catalog: Vec<CatalogTrack> = page.songs.iter().map(CatalogTrack::from_apple).collect();
                 let (rows, source) = merge(Some(catalog.as_slice()), None, false, max, APPLE_SOURCE);

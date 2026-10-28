@@ -120,16 +120,45 @@ fn a_genre_is_top_its_name() {
 }
 
 #[test]
-fn a_known_genre_is_named_in_english_an_unknown_one_by_apple() {
+fn a_known_genre_is_named_in_english_whatever_the_menu_says() {
     let menu = vec![
         genre("18", "ヒップホップ／ラップ"),
         genre("29", "アニメ"),
         genre("27", "J-Pop"),
     ];
     assert_eq!(genre_name(&menu, "18").as_deref(), Some("Hip-Hop/Rap"));
-    assert_eq!(genre_name(&menu, "29").as_deref(), Some("アニメ"));
+    assert_eq!(genre_name(&menu, "29").as_deref(), Some("Anime"));
     assert_eq!(genre_name(&menu, "27").as_deref(), Some("J-Pop"));
     assert_eq!(genre_name(&menu, "999"), None);
+}
+
+#[test]
+fn the_table_is_sorted_and_unique() {
+    let numbers: Vec<u64> = APPLE_GENRE_NAMES
+        .iter()
+        .map(|(id, _)| id.parse().expect("a numeric id"))
+        .collect();
+    assert!(numbers.windows(2).all(|w| w[0] < w[1]));
+    assert!(APPLE_GENRE_NAMES.iter().all(|(_, n)| is_latin_script(n)));
+}
+
+#[test]
+fn every_japan_only_genre_has_an_english_name() {
+    for (id, name) in [
+        ("27", "J-Pop"),
+        ("28", "Enka"),
+        ("29", "Anime"),
+        ("30", "Kayokyoku"),
+    ] {
+        assert_eq!(table_genre_name(id), Some(name), "{id}");
+    }
+}
+
+#[test]
+fn a_latin_menu_name_is_kept() {
+    let menu = vec![genre("99998", "Música Mexicana"), genre("99999", "ロック")];
+    assert_eq!(genre_name(&menu, "99998").as_deref(), Some("Música Mexicana"));
+    assert_eq!(genre_name(&menu, "99999"), None);
 }
 
 #[test]

@@ -90,7 +90,10 @@ impl Charts {
             last_fm,
             Arc::new(FakeMetadata::default()),
             Arc::new(ExternalIdRegistry::in_memory()),
-            Arc::new(AppleMusicPages::with_base_url(&apple.uri(), Duration::ZERO)),
+            Arc::new(
+                AppleMusicPages::with_base_url(&apple.uri(), Duration::ZERO)
+                    .with_genres_base_url(&apple.uri()),
+            ),
             Arc::clone(&hints),
             Arc::clone(&settings),
         )
@@ -616,6 +619,57 @@ async fn names_give_the_playlist_and_the_chip() {
         Some(("Top Hip-Hop/Rap".into(), "Hip-Hop/Rap".into()))
     );
     assert_eq!(TopSongsService::names(&menu, "99999"), None);
+}
+
+#[tokio::test]
+async fn an_unknown_non_latin_genre_is_hidden_until_named() {
+    let charts = Charts::new("us", None, None).await;
+    let genre = |id: &str, name: &str| ChartGenre {
+        id: id.into(),
+        name: name.into(),
+    };
+    charts.service.set_menu(
+        "us",
+        vec![
+            genre("34", "All Genres"),
+            genre("99998", "Música Mexicana"),
+            genre("99999", "ロック"),
+        ],
+    );
+    Mock::given(method("GET"))
+        .and(path("/WebObjects/MZStoreServices.woa/ws/genres"))
+        .and(query_param("id", "99999"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(r#"{"99999":{"name":"Rock Test","id":"99999"}}"#),
+        )
+        .mount(&charts.apple)
+        .await;
+
+    let (_, menu) = charts.service.menu_in(Some("us".into())).await;
+    let ids: Vec<&str> = menu.iter().map(|g| g.id.as_str()).collect();
+    assert_eq!(ids, vec!["34", "99998"], "the foreign-script genre is left out");
+    assert!(
+        charts
+            .service
+            .chart_in(Some("us".into()), "99999")
+            .await
+            .songs
+            .is_empty()
+    );
+
+    charts.service.learn_names(vec!["99999".into()]).await;
+
+    let (_, menu) = charts.service.menu_in(Some("us".into())).await;
+    assert_eq!(
+        genre_name(&menu, "99999").as_deref(),
+        Some("Rock Test"),
+        "{:?}",
+        menu
+    );
+    assert_eq!(
+        TopSongsService::names(&menu, "99999"),
+        Some(("Top Rock Test".into(), "Rock Test".into()))
+    );
 }
 
 fn top(rank: usize, artist: &str, title: &str) -> TopSong {

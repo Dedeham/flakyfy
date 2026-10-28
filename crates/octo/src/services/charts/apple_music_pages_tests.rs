@@ -316,3 +316,35 @@ async fn the_gate_spaces_requests_a_second() {
     gate.wait().await;
     assert_eq!(Instant::now() - start, Duration::from_secs(2));
 }
+
+#[tokio::test]
+async fn a_genre_english_name_is_read_from_the_genre_list() {
+    let (_server, pages) = apple().await;
+    let genres = MockServer::builder().start().await;
+    Mock::given(method("GET"))
+        .and(path("/WebObjects/MZStoreServices.woa/ws/genres"))
+        .and(query_param("id", "99999"))
+        .and(query_param("cc", "us"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(r#"{"99999":{"name":"Rock Test","id":"99999"}}"#),
+        )
+        .mount(&genres)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/WebObjects/MZStoreServices.woa/ws/genres"))
+        .and(query_param("id", "88888"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(r#"{"88888":{"name":"ロック","id":"88888"}}"#),
+        )
+        .mount(&genres)
+        .await;
+    let pages = pages.with_genres_base_url(&genres.uri());
+
+    assert_eq!(
+        pages.genre_english_name("99999").await.as_deref(),
+        Some("Rock Test")
+    );
+    assert_eq!(pages.genre_english_name("88888").await, None);
+    assert_eq!(pages.genre_english_name("77777").await, None);
+    assert_eq!(pages.genre_english_name("../x").await, None);
+}

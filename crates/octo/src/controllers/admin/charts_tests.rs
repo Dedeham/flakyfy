@@ -100,6 +100,29 @@ async fn charts_lists_country_choices_and_last_fetches() {
 }
 
 #[tokio::test]
+async fn a_genre_the_country_lacks_is_not_in_country() {
+    let apple = apple().await;
+    let state = state(&apple, None);
+    state.top_songs.chart("34").await;
+    state.top_songs.set_menu(
+        "us",
+        vec![octo_core::charts::apple_pages::ChartGenre {
+            id: "34".into(),
+            name: "All Genres".into(),
+        }],
+    );
+
+    let reply = get(&app(state), "/api/admin/charts").await;
+
+    let body = reply.json();
+    let lists = body["lists"].as_array().unwrap();
+    let in_country = |chart: &str| lists.iter().find(|l| l["chart"] == chart).unwrap()["inCountry"].clone();
+    assert_eq!(in_country("18"), false);
+    assert_eq!(in_country("new"), true);
+    assert_eq!(in_country("34"), true);
+}
+
+#[tokio::test]
 async fn charts_needs_the_sign_in() {
     let apple = apple().await;
     let reply = get(&app(state(&apple, Some("required"))), "/api/admin/charts").await;

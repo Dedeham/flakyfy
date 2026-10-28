@@ -4,6 +4,7 @@
 //! (Popular right now), `new` Best New Songs, `trending` Trending Songs, and any other number
 //! an Apple genre chart.
 
+use super::apple_genre_names::APPLE_GENRE_NAMES;
 use super::apple_pages::ChartGenre;
 
 /// Apple's "All Genres", the overall chart.
@@ -176,13 +177,53 @@ pub fn kind_word(id: &str) -> Option<&'static str> {
     })
 }
 
-/// A genre's name: Octo's English one when it knows the id, else Apple's own.
+/// Whether every letter of `name` is Latin script (accents included); digits, spaces and
+/// punctuation are fine.
+pub fn is_latin_script(name: &str) -> bool {
+    name.chars().all(|c| {
+        let latin_letter = matches!(
+            c,
+            '\u{41}'..='\u{5A}'
+                | '\u{61}'..='\u{7A}'
+                | '\u{AA}'
+                | '\u{BA}'
+                | '\u{C0}'..='\u{24F}'
+                | '\u{1E00}'..='\u{1EFF}'
+                | '\u{2C60}'..='\u{2C7F}'
+                | '\u{A720}'..='\u{A7FF}'
+        );
+        if c.is_alphabetic() {
+            latin_letter
+        } else {
+            c < '\u{300}' || ('\u{2000}'..='\u{206F}').contains(&c)
+        }
+    })
+}
+
+/// A genre's English name from the tables: Octo's short names for the ids the apps show, then
+/// Apple's full list.
+pub fn table_genre_name(id: &str) -> Option<&'static str> {
+    if let Some((_, name)) = ENGLISH_GENRES.iter().find(|(g, _)| *g == id) {
+        return Some(name);
+    }
+    let number = |s: &str| s.parse::<u64>().ok();
+    let wanted = number(id)?;
+    APPLE_GENRE_NAMES
+        .binary_search_by(|(g, _)| number(g).cmp(&Some(wanted)))
+        .ok()
+        .map(|at| APPLE_GENRE_NAMES[at].1)
+}
+
+/// A genre's name: Octo's English one when a table knows the id, else the country menu's own
+/// name when it is in Latin script. None when only a foreign-script name is known.
 pub fn genre_name(menu: &[ChartGenre], id: &str) -> Option<String> {
-    ENGLISH_GENRES
-        .iter()
-        .find(|(g, _)| *g == id)
-        .map(|(_, n)| (*n).to_string())
-        .or_else(|| menu.iter().find(|g| g.id == id).map(|g| g.name.clone()))
+    if let Some(name) = table_genre_name(id) {
+        return Some(name.to_string());
+    }
+    menu.iter()
+        .find(|g| g.id == id)
+        .filter(|g| is_latin_script(&g.name))
+        .map(|g| g.name.clone())
 }
 
 /// The playlist's name: `Popular right now`, `Best New Songs`, `Trending Songs` or `Top {genre}`.

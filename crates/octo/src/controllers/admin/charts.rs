@@ -57,7 +57,8 @@ pub async fn get_charts(State(state): State<AppState>) -> Response {
         .iter()
         .map(|chart| {
             let name = TopSongsService::names(&menu, chart).map(|(name, _)| name);
-            let in_country = name.is_some();
+            let in_country = chart_settings::kind(chart) != Some(chart_settings::ChartKind::Genre)
+                || menu.iter().any(|g| &g.id == chart);
             // The server's own fetch: read for its country, or for Apple's own pick of it.
             let fetch = fetches
                 .iter()

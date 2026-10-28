@@ -112,6 +112,7 @@ impl Gate {
 pub struct AppleMusicPages {
     client: reqwest::Client,
     base: String,
+    genres_base: String,
     gate: Gate,
     country: MemoryCache<String>,
     rooms: MemoryCache<Arc<Vec<SongRoom>>>,
@@ -122,6 +123,7 @@ pub struct AppleMusicPages {
 
 impl AppleMusicPages {
     pub const BASE: &'static str = "https://music.apple.com";
+    pub const GENRES_BASE: &'static str = "https://itunes.apple.com";
 
     pub fn new() -> Self {
         Self::with_base_url(Self::BASE, INTERVAL)
@@ -139,6 +141,7 @@ impl AppleMusicPages {
         Self {
             client,
             base: base.trim_end_matches('/').to_string(),
+            genres_base: Self::GENRES_BASE.to_string(),
             gate: Gate::new(interval),
             country: MemoryCache::new(16),
             rooms: MemoryCache::new(256),
@@ -146,6 +149,38 @@ impl AppleMusicPages {
             missing: MemoryCache::new(1024),
             countries: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The genre list read from another host (a test's mock server).
+    pub fn with_genres_base_url(mut self, base: &str) -> Self {
+        self.genres_base = base.trim_end_matches('/').to_string();
+        self
+    }
+
+    /// A genre's English name from Apple's US genre list, or None when it cannot be read or the
+    /// name is not in Latin script. Takes its turn at the shared gate; a failure is not
+    /// remembered, so the next ask tries again.
+    pub async fn genre_english_name(&self, id: &str) -> Option<String> {
+        if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let url = format!(
+            "{}/WebObjects/MZStoreServices.woa/ws/genres?id={id}&cc=us",
+            self.genres_base
+        );
+        self.gate.wait().await;
+        let response = self.client.get(&url).send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let body = response.bytes().await.ok()?;
+        if body.len() > MAX_BODY {
+            return None;
+        }
+        let json: serde_json::Value = serde_json::from_slice(&body).ok()?;
+        let name = json.get(id)?.get("name")?.as_str()?.trim();
+        (!name.is_empty() && octo_core::charts::chart_settings::is_latin_script(name))
+            .then(|| name.to_string())
     }
 
     /// A chart: the overall one (`34`) or a genre's, for a country, or for the server's own when

@@ -107,6 +107,9 @@ pub struct YouTubeResolver {
     music_lookups: InFlight<Lookup<Vec<YtmRow>>>,
     /// YouTube Music searches sent to the shim at once: the shim's own YTM_MAX_CONCURRENT.
     music_gate: Arc<Semaphore>,
+    /// One background YouTube Music lookup at a time, as the shim has one background slot;
+    /// background lookups never take `music_gate`, so a play lookup never waits behind them.
+    music_bg_gate: Arc<Semaphore>,
 }
 
 /// What a background check of the shim came to.
@@ -176,6 +179,9 @@ impl YouTubeResolver {
     /// YouTube Music lookups sent to the shim at once.
     pub const MUSIC_AT_ONCE: usize = 3;
 
+    /// Background YouTube Music lookups sent to the shim at once: its one background slot.
+    pub const MUSIC_BACKGROUND_AT_ONCE: usize = 1;
+
     /// Reads `YouTube:ShimUrl` once: the address is deliberately captured at startup (it is a
     /// restart-only setting; see RestartTracker).
     pub fn new(settings: &SettingsStore) -> Self {
@@ -206,6 +212,7 @@ impl YouTubeResolver {
             music: Arc::new(YouTubeMusicClient::with_shim_url(shim)),
             music_lookups: InFlight::new(),
             music_gate: Arc::new(Semaphore::new(Self::MUSIC_AT_ONCE)),
+            music_bg_gate: Arc::new(Semaphore::new(Self::MUSIC_BACKGROUND_AT_ONCE)),
         }
     }
 
@@ -353,20 +360,31 @@ impl YouTubeResolver {
     /// when no row is, when YouTube Music cannot answer within [`Self::MUSIC_TIMEOUT`] (busy,
     /// failed or unreachable), or when the shim's address is not set; the caller then asks
     /// yt-dlp. The hit names no stream, since YouTube Music only searches.
-    pub async fn music_song(&self, artist: &str, title: &str, length: Option<i32>) -> Option<YouTubeHit> {
-        self.music_song_lookup(artist, title, length).await.found()
+    /// `background` is true for work nobody waits on: it goes in the shim's background lane.
+    pub async fn music_song(
+        &self,
+        artist: &str,
+        title: &str,
+        length: Option<i32>,
+        background: bool,
+    ) -> Option<YouTubeHit> {
+        self.music_song_lookup(artist, title, length, background)
+            .await
+            .found()
     }
 
     /// [`Self::music_song`] that keeps "no row is the song" apart from "YouTube Music could not
     /// answer" (`busy` when the shim said so). With no shim address set, or no names to search
-    /// by, nothing is asked and the answer is [`Lookup::None`].
+    /// by, nothing is asked and the answer is [`Lookup::None`]. A `background` lookup goes
+    /// through the shim's background slot and is never shared with a play's lookup.
     pub async fn music_song_lookup(
         &self,
         artist: &str,
         title: &str,
         length: Option<i32>,
+        background: bool,
     ) -> Lookup<YouTubeHit> {
-        let Some(rows) = self.music_rows(artist, title) else {
+        let Some(rows) = self.music_rows(artist, title, background) else {
             return Lookup::None;
         };
         let rows = match rows.await {
@@ -404,9 +422,12 @@ impl YouTubeResolver {
             return Checked::Failed(Failure::Other);
         }
         let query = format!("{artist} {title}");
-        let lookup = self
-            .music
-            .search_limited_background(&query, "songs", Self::MUSIC_ROWS);
+        let lookup = async {
+            let _permit = self.music_bg_gate.acquire().await;
+            self.music
+                .search_limited_background(&query, "songs", Self::MUSIC_ROWS)
+                .await
+        };
         let rows = match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
             Ok(Ok(rows)) => rows,
             Ok(Err(failure)) => {
@@ -490,7 +511,7 @@ impl YouTubeResolver {
     /// Starts YouTube Music's songs search for `artist - title` without waiting for it, so a
     /// [`Self::music_song`] for the song moments later joins it instead of starting its own.
     pub fn prefetch_music_song(&self, artist: &str, title: &str) {
-        let _ = self.music_rows(artist, title);
+        let _ = self.music_rows(artist, title, false);
     }
 
     /// YouTube Music's songs rows for `artist - title`, from one request shared by every caller
@@ -498,19 +519,31 @@ impl YouTubeResolver {
     /// ([`Self::MUSIC_AT_ONCE`]) and as long again for the answer. None (no future) when the shim's
     /// address is not set or there is nothing to search for; the future answers
     /// [`Lookup::Failed`] when YouTube Music could not answer, and [`Lookup::None`] when it
-    /// answered with no rows.
+    /// answered with no rows. A `background` request takes the one background permit
+    /// ([`Self::MUSIC_BACKGROUND_AT_ONCE`]) instead and asks the shim's background slot, and is
+    /// kept apart from a play's request for the same song.
     fn music_rows(
         &self,
         artist: &str,
         title: &str,
+        background: bool,
     ) -> Option<Shared<BoxFuture<'static, Lookup<Vec<YtmRow>>>>> {
         if !self.music.configured() || (artist.trim().is_empty() && title.trim().is_empty()) {
             return None;
         }
         let query = format!("{artist} {title}");
         let music = Arc::clone(&self.music);
-        let gate = Arc::clone(&self.music_gate);
-        Some(self.music_lookups.run(&query.to_lowercase(), async move {
+        let gate = Arc::clone(if background {
+            &self.music_bg_gate
+        } else {
+            &self.music_gate
+        });
+        let key = format!(
+            "{}|{}",
+            query.to_lowercase(),
+            if background { "bg" } else { "play" }
+        );
+        Some(self.music_lookups.run(&key, async move {
             let failed = Lookup::Failed { busy: false };
             // As many at once as the shim runs, so the time cap counts the lookup itself and
             // not a wait in the shim's queue.
@@ -518,6 +551,21 @@ impl YouTubeResolver {
             else {
                 return failed;
             };
+            if background {
+                let lookup = music.search_limited_background(&query, "songs", Self::MUSIC_ROWS);
+                return match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
+                    Ok(Ok(rows)) if rows.is_empty() => Lookup::None,
+                    Ok(Ok(rows)) => Lookup::Found(rows),
+                    Ok(Err(Failure::Busy)) => {
+                        debug!("YouTube Music was busy for the background '{query}'");
+                        Lookup::Failed { busy: true }
+                    }
+                    Ok(Err(_)) | Err(_) => {
+                        debug!("YouTube Music could not answer the background '{query}'");
+                        failed
+                    }
+                };
+            }
             let lookup = music.search_limited(&query, "songs", Self::MUSIC_ROWS);
             match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
                 Ok(Ok(YtmAnswer::Rows(rows))) if rows.is_empty() => Lookup::None,
@@ -1291,7 +1339,7 @@ mod tests {
             .mount(&shim)
             .await;
         let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
-        let hit = resolver.music_song("Adele", "Hello", Some(296)).await;
+        let hit = resolver.music_song("Adele", "Hello", Some(296), false).await;
         assert_eq!(
             hit,
             Some(YouTubeHit {
@@ -1325,7 +1373,7 @@ mod tests {
         resolver.prefetch_music_song("Adele", "Hello");
         tokio::time::sleep(Duration::from_millis(50)).await;
         let started = std::time::Instant::now();
-        let hit = resolver.music_song("Adele", "Hello", Some(296)).await;
+        let hit = resolver.music_song("Adele", "Hello", Some(296), false).await;
 
         assert_eq!(hit.map(|h| h.video_id).as_deref(), Some("atv1"));
         assert!(started.elapsed() < Duration::from_millis(300));
@@ -1363,17 +1411,124 @@ mod tests {
             .mount(&shim)
             .await;
         let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
-        assert!(resolver.music_song("Busy", "Song", None).await.is_none());
-        assert!(resolver.music_song("Broken", "Song", None).await.is_none());
-        assert!(resolver.music_song("Adele", "Hello", Some(250)).await.is_none());
+        assert!(resolver.music_song("Busy", "Song", None, false).await.is_none());
+        assert!(resolver.music_song("Broken", "Song", None, false).await.is_none());
+        assert!(
+            resolver
+                .music_song("Adele", "Hello", Some(250), false)
+                .await
+                .is_none()
+        );
         let started = std::time::Instant::now();
-        assert!(resolver.music_song("Slow", "Song", None).await.is_none());
+        assert!(resolver.music_song("Slow", "Song", None, false).await.is_none());
         assert!(started.elapsed() < YouTubeResolver::MUSIC_TIMEOUT + Duration::from_millis(400));
         assert!(
             YouTubeResolver::with_base_url(None)
-                .music_song("Adele", "Hello", None)
+                .music_song("Adele", "Hello", None, false)
                 .await
                 .is_none()
+        );
+    }
+
+    /// The request's queries as the shim received them, one string each.
+    async fn queries(shim: &MockServer) -> Vec<String> {
+        shim.received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .map(|r| r.url.query().unwrap_or("").to_string())
+            .collect()
+    }
+
+    /// A background lookup asks for the shim's background slot; a play's does not.
+    #[tokio::test]
+    async fn a_background_lookup_carries_bg_and_a_play_does_not() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/ytm/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(HELLO_ROWS))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let background = resolver.music_song("Adele", "Hello", Some(296), true).await;
+        assert_eq!(background.map(|h| h.video_id).as_deref(), Some("atv1"));
+        resolver.music_song("Adele", "Hello", Some(296), false).await;
+        let asked = queries(&shim).await;
+        assert_eq!(asked.len(), 2, "{asked:?}");
+        assert!(asked[0].contains("bg=1"), "{asked:?}");
+        assert!(!asked[1].contains("bg="), "{asked:?}");
+    }
+
+    /// A play never joins a background lookup of the same song, nor the other way round.
+    #[tokio::test]
+    async fn a_background_and_a_play_lookup_of_one_song_are_two_requests() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/ytm/search"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(HELLO_ROWS)
+                    .set_delay(Duration::from_millis(200)),
+            )
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let (background, play) = tokio::join!(
+            resolver.music_song("Adele", "Hello", Some(296), true),
+            resolver.music_song("Adele", "Hello", Some(296), false)
+        );
+        assert!(background.is_some() && play.is_some());
+        assert_eq!(queries(&shim).await.len(), 2);
+    }
+
+    /// While a background lookup holds the one background permit, a play lookup goes through at
+    /// once, and a second background lookup gets the permit when the first ends.
+    #[tokio::test]
+    async fn a_held_background_permit_never_makes_a_play_wait() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/ytm/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(HELLO_ROWS))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let held = resolver
+            .music_bg_gate
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("the gate is open");
+
+        let started = std::time::Instant::now();
+        let play = resolver.music_song("Adele", "Hello", Some(296), false).await;
+        assert!(play.is_some());
+        assert!(started.elapsed() < Duration::from_millis(500));
+
+        let second = resolver.music_song("Adele", "Hello", Some(296), true);
+        tokio::pin!(second);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), &mut second)
+                .await
+                .is_err(),
+            "a second background lookup waits for the permit"
+        );
+        drop(held);
+        let hit = tokio::time::timeout(YouTubeResolver::MUSIC_TIMEOUT, second)
+            .await
+            .expect("it gets the permit when the first ends");
+        assert_eq!(hit.map(|h| h.video_id).as_deref(), Some("atv1"));
+    }
+
+    /// The shim's busy answer to a background lookup is a busy failure, not "no row".
+    #[tokio::test]
+    async fn a_busy_background_lookup_is_a_busy_failure() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/ytm/search"))
+            .and(query_param("bg", "1"))
+            .respond_with(ResponseTemplate::new(503).set_body_string(r#"{"error":"busy"}"#))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        assert_eq!(
+            resolver.music_song_lookup("Adele", "Hello", None, true).await,
+            Lookup::Failed { busy: true }
         );
     }
 }

@@ -1053,6 +1053,7 @@ fn request() -> PreviewRequest<'static> {
         title: "Teardrop",
         seconds: Some(40),
         video_id: None,
+        background: false,
     }
 }
 
@@ -1139,4 +1140,48 @@ async fn an_unreachable_shim_is_unavailable_not_no_copy() {
         checker.check(Path::new(&path), &song).await,
         Compared::Unavailable
     );
+}
+
+/// The one-time check asks YouTube Music in the shim's background lane.
+#[tokio::test]
+async fn the_check_asks_youtube_music_in_the_background_lane() {
+    use wiremock::matchers::{method, path as url_path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let shim = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(url_path("/ytm/search"))
+        .respond_with(ResponseTemplate::new(503).set_body_string(r#"{"error":"busy"}"#))
+        .mount(&shim)
+        .await;
+    Mock::given(method("GET"))
+        .and(url_path("/search"))
+        .respond_with(ResponseTemplate::new(502))
+        .mount(&shim)
+        .await;
+    let checker = AppYoutubeChecker {
+        fingerprinter: Arc::new(AudioFingerprinter::new()),
+        youtube: Arc::new(YouTubeResolver::with_base_url(Some(&shim.uri()))),
+        settings: settings_of(60),
+    };
+    let check = Check::new();
+    let file = check.tagged("a.flac");
+    let song = Song {
+        artist: "Massive Attack".into(),
+        title: "Teardrop".into(),
+        ..Default::default()
+    };
+
+    checker.check(Path::new(&file), &song).await;
+
+    let asked: Vec<String> = shim
+        .received_requests()
+        .await
+        .expect("recorded")
+        .iter()
+        .filter(|r| r.url.path() == "/ytm/search")
+        .map(|r| r.url.query().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(asked[0].contains("bg=1"), "{asked:?}");
 }

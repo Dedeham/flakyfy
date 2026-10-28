@@ -38,6 +38,7 @@ fn request(seconds: Option<i32>) -> PreviewRequest<'static> {
         title: "One Dance",
         seconds,
         video_id: None,
+        background: false,
     }
 }
 
@@ -418,15 +419,7 @@ async fn a_shim_that_cannot_send_the_preview_leaves_the_file_alone() {
     let shim = DownShim {
         fetches: AtomicUsize::new(0),
     };
-    let outcome = check(
-        &shim,
-        &AudioFingerprinter::new(),
-        &path,
-        &request(Some(174)),
-        30,
-        false,
-    )
-    .await;
+    let outcome = check(&shim, &AudioFingerprinter::new(), &path, &request(Some(174)), 30).await;
     assert!(matches!(outcome, PreviewOutcome::NotSent(_)), "{outcome:?}");
     assert_eq!(shim.fetches.load(Ordering::Relaxed), 1);
 }
@@ -635,7 +628,6 @@ async fn a_shim_that_cannot_answer_is_an_error_not_no_video() {
         Path::new("/nonexistent/song.flac"),
         &request(Some(174)),
         30,
-        false,
     )
     .await;
     assert_eq!(outcome, PreviewOutcome::Busy);
@@ -660,7 +652,6 @@ async fn a_shim_that_fails_without_saying_busy_is_not_sent() {
         Path::new("/nonexistent/song.flac"),
         &request(Some(174)),
         30,
-        false,
     )
     .await;
     assert_eq!(
@@ -685,7 +676,6 @@ async fn two_lookups_that_answer_with_nothing_are_no_video() {
         Path::new("/nonexistent/song.flac"),
         &request(Some(174)),
         30,
-        false,
     )
     .await;
     assert_eq!(

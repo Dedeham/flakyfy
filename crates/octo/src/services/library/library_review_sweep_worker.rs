@@ -1184,6 +1184,7 @@ impl LibraryReviewSweepWorker {
                 title: &song.title,
                 seconds,
                 video_id: None,
+                background: true,
             };
             let heard = self.verifier.hear_preview(&path, &request, &question).await;
             if generation != self.generation.load(Ordering::SeqCst) {

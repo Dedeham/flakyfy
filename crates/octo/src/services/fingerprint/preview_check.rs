@@ -125,6 +125,8 @@ pub struct PreviewRequest<'a> {
     pub seconds: Option<i32>,
     /// The video the song plays as, when one is pinned on it.
     pub video_id: Option<&'a str>,
+    /// Work nobody waits on: its YouTube Music lookup goes in the shim's background lane.
+    pub background: bool,
 }
 
 /// What the check came to.
@@ -214,7 +216,7 @@ impl PreviewSource for YouTubeResolver {
         // The order a play picks in: YouTube Music's row for the song, then yt-dlp's search.
         // A row is the song by its title and artists, so it credits the artist asked for.
         let music = self
-            .music_song_lookup(request.artist, request.title, request.seconds)
+            .music_song_lookup(request.artist, request.title, request.seconds, request.background)
             .await;
         let mut failure: Option<LookupFailed> = None;
         match music {
@@ -465,7 +467,7 @@ pub fn judge(comparison: &Comparison, trusted: bool) -> Heard {
 }
 
 /// Compares the download at `path` with the song's preview, fetched in the shim's background lane
-/// when `background` is true. Every failure is [`PreviewOutcome::Unavailable`],
+/// when the request is `background`. Every failure is [`PreviewOutcome::Unavailable`],
 /// [`PreviewOutcome::NotSent`] or [`PreviewOutcome::Busy`], which change nothing about the file.
 pub async fn check(
     source: &dyn PreviewSource,
@@ -473,8 +475,8 @@ pub async fn check(
     path: &Path,
     request: &PreviewRequest<'_>,
     timeout_seconds: i32,
-    background: bool,
 ) -> PreviewOutcome {
+    let background = request.background;
     let mut preview = match source.find(request).await {
         Ok(Some(preview)) => preview,
         Ok(None) => return PreviewOutcome::Unavailable("no YouTube video for the song".into()),

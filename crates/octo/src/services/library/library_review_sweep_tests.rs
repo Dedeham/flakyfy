@@ -35,6 +35,8 @@ struct FakeVerifier {
     /// and how many times it was asked.
     preview_answer: Mutex<Option<PreviewOutcome>>,
     previews_asked: AtomicUsize,
+    /// Whether each preview request asked for the shim's background lane.
+    preview_backgrounds: Mutex<Vec<bool>>,
 }
 
 impl FakeVerifier {
@@ -47,6 +49,7 @@ impl FakeVerifier {
             isrcs_asked: Mutex::new(Vec::new()),
             preview_answer: Mutex::new(None),
             previews_asked: AtomicUsize::new(0),
+            preview_backgrounds: Mutex::new(Vec::new()),
         })
     }
 
@@ -98,7 +101,13 @@ impl IReviewSweepVerifier for FakeVerifier {
         *self.isrc_answer.lock()
     }
 
-    async fn hear_preview(&self, _: &str, _: &PreviewRequest<'_>, _: &VerificationResult) -> PreviewOutcome {
+    async fn hear_preview(
+        &self,
+        _: &str,
+        request: &PreviewRequest<'_>,
+        _: &VerificationResult,
+    ) -> PreviewOutcome {
+        self.preview_backgrounds.lock().push(request.background);
         self.previews_asked.fetch_add(1, Ordering::SeqCst);
         self.preview_answer
             .lock()
@@ -2253,6 +2262,7 @@ async fn a_never_heard_sound_that_sounds_like_its_preview_is_settled_without_a_q
     let (_sweep, worker, queue) = never_heard_song(verifier.clone(), settings_of(60)).await;
 
     assert_eq!(verifier.previews_asked(), 1);
+    assert_eq!(*verifier.preview_backgrounds.lock(), vec![true]);
     assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
     let status = worker.status();
     assert_eq!((status.found, status.fine), (0, 1));

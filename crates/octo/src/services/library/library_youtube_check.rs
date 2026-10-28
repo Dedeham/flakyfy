@@ -113,6 +113,7 @@ impl YoutubeChecker for AppYoutubeChecker {
             title: &song.title,
             seconds,
             video_id: None,
+            background: true,
         };
         let preview = match self.youtube.find(&request).await {
             Ok(Some(preview)) => preview,

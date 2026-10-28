@@ -557,7 +557,7 @@ impl Inner {
     ) -> Option<YouTubeHit> {
         if let Some(hit) = self
             .youtube
-            .music_song(artist, title, length)
+            .music_song(artist, title, length, background)
             .await
             .filter(|h| !refused.contains(&h.video_id))
         {
@@ -622,7 +622,7 @@ impl Inner {
         };
         if let Some(hit) = self
             .youtube
-            .music_song(&artist, &title, length)
+            .music_song(&artist, &title, length, true)
             .await
             .filter(|h| !refused.contains(&h.video_id))
         {

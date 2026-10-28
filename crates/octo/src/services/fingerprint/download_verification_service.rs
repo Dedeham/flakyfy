@@ -136,7 +136,8 @@ impl DownloadVerificationService {
     /// Whether a download sounds like the song's YouTube preview, for a verdict that leaves the
     /// question to it ([`preview_check::wanted`]). Unavailable, and no work, while Octo is not
     /// policing downloads or the verdict settled the file.
-    /// `background` fetches the preview in the shim's background lane, for work nobody waits on.
+    /// A `background` request fetches the preview in the shim's background lane, for work nobody
+    /// waits on.
     pub async fn hear_against_preview(
         &self,
         source: &dyn PreviewSource,
@@ -144,7 +145,6 @@ impl DownloadVerificationService {
         request: &PreviewRequest<'_>,
         verdict: &VerificationResult,
         length_known: bool,
-        background: bool,
     ) -> PreviewOutcome {
         if !self.remembers_rejections() || !preview_check::wanted(verdict, length_known) {
             return PreviewOutcome::NotAsked;
@@ -154,15 +154,7 @@ impl DownloadVerificationService {
             .current()
             .soulseek
             .effective_fingerprint_timeout_seconds();
-        preview_check::check(
-            source,
-            &self.fingerprinter,
-            Path::new(path),
-            request,
-            timeout,
-            background,
-        )
-        .await
+        preview_check::check(source, &self.fingerprinter, Path::new(path), request, timeout).await
     }
 
     /// AcoustID can answer at all.
@@ -1392,7 +1384,7 @@ impl crate::services::library::library_review_sweep_worker::SweepVerification
         request: &PreviewRequest<'_>,
         question: &VerificationResult,
     ) -> PreviewOutcome {
-        self.hear_against_preview(source, path, request, question, true, true)
+        self.hear_against_preview(source, path, request, question, true)
             .await
     }
 

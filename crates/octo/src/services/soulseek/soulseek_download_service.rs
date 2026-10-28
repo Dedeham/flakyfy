@@ -533,7 +533,7 @@ impl SoulseekDownloadService {
                 // already tried is never taken.
                 let hit = match self
                     .youtube
-                    .music_song(&artist, &title, r.duration)
+                    .music_song(&artist, &title, r.duration, false)
                     .await
                     .filter(|h| !skip.contains(&h.video_id))
                 {
@@ -711,17 +711,11 @@ impl SoulseekDownloadService {
                 }))
                 .filter(|s| *s > 0),
             video_id: routing.you_tube_id.as_deref(),
+            background: false,
         };
         let outcome = self
             .verification
-            .hear_against_preview(
-                self.youtube.as_ref(),
-                path,
-                &request,
-                verdict,
-                length_known,
-                false,
-            )
+            .hear_against_preview(self.youtube.as_ref(), path, &request, verdict, length_known)
             .await;
         let PreviewOutcome::Compared {
             heard,
@@ -2374,7 +2368,7 @@ impl DownloadBackend for SoulseekDownloadService {
             // A video refused for the song is never taken.
             let music_hit = self
                 .youtube
-                .music_song(&artist, &title, r.duration)
+                .music_song(&artist, &title, r.duration, false)
                 .await
                 .filter(|h| !r.refuses_video(&h.video_id));
             let hit = match music_hit {

@@ -338,7 +338,14 @@ impl YouTubeResolver {
         .await;
         outcome.unwrap_or_else(|e| {
             warn!("shim /search failed for '{query}': {e}");
-            Lookup::Failed(Failure::Other)
+            let connect = e
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(reqwest::Error::is_connect);
+            Lookup::Failed(if connect {
+                Failure::Unreachable
+            } else {
+                Failure::Other
+            })
         })
     }
 
@@ -874,6 +881,15 @@ mod tests {
     #[test]
     fn a_lookup_that_never_finished_reads_as_one_that_could_not_answer() {
         assert_eq!(Lookup::<i32>::default(), Lookup::Failed(Failure::Other));
+    }
+
+    #[tokio::test]
+    async fn a_search_that_cannot_reach_the_shim_is_unreachable() {
+        let resolver = build(Some("http://127.0.0.1:1"));
+        assert_eq!(
+            resolver.search_lookup("Artist Song", None, true, &[]).await,
+            Lookup::Failed(Failure::Unreachable)
+        );
     }
 
     #[test]

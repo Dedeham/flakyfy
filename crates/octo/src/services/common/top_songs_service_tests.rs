@@ -46,6 +46,16 @@ struct Charts {
 
 impl Charts {
     async fn new(country: &str, deezer_chart: Option<&str>, last_fm: Option<&MockServer>) -> Charts {
+        Charts::with_gap(country, deezer_chart, last_fm, Duration::ZERO).await
+    }
+
+    /// [`Charts::new`], with `gap` between two reads of Apple.
+    async fn with_gap(
+        country: &str,
+        deezer_chart: Option<&str>,
+        last_fm: Option<&MockServer>,
+        gap: Duration,
+    ) -> Charts {
         let apple = MockServer::builder().start().await;
         let deezer_routes = Routes::new(
             deezer_chart
@@ -90,10 +100,7 @@ impl Charts {
             last_fm,
             Arc::new(FakeMetadata::default()),
             Arc::new(ExternalIdRegistry::in_memory()),
-            Arc::new(
-                AppleMusicPages::with_base_url(&apple.uri(), Duration::ZERO)
-                    .with_genres_base_url(&apple.uri()),
-            ),
+            Arc::new(AppleMusicPages::with_base_url(&apple.uri(), gap).with_genres_base_url(&apple.uri())),
             Arc::clone(&hints),
             Arc::clone(&settings),
         )
@@ -808,4 +815,87 @@ async fn another_countrys_chart_is_found_without_building_it_again() {
         charts.service.peek_chart("34").await.is_none(),
         "not the server's"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_joined_background_build_turns_urgent() {
+    let charts = Charts::with_gap("us", None, None, Duration::from_secs(1)).await;
+    let apple = Arc::clone(charts.service.apple());
+    let log: Arc<Mutex<Vec<String>>> = Arc::default();
+    let settle = || tokio::time::sleep(Duration::from_millis(1));
+
+    // Older background reads hold the gate's queue.
+    for i in 1..=3 {
+        let (apple, log) = (Arc::clone(&apple), Arc::clone(&log));
+        tokio::spawn(async move {
+            apple.gate().wait_in(&LaneCell::behind(), || false).await;
+            log.lock().push(format!("old{i}"));
+        });
+        settle().await;
+    }
+
+    // A background build of one list waits behind them.
+    let background = LaneCell::behind();
+    let build = {
+        let (service, apple, log, lane) = (
+            charts.service.clone(),
+            Arc::clone(&apple),
+            Arc::clone(&log),
+            background.clone(),
+        );
+        tokio::spawn(async move {
+            let reads_in = lane.clone();
+            service
+                .cached(
+                    Kept::Server,
+                    "chart|us|34".into(),
+                    CHART_TTL,
+                    CHART_BUILD_TIMEOUT,
+                    &lane,
+                    async move {
+                        apple.gate().wait_in(&reads_in, || false).await;
+                        log.lock().push("build".into());
+                        (TopList::default(), true)
+                    },
+                )
+                .await
+        })
+    };
+    settle().await;
+    assert!(!background.is_now());
+
+    // An interactive request for the same list joins it.
+    let started_again = Arc::new(AtomicUsize::new(0));
+    let asked = {
+        let (service, counted) = (charts.service.clone(), Arc::clone(&started_again));
+        tokio::spawn(async move {
+            service
+                .cached(
+                    Kept::Server,
+                    "chart|us|34".into(),
+                    CHART_TTL,
+                    CHART_BUILD_TIMEOUT,
+                    &LaneCell::now(),
+                    async move {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                        (TopList::default(), true)
+                    },
+                )
+                .await
+        })
+    };
+    settle().await;
+    assert!(background.is_now(), "the joined build reads interactively");
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    assert_eq!(log.lock().clone(), ["old1", "old2", "build", "old3"]);
+    assert_eq!(
+        started_again.load(Ordering::SeqCst),
+        0,
+        "it joined, never started"
+    );
+    assert!(build.await.is_ok());
+    assert!(asked.await.is_ok());
+    assert!(charts.service.inner.urgent.lock().is_empty());
 }

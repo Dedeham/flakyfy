@@ -22,6 +22,7 @@ use super::native::has_external_id;
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;
+use crate::services::charts::apple_music_pages::LaneCell;
 use crate::services::common::{TopList, TopSongsService};
 use crate::services::subsonic::SubsonicProxyService;
 
@@ -171,7 +172,7 @@ pub async fn get_top_chart(State(state): State<AppState>, req: Request) -> AppRe
         Ok(country) => country,
         Err(refused) => return Ok(refused),
     };
-    let list = service.chart_in(country, &chart).await;
+    let list = service.chart_on(country, &chart, &LaneCell::now()).await;
     let count = count(&call, TOP_SONGS_DEFAULT_COUNT, chart_settings::max_songs(&chart));
     Ok(answer(&state, &call, &list, count).await)
 }

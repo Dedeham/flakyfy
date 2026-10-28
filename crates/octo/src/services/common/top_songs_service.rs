@@ -40,7 +40,7 @@ use serde_json::Value;
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::services::charts::apple_music_pages::{AppleMusicPages, PageError};
+use crate::services::charts::apple_music_pages::{AppleMusicPages, LaneCell, PageError};
 use crate::services::charts::{ChartCountryStore, GenreNames};
 use crate::services::cover_art::ArtworkHints;
 use crate::services::framework::{InFlight, MemoryCache};
@@ -146,6 +146,9 @@ struct Inner {
     /// The genre ids whose English name is being read.
     naming: Mutex<HashSet<String>>,
     builds: InFlight<(Arc<TopList>, bool)>,
+    /// The lane each running build reads in, by build key, so a request that joins a background
+    /// build can turn it urgent.
+    urgent: Mutex<HashMap<String, LaneCell>>,
     fetches: Mutex<HashMap<String, ChartFetch>>,
     warned: Mutex<HashMap<String, Instant>>,
     /// Each listener's own and pinned chart countries.
@@ -184,11 +187,12 @@ impl TopSongsService {
                 settings,
                 cache: MemoryCache::new(512),
                 others: MemoryCache::new(256),
-                menus: MemoryCache::new(64),
+                menus: MemoryCache::new(chart_settings::APPLE_COUNTRIES.len() + 16),
                 learning: Mutex::new(HashSet::new()),
                 genre_names: Arc::new(GenreNames::new(None)),
                 naming: Mutex::new(HashSet::new()),
                 builds: InFlight::new(),
+                urgent: Mutex::new(HashMap::new()),
                 fetches: Mutex::new(HashMap::new()),
                 warned: Mutex::new(HashMap::new()),
                 listeners: Arc::new(ChartCountryStore::new(None)),
@@ -261,10 +265,17 @@ impl TopSongsService {
             None => format!("artist|name|{}", SongIdentity::key(&name)),
         };
         let this = self.clone();
-        self.cached(Kept::Server, key, ARTIST_TTL, ARTIST_BUILD_TIMEOUT, async move {
-            let (list, whole) = this.build_artist(&name, known).await;
-            (list, whole)
-        })
+        self.cached(
+            Kept::Server,
+            key,
+            ARTIST_TTL,
+            ARTIST_BUILD_TIMEOUT,
+            &LaneCell::behind(),
+            async move {
+                let (list, whole) = this.build_artist(&name, known).await;
+                (list, whole)
+            },
+        )
         .await
     }
 
@@ -509,11 +520,20 @@ impl TopSongsService {
     /// What cannot be learned stays unknown, so the English menu and Apple's redirect go on
     /// serving.
     pub async fn learn_in(&self, country: Option<String>) -> (Option<String>, Arc<Vec<ChartGenre>>) {
+        self.learn_on(country, &LaneCell::behind()).await
+    }
+
+    /// [`Self::learn_in`], its Apple reads made in `lane`.
+    pub async fn learn_on(
+        &self,
+        country: Option<String>,
+        lane: &LaneCell,
+    ) -> (Option<String>, Arc<Vec<ChartGenre>>) {
         let country = match country {
             Some(code) => Some(code),
             None => match self.inner.settings.current().generated_playlists.chart_country() {
                 ChartCountry::Fixed(code) => Some(code),
-                ChartCountry::Auto => self.inner.apple.detected_country().await,
+                ChartCountry::Auto => self.inner.apple.detected_country_on(lane).await,
             },
         };
         let Some(code) = country.clone() else {
@@ -523,7 +543,7 @@ impl TopSongsService {
             self.name_missing(&menu);
             return (country, Arc::new(self.named(&menu)));
         }
-        match self.inner.apple.chart(Some(&code), OVERALL).await {
+        match self.inner.apple.chart_on(Some(&code), OVERALL, lane).await {
             Ok(page) if !page.genres.is_empty() => {
                 let menu = Arc::new(page.genres.clone());
                 self.inner.menus.set(code, menu.clone(), 1, MENU_TTL);
@@ -577,10 +597,16 @@ impl TopSongsService {
         self.chart_in(self.country().await, id).await
     }
 
+    /// [`Self::chart_on`] in the background lane.
+    pub async fn chart_in(&self, country: Option<String>, id: &str) -> Arc<TopList> {
+        self.chart_on(country, id, &LaneCell::behind()).await
+    }
+
     /// A chart for a country: `34` (Popular right now), `new`, `trending` or a genre id. Empty
     /// for an id that is no chart, or a genre the country does not have, without asking anyone.
-    /// Every listener of one country shares one list.
-    pub async fn chart_in(&self, country: Option<String>, id: &str) -> Arc<TopList> {
+    /// Every listener of one country shares one list. Its Apple reads go in `lane`; a request
+    /// that joins a build already running in the background turns that build urgent.
+    pub async fn chart_on(&self, country: Option<String>, id: &str, lane: &LaneCell) -> Arc<TopList> {
         let Some(chart_kind) = kind(id) else {
             return Arc::default();
         };
@@ -596,13 +622,14 @@ impl TopSongsService {
         let key = chart_key(country.as_deref(), id);
         let this = self.clone();
         let id_owned = id.to_string();
+        let build_lane = lane.clone();
         // Another country's list is kept apart from the server's, so a failed read of it never
         // stands in for the server's own (which has stand-ins) under the same key.
         let place = if backup { Kept::Server } else { Kept::Other };
-        self.cached(place, key, CHART_TTL, CHART_BUILD_TIMEOUT, async move {
+        self.cached(place, key, CHART_TTL, CHART_BUILD_TIMEOUT, lane, async move {
             let started = Instant::now();
             let built = this
-                .build_chart(&id_owned, chart_kind, country.clone(), backup)
+                .build_chart(&id_owned, chart_kind, country.clone(), backup, &build_lane)
                 .await;
             let Built {
                 mut list,
@@ -635,13 +662,14 @@ impl TopSongsService {
         chart_kind: ChartKind,
         country: Option<String>,
         backup: bool,
+        lane: &LaneCell,
     ) -> Built {
         let max = max_songs(id);
         let apple = match chart_kind {
             ChartKind::Overall | ChartKind::Genre => self
                 .inner
                 .apple
-                .chart(country.as_deref(), id)
+                .chart_on(country.as_deref(), id, lane)
                 .await
                 .map(|page| (None, page)),
             ChartKind::NewSongs | ChartKind::Trending => match country.as_deref() {
@@ -654,7 +682,7 @@ impl TopSongsService {
                     };
                     self.inner
                         .apple
-                        .room(code, room)
+                        .room_on(code, room, lane)
                         .await
                         .map(|(room_id, page)| (Some(room_id), page))
                 }
@@ -787,6 +815,7 @@ impl TopSongsService {
         key: String,
         ttl: Duration,
         timeout: Duration,
+        lane: &LaneCell,
         build: F,
     ) -> Arc<TopList>
     where
@@ -801,28 +830,44 @@ impl TopSongsService {
             Kept::Server => key.clone(),
             Kept::Other => format!("other|{key}"),
         };
-        let (list, _) = self
-            .inner
-            .builds
-            .run(&building, async move {
-                let (list, whole) = match tokio::time::timeout(timeout, build).await {
-                    Ok(built) => built,
-                    Err(_) => {
-                        // Top songs are an addition, never a reason for anything to fail.
-                        debug!("top songs '{cache_key}' timed out");
-                        return (Arc::new(TopList::default()), false);
-                    }
-                };
-                let list = Arc::new(list);
-                let keep = if whole && !list.songs.is_empty() {
-                    ttl
-                } else {
-                    SHORT_TTL
-                };
-                this.kept(place).set(cache_key, list.clone(), 1, keep);
-                (list, whole)
-            })
-            .await;
+        let (service, build_key) = (self.clone(), building.clone());
+        // The lane is recorded under the same lock that starts the build, so a build that ends
+        // at once cannot leave its lane behind.
+        let mut urgent = self.inner.urgent.lock();
+        let (running, joined) = self.inner.builds.run_joined(&building, async move {
+            let _forget = Forget(service, build_key);
+            let (list, whole) = match tokio::time::timeout(timeout, build).await {
+                Ok(built) => built,
+                Err(_) => {
+                    // Top songs are an addition, never a reason for anything to fail.
+                    debug!("top songs '{cache_key}' timed out");
+                    return (Arc::new(TopList::default()), false);
+                }
+            };
+            let list = Arc::new(list);
+            let keep = if whole && !list.songs.is_empty() {
+                ttl
+            } else {
+                SHORT_TTL
+            };
+            this.kept(place).set(cache_key, list.clone(), 1, keep);
+            (list, whole)
+        });
+        if joined {
+            let started = urgent.get(&building).cloned();
+            drop(urgent);
+            // A request waiting on a background build makes it interactive.
+            if lane.is_now()
+                && let Some(started) = started
+                && started.make_now()
+            {
+                self.inner.apple.gate().wake_behind();
+            }
+        } else {
+            urgent.insert(building, lane.clone());
+            drop(urgent);
+        }
+        let (list, _) = running.await;
         list
     }
 
@@ -966,6 +1011,15 @@ enum Kept {
     Server,
     /// Charts of other countries.
     Other,
+}
+
+/// Forgets a build's lane when dropped, with the build.
+struct Forget(TopSongsService, String);
+
+impl Drop for Forget {
+    fn drop(&mut self) {
+        self.0.inner.urgent.lock().remove(&self.1);
+    }
 }
 
 /// Lets a country's learning go when dropped.

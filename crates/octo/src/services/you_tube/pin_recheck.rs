@@ -83,12 +83,13 @@ impl PinRecheck {
     }
 
     /// One pass over the stale pins, as the worker; ends when the pass is done or `token` is.
-    pub async fn run(self: Arc<Self>, token: CancellationToken) {
+    pub async fn run(self: Arc<Self>, token: CancellationToken) -> anyhow::Result<()> {
         let report = self.pass(&token).await;
         info!(
             "Pin recheck: {} checked, {} kept, {} with a better video, {} not answered",
             report.checked, report.kept, report.better, report.failed
         );
+        Ok(())
     }
 
     /// Walks the stale pins one at a time, each at most once.

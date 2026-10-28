@@ -324,9 +324,8 @@ impl YouTubeResolver {
                 video_id: row.video_id.clone(),
                 title: Some(row.title.clone()),
                 duration: row.duration_seconds,
-                channel: None,
-                stream: StreamFacts::default(),
                 pick: SoulseekRouting::VIDEO_PICK,
+                ..Default::default()
             }),
             None => Checked::Nothing,
         }

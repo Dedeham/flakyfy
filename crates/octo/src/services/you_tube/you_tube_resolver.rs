@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use futures::future::{BoxFuture, Shared};
 use octo_core::settings::SettingsStore;
-use octo_core::soulseek::StreamFacts;
+use octo_core::soulseek::{SoulseekRouting, StreamFacts};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 use tokio::sync::Semaphore;
@@ -26,6 +26,9 @@ pub struct YouTubeHit {
     /// The audio stream the shim picked for this video, when the run that found it had one
     /// (/search does; /meta never picks a stream).
     pub stream: StreamFacts,
+    /// The version of the ranking that chose this video (0 when the answer names none), at most
+    /// [`SoulseekRouting::VIDEO_PICK`].
+    pub pick: u8,
 }
 
 /// An open `/stream` response. The caller owns it and reads the body from `response`
@@ -97,6 +100,28 @@ pub struct YouTubeResolver {
     music_lookups: InFlight<Lookup<Vec<YtmRow>>>,
     /// YouTube Music searches sent to the shim at once: the shim's own YTM_MAX_CONCURRENT.
     music_gate: Arc<Semaphore>,
+}
+
+/// What a background check of the shim came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Checked<T> {
+    /// The shim answered with a pick.
+    Hit(T),
+    /// The shim answered, and nothing matches.
+    Nothing,
+    /// The shim could not answer, so nothing is known.
+    Failed(Failure),
+}
+
+/// Why a background check of the shim got no answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Failure {
+    /// The shim answered 503 `{"error":"busy"}`.
+    Busy,
+    /// The request never got an HTTP answer (connect error or refused).
+    Unreachable,
+    /// Anything else (a timeout, another status, a non-JSON answer).
+    Other,
 }
 
 /// How busy the shim is, from its `/health`.
@@ -262,22 +287,39 @@ impl YouTubeResolver {
         duration_hint: Option<i32>,
         background: bool,
     ) -> Option<YouTubeHit> {
-        self.search_lookup(query, duration_hint, background).await.found()
+        self.search_skipping(query, duration_hint, background, &[]).await
     }
 
-    /// [`Self::search`] that keeps "the shim has no hit" (HTTP 404, or an answer without a
-    /// video) apart from "the shim could not answer" (any other failure; `busy` for HTTP 503
-    /// with `{"error":"busy"}`).
+    /// [`Self::search`], leaving the videos in `skip` out of the shim's candidates.
+    pub async fn search_skipping(
+        &self,
+        query: &str,
+        duration_hint: Option<i32>,
+        background: bool,
+        skip: &[String],
+    ) -> Option<YouTubeHit> {
+        self.search_lookup(query, duration_hint, background, skip)
+            .await
+            .found()
+    }
+
+    /// [`Self::search_skipping`] that keeps "the shim has no hit" (HTTP 404, or an answer
+    /// without a video) apart from "the shim could not answer" (any other failure; `busy` for
+    /// HTTP 503 with `{"error":"busy"}`).
     pub async fn search_lookup(
         &self,
         query: &str,
         duration_hint: Option<i32>,
         background: bool,
+        skip: &[String],
     ) -> Lookup<YouTubeHit> {
         if query.trim().is_empty() {
             return Lookup::None;
         }
-        let url = self.query_url("search", query, duration_hint, background);
+        let mut url = self.query_url("search", query, duration_hint, background);
+        if !skip.is_empty() {
+            url.push_str(&format!("&skip={}", escape(&skip.join(","))));
+        }
         let outcome: anyhow::Result<Lookup<YouTubeHit>> = async {
             let resp = self.search_client.get(&url).send().await?;
             let status = resp.status();
@@ -337,7 +379,105 @@ impl YouTubeResolver {
             channel: None,
             album: row.album.clone(),
             stream: StreamFacts::default(),
+            pick: SoulseekRouting::VIDEO_PICK,
         })
+    }
+
+    /// [`Self::music_song`] as a background check, which tells "no row is the song" from "could
+    /// not ask": it goes through the shim's background slot (`bg=1`), is not shared with other
+    /// lookups, and a busy answer, a failure, an unreachable shim, an address that is not set or
+    /// no answer within [`Self::MUSIC_TIMEOUT`] is [`Checked::Failed`] with its [`Failure`].
+    pub async fn music_song_checked(
+        &self,
+        artist: &str,
+        title: &str,
+        length: Option<i32>,
+    ) -> Checked<YouTubeHit> {
+        if !self.music.configured() || (artist.trim().is_empty() && title.trim().is_empty()) {
+            return Checked::Failed(Failure::Other);
+        }
+        let query = format!("{artist} {title}");
+        let lookup = self
+            .music
+            .search_limited_background(&query, "songs", Self::MUSIC_ROWS);
+        let rows = match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(failure)) => {
+                debug!("YouTube Music could not answer the background check for '{query}'");
+                return Checked::Failed(failure);
+            }
+            Err(_) => {
+                debug!("YouTube Music timed out on the background check for '{query}'");
+                return Checked::Failed(Failure::Other);
+            }
+        };
+        match pick_song(artist, title, length, &rows) {
+            Some(row) => Checked::Hit(YouTubeHit {
+                video_id: row.video_id.clone(),
+                title: Some(row.title.clone()),
+                duration: row.duration_seconds,
+                pick: SoulseekRouting::VIDEO_PICK,
+                ..Default::default()
+            }),
+            None => Checked::Nothing,
+        }
+    }
+
+    /// The shim's ranked pick for `query` as a background check, leaving the videos in `skip`
+    /// out: `/search` with `bg=1` and `resolve=0`, so it ranks only (no stream URL, no cache).
+    /// A 404 (no candidate) is [`Checked::Nothing`]; any other failure is [`Checked::Failed`]
+    /// with its [`Failure`].
+    pub async fn search_ranked(
+        &self,
+        query: &str,
+        duration_hint: Option<i32>,
+        skip: &[String],
+    ) -> Checked<YouTubeHit> {
+        if query.trim().is_empty() {
+            return Checked::Failed(Failure::Other);
+        }
+        let mut url = self.query_url("search", query, duration_hint, true);
+        url.push_str("&resolve=0");
+        if !skip.is_empty() {
+            url.push_str(&format!("&skip={}", escape(&skip.join(","))));
+        }
+        let resp = match self.search_client.get(&url).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                debug!("shim ranked /search failed for '{query}': {e}");
+                return Checked::Failed(if e.is_connect() {
+                    Failure::Unreachable
+                } else {
+                    Failure::Other
+                });
+            }
+        };
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Checked::Nothing;
+        }
+        let body = resp.text().await.unwrap_or_default();
+        let root: Option<Value> = serde_json::from_str(&body).ok();
+        if status.as_u16() == 503
+            && root.as_ref().and_then(|r| r.get("error")).and_then(Value::as_str) == Some("busy")
+        {
+            return Checked::Failed(Failure::Busy);
+        }
+        if !status.is_success() {
+            debug!("shim ranked /search HTTP {} for '{query}'", status.as_u16());
+            return Checked::Failed(Failure::Other);
+        }
+        let parsed = root
+            .ok_or_else(|| anyhow::anyhow!("not JSON"))
+            .and_then(|root| Ok(parse_hit(&root, true)?));
+        match parsed {
+            Ok(Some(hit)) => Checked::Hit(hit),
+            Ok(None) => Checked::Nothing,
+            Err(e) => {
+                debug!("shim ranked /search failed for '{query}': {e}");
+                Checked::Failed(Failure::Other)
+            }
+        }
     }
 
     /// Starts YouTube Music's songs search for `artist - title` without waiting for it, so a
@@ -627,6 +767,10 @@ fn parse_hit(root: &Value, with_channel: bool) -> anyhow::Result<Option<YouTubeH
     } else {
         None
     };
+    let pick = root
+        .get("rank")
+        .and_then(Value::as_u64)
+        .map_or(0, |rank| rank.min(u64::from(SoulseekRouting::VIDEO_PICK)) as u8);
     Ok(Some(YouTubeHit {
         video_id,
         title,
@@ -634,6 +778,7 @@ fn parse_hit(root: &Value, with_channel: bool) -> anyhow::Result<Option<YouTubeH
         channel,
         album: None,
         stream: parse_stream(root),
+        pick,
     }))
 }
 
@@ -743,9 +888,62 @@ mod tests {
                 channel: Some("Daft Punk - Topic".into()),
                 album: None,
                 stream: StreamFacts::default(),
+                pick: 0,
             })
         );
         assert!(resolver.search("  ", None, false).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_ranked_answer_names_the_ranking_that_chose_the_video() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/search"))
+            .and(query_param("q", "Ranked Song"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"abc","rank":3}"#))
+            .mount(&shim)
+            .await;
+        Mock::given(path("/search"))
+            .and(query_param("q", "Newer Song"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"abc","rank":9}"#))
+            .mount(&shim)
+            .await;
+        Mock::given(path("/search"))
+            .and(query_param("q", "Plain Song"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"abc"}"#))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let pick = |q: &'static str| {
+            let resolver = &resolver;
+            async move { resolver.search(q, None, false).await.map(|h| h.pick) }
+        };
+        assert_eq!(pick("Ranked Song").await, Some(3));
+        assert_eq!(pick("Newer Song").await, Some(SoulseekRouting::VIDEO_PICK));
+        assert_eq!(pick("Plain Song").await, Some(0));
+    }
+
+    #[tokio::test]
+    async fn search_names_the_videos_to_leave_out_only_when_there_are_some() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"abc"}"#))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        resolver
+            .search_skipping("Song", Some(200), false, &["a".to_string(), "b".to_string()])
+            .await
+            .expect("a hit");
+        resolver.search("Song", Some(200), false).await.expect("a hit");
+
+        let requests = shim.received_requests().await.expect("recorded");
+        let queries: Vec<String> = requests
+            .iter()
+            .map(|r| r.url.query().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(queries.len(), 2);
+        assert!(queries[0].contains("skip=a%2Cb"), "{}", queries[0]);
+        assert!(!queries[1].contains("skip"), "{}", queries[1]);
     }
 
     #[tokio::test]
@@ -1091,6 +1289,7 @@ mod tests {
                 channel: None,
                 album: None,
                 stream: StreamFacts::default(),
+                pick: SoulseekRouting::VIDEO_PICK,
             })
         );
     }

@@ -228,7 +228,7 @@ impl PreviewSource for YouTubeResolver {
             _ => {}
         }
         let query = format!("{} {}", request.artist, request.title);
-        match self.search_lookup(&query, request.seconds, true).await {
+        match self.search_lookup(&query, request.seconds, true, &[]).await {
             Lookup::Found(hit) if !hit.video_id.is_empty() && is_pinned(&hit) => {
                 let channel = hit.channel.clone();
                 return Ok(Some(PreviewFacts::from_hit(hit, channel)));

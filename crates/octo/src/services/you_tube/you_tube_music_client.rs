@@ -9,6 +9,7 @@ use serde_json::Value;
 use tracing::debug;
 
 use super::YouTubeResolver;
+use super::you_tube_resolver::Failure;
 
 /// One row of YouTube Music, as the shim reads it through ytmusicapi.
 ///
@@ -76,6 +77,44 @@ impl YouTubeMusicClient {
             Answer::Busy => YtmAnswer::Busy,
             Answer::Failed => YtmAnswer::Failed,
         })
+    }
+
+    /// [`Self::search_limited`] as background work: the shim runs it on its own one-slot gate,
+    /// never fills its cache, and answers busy while the slot is taken. The rows, or why the
+    /// shim could not answer.
+    pub async fn search_limited_background(
+        &self,
+        query: &str,
+        filter: &str,
+        limit: i32,
+    ) -> Result<Vec<YtmRow>, Failure> {
+        let Some(shim) = self.shim_url.as_deref().filter(|url| !url.is_empty()) else {
+            return Err(Failure::Other);
+        };
+        let url = format!(
+            "{shim}/ytm/search?q={}&filter={filter}&limit={limit}&bg=1",
+            dotnet::escape_data_string(query)
+        );
+        let response = self.http.get(url).send().await.map_err(|e| {
+            if e.is_connect() {
+                Failure::Unreachable
+            } else {
+                Failure::Other
+            }
+        })?;
+        let status = response.status();
+        let body = response.text().await.map_err(|_| Failure::Other)?;
+        let root: Option<Value> = serde_json::from_str(&body).ok();
+        if status.as_u16() == 503
+            && root.as_ref().and_then(|r| r.get("error")).and_then(Value::as_str) == Some("busy")
+        {
+            return Err(Failure::Busy);
+        }
+        if !status.is_success() {
+            debug!("YouTube Music background search answered {}", status.as_u16());
+            return Err(Failure::Other);
+        }
+        rows(&root.ok_or(Failure::Other)?).map_err(|_| Failure::Other)
     }
 
     pub async fn radio(&self, video_id: &str, limit: i32) -> anyhow::Result<Vec<YtmRow>> {

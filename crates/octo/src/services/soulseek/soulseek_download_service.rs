@@ -19,8 +19,9 @@ use std::time::{Duration, Instant, SystemTime};
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::TryStreamExt;
-use octo_core::common::dotnet;
-use octo_core::fingerprint::recording_identity::RecordingKind;
+use octo_core::common::version_gap::{self, Against};
+use octo_core::common::{dotnet, romanize};
+use octo_core::fingerprint::recording_identity::{RecordingKind, Takes};
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::models::domain::{Album, Song};
 use octo_core::notifications::{NotificationEvent, NotificationEventType};
@@ -58,8 +59,10 @@ use crate::services::common::{
     OperationCanceled, TrackDownload,
 };
 use crate::services::fingerprint::DownloadVerificationService;
+use crate::services::fingerprint::download_verification_service::trustworthy;
 use crate::services::fingerprint::preview_check::{Heard, PreviewOutcome, PreviewRequest};
 use crate::services::i_download_service::DirectStreamInfo;
+use crate::services::library::library_review_sweep_worker::LibraryReviewSweepWorker;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::library::upgrade_queue::AudioSummary;
 use crate::services::lidarr::{ILidarrTrackFetcher, LidarrImport, LidarrImportHandoff, LidarrTrackRequest};
@@ -67,6 +70,7 @@ use crate::services::prefetch::PreviewCopies;
 use crate::services::prefetch::preview_copies::copy_after;
 use crate::services::spotiflac::SpotiflacClient;
 use crate::services::you_tube::YouTubeResolver;
+use crate::services::you_tube::pin_recheck::starts_at_first_byte;
 use octo_core::common::acquisition_tracker::user_safe;
 use octo_core::lidarr::lidarr_track_fetcher::LidarrStep;
 
@@ -261,7 +265,10 @@ impl SoulseekDownloadService {
 
     fn routing_for(&self, external_id: &str) -> Option<SharedRouting> {
         self.id_registry.lookup(external_id).or_else(|| {
-            SoulseekMetadataService::try_decode_external_id(Some(external_id)).map(SharedRouting::new)
+            SoulseekMetadataService::try_decode_external_id(Some(external_id)).map(|mut routing| {
+                self.id_registry.apply_refusals(&mut routing);
+                SharedRouting::new(routing)
+            })
         })
     }
 
@@ -488,42 +495,16 @@ impl SoulseekDownloadService {
             )
         });
 
-        let r = routing.snapshot();
-        let (artist, title) = names(&r);
-        let mut video_id = r.you_tube_id.clone().filter(|v| !v.is_empty());
-        if video_id.is_none() {
-            let hit = self
-                .youtube
-                .search(&format!("{artist} {title}"), r.duration, false)
-                .await
-                .filter(|h| !h.video_id.is_empty());
-            if let Some(hit) = &hit {
-                self.id_registry.set_you_tube_id(&track_key, &hit.video_id);
-                self.id_registry
-                    .remember_stream(&track_key, &hit.video_id, &hit.stream);
-            }
-            video_id = hit.map(|h| h.video_id);
-        }
-        let Some(video_id) = video_id else {
-            return Err(file_not_found(format!(
-                "No YouTube match for '{artist} - {title}'"
-            )));
-        };
-        base.log_step(
-            &track_key,
-            acquisition_event_kinds::FOUND,
-            "Found it on YouTube",
-            Some(&format!("Video {video_id}, saved as an MP3")),
-        );
-
+        let first = routing.snapshot();
+        let (artist, title) = names(&first);
         if !download.suppress_notify && announce_start {
             base.notifications().notify(NotificationEvent {
-                artist: r.artist.clone(),
-                title: r.title.clone(),
-                album: r.album.clone(),
+                artist: first.artist.clone(),
+                title: first.title.clone(),
+                album: first.album.clone(),
                 source: Some("YouTube".into()),
                 format: Some("MP3".into()),
-                duration_seconds: r.duration,
+                duration_seconds: first.duration,
                 ..NotificationEvent::new(NotificationEventType::DownloadStarted)
             });
         }
@@ -533,81 +514,168 @@ impl SoulseekDownloadService {
         // protect it. Extension left empty: the shim appends .mp3 itself.
         let incoming = combine(&download_path, INCOMING_FOLDER_NAME);
         sweep_incoming(&incoming);
-        let dest_without_ext = combine(&incoming, &format!("{video_id}-{}", new_guid()));
 
-        // The shim answers only once the file is written, so there is nothing to count here.
-        base.track(|t| t.transfer(&provider, &track_key, None, None, None, Some("YouTube")));
-        let path = or_canceled(ct, async {
-            Ok(self
-                .youtube
-                .download(
-                    &video_id,
-                    &dest_without_ext,
+        /// How many videos one download tries before it gives up.
+        const MAX_VIDEOS: usize = 3;
+        // Every video this download used, so none is downloaded twice.
+        let mut tried: Vec<String> = Vec::new();
+        let mut last_refusal: Option<String> = None;
+        for pass in 0..MAX_VIDEOS {
+            let r = routing.snapshot();
+            let skip: Vec<String> = r.refused_videos.iter().chain(tried.iter()).cloned().collect();
+            let mut video_id = r
+                .you_tube_id
+                .clone()
+                .filter(|v| !v.is_empty() && !skip.contains(v));
+            if video_id.is_none() {
+                // YouTube Music's row for the song first, as a play picks: its title, artist and
+                // length are the song's. Else the shim's search. A video refused for the song or
+                // already tried is never taken.
+                let hit = match self
+                    .youtube
+                    .music_song(&artist, &title, r.duration)
+                    .await
+                    .filter(|h| !skip.contains(&h.video_id))
+                {
+                    Some(row) => Some(row),
+                    None => self
+                        .youtube
+                        .search_skipping(&format!("{artist} {title}"), r.duration, false, &skip)
+                        .await
+                        .filter(|h| !h.video_id.is_empty() && !skip.contains(&h.video_id)),
+                };
+                if let Some(hit) = &hit {
+                    self.id_registry.set_you_tube_id(&track_key, &hit.video_id);
+                    self.id_registry
+                        .remember_pick(&track_key, &hit.video_id, hit.pick);
+                    self.id_registry
+                        .remember_stream(&track_key, &hit.video_id, &hit.stream);
+                }
+                video_id = hit.map(|h| h.video_id);
+            }
+            let Some(video_id) = video_id else {
+                break;
+            };
+            tried.push(video_id.clone());
+            base.log_step(
+                &track_key,
+                acquisition_event_kinds::FOUND,
+                "Found it on YouTube",
+                Some(&format!("Video {video_id}, saved as an MP3")),
+            );
+
+            let dest_without_ext = combine(&incoming, &format!("{video_id}-{}", new_guid()));
+
+            // The shim answers only once the file is written, so there is nothing to count here.
+            base.track(|t| t.transfer(&provider, &track_key, None, None, None, Some("YouTube")));
+            let path = or_canceled(ct, async {
+                Ok(self
+                    .youtube
+                    .download(
+                        &video_id,
+                        &dest_without_ext,
+                        r.artist.as_deref(),
+                        r.title.as_deref(),
+                    )
+                    .await)
+            })
+            .await?;
+            let Some(path) = path.filter(|p| !p.is_empty() && file_exists(p)) else {
+                return Err(file_not_found(format!(
+                    "YouTube MP3 download failed for '{artist} - {title}'"
+                )));
+            };
+
+            info!("YouTube MP3 download complete: {path}");
+
+            // Identification. A file AcoustID firmly names as another recording is thrown away
+            // and its video refused for the song, and the next video is tried; any other
+            // disagreement is kept and asked about in Review.
+            base.track(|t| t.stage(&provider, &track_key, AcquisitionState::Verifying, None, None));
+            let takes = self.verification.takes_for_routing(&r);
+            let song = &mut download.song;
+            let mut verdict = self
+                .verification
+                .verify(
+                    &path,
                     r.artist.as_deref(),
                     r.title.as_deref(),
+                    song.isrc.as_deref().or(r.isrc.as_deref()),
+                    &takes,
                 )
-                .await)
-        })
-        .await?;
-        let Some(path) = path.filter(|p| !p.is_empty() && file_exists(p)) else {
-            return Err(file_not_found(format!(
-                "YouTube MP3 download failed for '{artist} - {title}'"
-            )));
-        };
-
-        info!("YouTube MP3 download complete: {path}");
-
-        // Identification only. YouTube has no second candidate to fall back to, so a
-        // disagreement is something to ask a person about (the Review playlist), never a reason
-        // to throw the song away.
-        base.track(|t| t.stage(&provider, &track_key, AcquisitionState::Verifying, None, None));
-        let song = &mut download.song;
-        let mut verdict = self
-            .verification
-            .verify(
-                &path,
-                r.artist.as_deref(),
-                r.title.as_deref(),
-                song.isrc.as_deref().or(r.isrc.as_deref()),
-                &self.verification.takes_for_routing(&r),
-            )
-            .await;
-        if verdict.verdict == VerificationVerdict::Mismatch {
-            if verdict.r#match.is_none() && verdict.matched_title.as_deref().is_none_or(str::is_empty) {
-                // No decodable audio at all: a broken file, not a question.
-                let _ = std::fs::remove_file(&path);
-                return Err(InvalidOperationException(format!(
-                    "YouTube delivered no decodable audio for '{artist} - {title}'"
-                ))
-                .into());
-            }
-            warn!(
-                "AcoustID says the YouTube file for '{artist} - {title}' is {}; keeping it and asking about it",
-                verdict.describe()
-            );
-            base.log_step_heard(
-                &track_key,
-                acquisition_event_kinds::CHECK,
-                &mismatch_text(&verdict),
-                Some("YouTube has no other copy, so it is kept and goes to your Review playlist"),
-                verdict.heard(),
-            );
-            verdict.verdict = VerificationVerdict::Inconclusive;
-            verdict.reason = InconclusiveReason::SourceDisagreed;
-        } else {
-            if let Some(said) = verdict.acoust_id_text() {
+                .await;
+            if verdict.verdict == VerificationVerdict::Mismatch {
+                if verdict.r#match.is_none() && verdict.matched_title.as_deref().is_none_or(str::is_empty) {
+                    // No decodable audio at all: a broken file, not a question.
+                    let _ = std::fs::remove_file(&path);
+                    return Err(InvalidOperationException(format!(
+                        "YouTube delivered no decodable audio for '{artist} - {title}'"
+                    ))
+                    .into());
+                }
+                if names_another_recording(&verdict, &artist, &title, r.duration, &takes) {
+                    // Another recording is not a take of this song: kept, it would play under
+                    // this song's name, and the video stays pinned for every later play.
+                    warn!(
+                        "AcoustID says YouTube's video {video_id} for '{artist} - {title}' is {}; discarding it",
+                        verdict.describe()
+                    );
+                    let last = pass + 1 == MAX_VIDEOS;
+                    base.log_step_heard(
+                        &track_key,
+                        acquisition_event_kinds::CHECK,
+                        &mismatch_text(&verdict),
+                        Some(if last {
+                            "Another recording, not this one; no other video to try"
+                        } else {
+                            "Another recording, not this one; trying the next video"
+                        }),
+                        verdict.heard(),
+                    );
+                    let _ = std::fs::remove_file(&path);
+                    routing.lock().refuse_video(&video_id);
+                    self.id_registry.refuse_video(&track_key, &video_id);
+                    self.id_registry.refuse_song_video(&artist, &title, &video_id);
+                    last_refusal = Some(format!(
+                        "AcoustID identified YouTube's video for '{artist} - {title}' as {}",
+                        verdict.describe()
+                    ));
+                    if ct.is_cancelled() {
+                        return Err(OperationCanceled.into());
+                    }
+                    continue;
+                }
+                warn!(
+                    "AcoustID says the YouTube file for '{artist} - {title}' is {}; keeping it and asking about it",
+                    verdict.describe()
+                );
                 base.log_step_heard(
                     &track_key,
                     acquisition_event_kinds::CHECK,
-                    "Checked the recording",
-                    Some(&sentence(&said)),
+                    &mismatch_text(&verdict),
+                    Some("YouTube has no other copy, so it is kept and goes to your Review playlist"),
                     verdict.heard(),
                 );
+                verdict.verdict = VerificationVerdict::Inconclusive;
+                verdict.reason = InconclusiveReason::SourceDisagreed;
+            } else {
+                if let Some(said) = verdict.acoust_id_text() {
+                    base.log_step_heard(
+                        &track_key,
+                        acquisition_event_kinds::CHECK,
+                        "Checked the recording",
+                        Some(&sentence(&said)),
+                        verdict.heard(),
+                    );
+                }
+                verdict.apply_tags_to(song);
             }
-            verdict.apply_tags_to(song);
+            song.verification = Some(Box::new(verdict));
+            return Ok(path);
         }
-        song.verification = Some(Box::new(verdict));
-        Ok(path)
+        Err(file_not_found(last_refusal.unwrap_or_else(|| {
+            format!("No YouTube match for '{artist} - {title}'")
+        })))
     }
 
     // =========================================================================
@@ -2285,13 +2353,31 @@ impl DownloadBackend for SoulseekDownloadService {
             return Ok(None);
         };
 
+        // A video the current ranking prefers is taken only by a play that starts at the first
+        // byte, so no player is ever given bytes of two videos.
+        if starts_at_first_byte(range_header)
+            && let Some(left) = self.id_registry.apply_pending_video(&routing)
+            && let Some(copies) = &self.preview_copies
+        {
+            copies.drop_copy(&left);
+        }
+
         let r = routing.snapshot();
-        let mut video_id = r.you_tube_id.clone().filter(|v| !v.is_empty());
+        let mut video_id = r
+            .you_tube_id
+            .clone()
+            .filter(|v| !v.is_empty() && !r.refuses_video(v));
         if video_id.is_none() && r.has_artist_title() {
             let (artist, title) = names(&r);
             // YouTube Music's row for the song first: one quick search, and the stream is
             // resolved as it opens. Else the shim's yt-dlp search, which resolves both at once.
-            let hit = match self.youtube.music_song(&artist, &title, r.duration).await {
+            // A video refused for the song is never taken.
+            let music_hit = self
+                .youtube
+                .music_song(&artist, &title, r.duration)
+                .await
+                .filter(|h| !r.refuses_video(&h.video_id));
+            let hit = match music_hit {
                 Some(hit) => {
                     debug!(
                         "play of '{artist} - {title}': video {} from YouTube Music",
@@ -2302,9 +2388,9 @@ impl DownloadBackend for SoulseekDownloadService {
                 None => {
                     let hit = self
                         .youtube
-                        .search(&format!("{artist} {title}"), r.duration, false)
+                        .search_skipping(&format!("{artist} {title}"), r.duration, false, &r.refused_videos)
                         .await
-                        .filter(|h| !h.video_id.is_empty());
+                        .filter(|h| !h.video_id.is_empty() && !r.refuses_video(&h.video_id));
                     if let Some(hit) = &hit {
                         debug!("play of '{artist} - {title}': video {} from yt-dlp", hit.video_id);
                     }
@@ -2318,13 +2404,18 @@ impl DownloadBackend for SoulseekDownloadService {
             if let Some(hit) = &hit {
                 self.id_registry.set_you_tube_id(external_id, &hit.video_id);
                 self.id_registry
-                    .remember_stream(external_id, &hit.video_id, &hit.stream);
-                // The video that plays says how long the song runs, for every later row.
-                if !self
-                    .id_registry
-                    .remember_length(external_id, hit.duration, LengthSource::Video)
-                {
-                    routing.remember_length(hit.duration, LengthSource::Video);
+                    .remember_pick(external_id, &hit.video_id, hit.pick);
+                // A video the song refuses gives it nothing.
+                if !routing.lock().refuses_video(&hit.video_id) {
+                    self.id_registry
+                        .remember_stream(external_id, &hit.video_id, &hit.stream);
+                    // The video that plays says how long the song runs, for every later row.
+                    if !self
+                        .id_registry
+                        .remember_length(external_id, hit.duration, LengthSource::Video)
+                    {
+                        routing.remember_length(hit.duration, LengthSource::Video);
+                    }
                 }
             }
             video_id = hit.map(|h| h.video_id);
@@ -3032,6 +3123,79 @@ fn sweep_incoming(incoming: &str) {
 }
 
 // ---- small helpers -------------------------------------------------------------------------
+
+/// Whether AcoustID named another recording than the one asked for firmly enough to throw the
+/// file away. The verdict must be a mismatch that names both a title and an artist in the
+/// request's scripts, and the recording it named must be believed (its length known and the
+/// file's, and no other song's recording dwarfs it). Then the file is another recording when
+/// the title and the artist both differ; when one of them differs and the file's length is
+/// apart from the catalog's by more than 7% (at least 10 s); when a take is certain that the
+/// takes refuse or the title does not ask for (any non-studio take, when it asks for none); or
+/// when the title heard is another version of the title asked for. A same-artist other title
+/// or a same-title other artist at the song's own length stays a question, since an alias or
+/// a title variant reads that way. A name in another script and a verdict that names nothing
+/// are kept and asked about too.
+pub(crate) fn names_another_recording(
+    verdict: &VerificationResult,
+    artist: &str,
+    title: &str,
+    catalog_seconds: Option<i32>,
+    takes: &Takes,
+) -> bool {
+    if verdict.verdict != VerificationVerdict::Mismatch {
+        return false;
+    }
+    let heard_title = verdict.matched_title.as_deref().unwrap_or_default().trim();
+    let heard_artist = verdict.matched_artist.as_deref().unwrap_or_default().trim();
+    if heard_title.is_empty() || heard_artist.is_empty() {
+        return false;
+    }
+    if romanize::first_script(title) != romanize::first_script(heard_title)
+        || romanize::first_script(artist) != romanize::first_script(heard_artist)
+    {
+        return false;
+    }
+    if !named_recording_believed(verdict) {
+        return false;
+    }
+    let same_title = LibraryReviewSweepWorker::same_title(heard_title, title);
+    let shared = LibraryReviewSweepWorker::shares_artist(verdict, artist);
+    let length_apart = catalog_seconds.is_some_and(|catalog| {
+        catalog > 0
+            && verdict.duration_seconds > 0
+            && (verdict.duration_seconds - catalog).abs() > (catalog * 7 / 100).max(10)
+    });
+    let asked = RecordingKind::requested_by(title);
+    let other_take = verdict.kind_certain
+        && verdict.kind.is_some_and(|k| {
+            takes.refuses(k)
+                || if asked.is_empty() {
+                    k != RecordingKind::Studio
+                } else {
+                    !asked.contains(&k)
+                }
+        });
+    let another_version = version_gap::other_version(title, heard_title, Against::Recording);
+    (!same_title && !shared) || ((!same_title || !shared) && length_apart) || other_take || another_version
+}
+
+/// The recording `verdict` names, found in its lookup, has a known length and is
+/// [`trustworthy`] against the file's.
+fn named_recording_believed(verdict: &VerificationResult) -> bool {
+    let Some(id) = verdict.recording_id.as_deref() else {
+        return false;
+    };
+    verdict.duration_seconds > 0
+        && verdict.lookup.as_ref().is_some_and(|lookup| {
+            lookup.results.iter().any(|result| {
+                result.recordings.iter().any(|r| {
+                    dotnet::eq_ignore_case(id, &r.recording_id)
+                        && r.duration_seconds.is_some_and(|s| s > 0)
+                        && trustworthy(r, result, verdict.duration_seconds)
+                })
+            })
+        })
+}
 
 /// The routing's artist and title, for messages.
 fn names(routing: &SoulseekRouting) -> (String, String) {

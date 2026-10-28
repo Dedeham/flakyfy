@@ -164,7 +164,7 @@ use crate::services::updates::UpdateHost;
 use crate::services::validation::{
     IStartupValidator, StartupValidationOrchestrator, SubsonicStartupValidator,
 };
-use crate::services::you_tube::{StreamSizeWarmer, YouTubeMusicClient, YouTubeResolver};
+use crate::services::you_tube::{PinRecheck, StreamSizeWarmer, YouTubeMusicClient, YouTubeResolver};
 use crate::workers::WorkerSupervisor;
 
 /// Cheap to clone; handlers and workers receive it by value.
@@ -1481,6 +1481,11 @@ impl Stores {
         });
         let warmer = self.stream_size_warmer.clone();
         workers.register("StreamSizeWarmer", move |token| warmer.clone().run(token));
+        let pin_recheck = Arc::new(PinRecheck::new(
+            self.external_id_registry.clone(),
+            self.you_tube_resolver.clone(),
+        ));
+        workers.register("PinRecheck", move |token| pin_recheck.clone().run(token));
         let rejected = self.rejected_peers.clone();
         workers.register("RejectedPeerRegistry", move |token| {
             rejected.clone().run_flusher(token)

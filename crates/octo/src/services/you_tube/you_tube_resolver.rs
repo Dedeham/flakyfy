@@ -71,9 +71,19 @@ pub enum Checked<T> {
     Hit(T),
     /// The shim answered, and nothing matches.
     Nothing,
-    /// The shim could not answer (busy, timed out, unreachable or not its JSON), so nothing is
-    /// known.
-    Failed,
+    /// The shim could not answer, so nothing is known.
+    Failed(Failure),
+}
+
+/// Why a background check of the shim got no answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Failure {
+    /// The shim answered 503 `{"error":"busy"}`.
+    Busy,
+    /// The request never got an HTTP answer (connect error or refused).
+    Unreachable,
+    /// Anything else (a timeout, another status, a non-JSON answer).
+    Other,
 }
 
 /// How busy the shim is, from its `/health`.
@@ -298,7 +308,7 @@ impl YouTubeResolver {
     /// [`Self::music_song`] as a background check, which tells "no row is the song" from "could
     /// not ask": it goes through the shim's background slot (`bg=1`), is not shared with other
     /// lookups, and a busy answer, a failure, an unreachable shim, an address that is not set or
-    /// no answer within [`Self::MUSIC_TIMEOUT`] is [`Checked::Failed`].
+    /// no answer within [`Self::MUSIC_TIMEOUT`] is [`Checked::Failed`] with its [`Failure`].
     pub async fn music_song_checked(
         &self,
         artist: &str,
@@ -306,17 +316,21 @@ impl YouTubeResolver {
         length: Option<i32>,
     ) -> Checked<YouTubeHit> {
         if !self.music.configured() || (artist.trim().is_empty() && title.trim().is_empty()) {
-            return Checked::Failed;
+            return Checked::Failed(Failure::Other);
         }
         let query = format!("{artist} {title}");
         let lookup = self
             .music
             .search_limited_background(&query, "songs", Self::MUSIC_ROWS);
         let rows = match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
-            Ok(Ok(Some(rows))) => rows,
-            Ok(Ok(None)) | Ok(Err(_)) | Err(_) => {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(failure)) => {
                 debug!("YouTube Music could not answer the background check for '{query}'");
-                return Checked::Failed;
+                return Checked::Failed(failure);
+            }
+            Err(_) => {
+                debug!("YouTube Music timed out on the background check for '{query}'");
+                return Checked::Failed(Failure::Other);
             }
         };
         match pick_song(artist, title, length, &rows) {
@@ -333,7 +347,8 @@ impl YouTubeResolver {
 
     /// The shim's ranked pick for `query` as a background check, leaving the videos in `skip`
     /// out: `/search` with `bg=1` and `resolve=0`, so it ranks only (no stream URL, no cache).
-    /// A 404 (no candidate) is [`Checked::Nothing`]; any other failure is [`Checked::Failed`].
+    /// A 404 (no candidate) is [`Checked::Nothing`]; any other failure is [`Checked::Failed`]
+    /// with its [`Failure`].
     pub async fn search_ranked(
         &self,
         query: &str,
@@ -341,34 +356,50 @@ impl YouTubeResolver {
         skip: &[String],
     ) -> Checked<YouTubeHit> {
         if query.trim().is_empty() {
-            return Checked::Failed;
+            return Checked::Failed(Failure::Other);
         }
         let mut url = self.query_url("search", query, duration_hint, true);
         url.push_str("&resolve=0");
         if !skip.is_empty() {
             url.push_str(&format!("&skip={}", escape(&skip.join(","))));
         }
-        let outcome: anyhow::Result<Checked<YouTubeHit>> = async {
-            let resp = self.search_client.get(&url).send().await?;
-            let status = resp.status();
-            if status.as_u16() == 404 {
-                return Ok(Checked::Nothing);
+        let resp = match self.search_client.get(&url).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                debug!("shim ranked /search failed for '{query}': {e}");
+                return Checked::Failed(if e.is_connect() {
+                    Failure::Unreachable
+                } else {
+                    Failure::Other
+                });
             }
-            if !status.is_success() {
-                debug!("shim ranked /search HTTP {} for '{query}'", status.as_u16());
-                return Ok(Checked::Failed);
-            }
-            let root: Value = serde_json::from_str(&resp.text().await?)?;
-            Ok(match parse_hit(&root, true)? {
-                Some(hit) => Checked::Hit(hit),
-                None => Checked::Nothing,
-            })
+        };
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Checked::Nothing;
         }
-        .await;
-        outcome.unwrap_or_else(|e| {
-            debug!("shim ranked /search failed for '{query}': {e}");
-            Checked::Failed
-        })
+        let body = resp.text().await.unwrap_or_default();
+        let root: Option<Value> = serde_json::from_str(&body).ok();
+        if status.as_u16() == 503
+            && root.as_ref().and_then(|r| r.get("error")).and_then(Value::as_str) == Some("busy")
+        {
+            return Checked::Failed(Failure::Busy);
+        }
+        if !status.is_success() {
+            debug!("shim ranked /search HTTP {} for '{query}'", status.as_u16());
+            return Checked::Failed(Failure::Other);
+        }
+        let parsed = root
+            .ok_or_else(|| anyhow::anyhow!("not JSON"))
+            .and_then(|root| Ok(parse_hit(&root, true)?));
+        match parsed {
+            Ok(Some(hit)) => Checked::Hit(hit),
+            Ok(None) => Checked::Nothing,
+            Err(e) => {
+                debug!("shim ranked /search failed for '{query}': {e}");
+                Checked::Failed(Failure::Other)
+            }
+        }
     }
 
     /// Starts YouTube Music's songs search for `artist - title` without waiting for it, so a

@@ -284,6 +284,72 @@ async fn a_failed_ranked_search_leaves_that_pin_and_the_pass_goes_on() {
 }
 
 #[tokio::test]
+async fn a_busy_search_leaves_that_pin_unstamped_and_ends_the_pass() {
+    let shim = MockServer::start().await;
+    music_answers(&shim, r#"{"tracks":[]}"#).await;
+    search_answers(&shim, 503, r#"{"error":"busy"}"#).await;
+    let registry = Arc::new(ExternalIdRegistry::in_memory());
+    let first = stale(&registry, "Daft Punk", "Emotion", "vid-a");
+    let second = stale(&registry, "Adele", "Hello", "vid-c");
+
+    let report = worker(&registry, &shim).pass(&CancellationToken::new()).await;
+
+    assert_eq!((report.checked, report.failed), (1, 1));
+    let requests = asked(&shim).await;
+    assert_eq!(
+        requests.iter().filter(|(p, _)| p == "/search").count(),
+        1,
+        "{requests:?}"
+    );
+    assert_eq!(requests.len(), 2, "the second pin was never looked at");
+    for id in [first, second] {
+        assert_eq!(registry.lookup(&id).expect("known").snapshot().video_pick, 0);
+    }
+}
+
+#[tokio::test]
+async fn an_unreachable_shim_ends_the_pass_after_the_first_pin() {
+    let gone = MockServer::start().await;
+    let uri = gone.uri();
+    drop(gone);
+    let registry = Arc::new(ExternalIdRegistry::in_memory());
+    let first = stale(&registry, "Daft Punk", "Emotion", "vid-a");
+    let second = stale(&registry, "Adele", "Hello", "vid-c");
+    let worker = PinRecheck::new(
+        registry.clone(),
+        Arc::new(YouTubeResolver::with_base_url(Some(&uri))),
+    )
+    .with_pause(Duration::ZERO);
+
+    let report = worker.pass(&CancellationToken::new()).await;
+
+    assert_eq!((report.checked, report.failed), (1, 1));
+    for id in [first, second] {
+        assert_eq!(registry.lookup(&id).expect("known").snapshot().video_pick, 0);
+    }
+}
+
+#[tokio::test]
+async fn a_non_json_answer_from_youtube_music_leaves_that_pin_and_the_pass_goes_on() {
+    let shim = MockServer::start().await;
+    music_answers(&shim, "<html>oops</html>").await;
+    search_answers(&shim, 200, &ranked("vid-a")).await;
+    let registry = Arc::new(ExternalIdRegistry::in_memory());
+    let first = stale(&registry, "Daft Punk", "Emotion", "vid-a");
+    let second = stale(&registry, "Adele", "Hello", "vid-c");
+
+    let report = worker(&registry, &shim).pass(&CancellationToken::new()).await;
+
+    assert_eq!((report.checked, report.failed), (2, 2));
+    let requests = asked(&shim).await;
+    assert_eq!(requests.len(), 2, "both pins were asked, neither fell back");
+    assert!(requests.iter().all(|(p, _)| p == "/ytm/search"));
+    for id in [first, second] {
+        assert_eq!(registry.lookup(&id).expect("known").snapshot().video_pick, 0);
+    }
+}
+
+#[tokio::test]
 async fn the_background_requests_say_so() {
     let shim = MockServer::start().await;
     music_answers(&shim, r#"{"tracks":[]}"#).await;

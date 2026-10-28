@@ -820,6 +820,19 @@ async fn build_full(
     verified: bool,
     answers: impl FnOnce(Vec<Song>) -> Answers,
 ) -> Walk {
+    build_full_copies(root, album_folders, source, soulseek_on, verified, None, answers).await
+}
+
+/// `build_full` with the service keeping `preview_copies`.
+async fn build_full_copies(
+    root: &Root,
+    album_folders: bool,
+    source: DownloadSource,
+    soulseek_on: bool,
+    verified: bool,
+    preview_copies: Option<Arc<PreviewCopies>>,
+    answers: impl FnOnce(Vec<Song>) -> Answers,
+) -> Walk {
     let registry = Arc::new(ExternalIdRegistry::in_memory());
     let songs: Vec<Song> = TITLES
         .iter()
@@ -961,7 +974,7 @@ async fn build_full(
         lidarr_imports: None,
         lidarr_fetcher: None,
         spotiflac: None,
-        preview_copies: None,
+        preview_copies,
     };
     let (service, _) = SoulseekDownloadService::build(core, services, parts);
     Walk {
@@ -1848,6 +1861,131 @@ async fn a_play_takes_youtube_musics_video_for_the_song_before_the_yt_dlp_search
             .iter()
             .any(|r| r.url.path() == "/stream" && r.url.query().unwrap_or("").contains("id=ytm-atv"))
     );
+}
+
+// ---- A video the current ranking prefers is taken only by a play from the first byte --------
+
+const OLD_VIDEO: &str = "oldvideo-01";
+const NEW_VIDEO: &str = "newvideo-02";
+
+/// A preview source that always has the same 1000 bytes.
+struct SteadyPreview;
+
+#[async_trait::async_trait]
+impl crate::services::prefetch::PreviewSource for SteadyPreview {
+    async fn open_whole(&self, _video_id: &str) -> Option<crate::services::prefetch::WholePreview> {
+        let body: Vec<std::io::Result<bytes::Bytes>> = vec![Ok(bytes::Bytes::from(vec![7u8; 1000]))];
+        Some(crate::services::prefetch::WholePreview {
+            content_type: "audio/mp4".to_string(),
+            total: 1000,
+            body: Box::pin(futures::stream::iter(body)),
+        })
+    }
+}
+
+/// A walk keeping preview copies, whose first song plays `OLD_VIDEO` while `NEW_VIDEO` waits,
+/// with a copy of the old video made.
+async fn waiting_walk(root: &Root) -> (Walk, String, Arc<PreviewCopies>) {
+    let copies = PreviewCopies::new(
+        root.0.path().join("previews"),
+        Arc::new(SteadyPreview),
+        octo_core::common::Clock::system(),
+        || 0,
+    );
+    let walk = build_full_copies(
+        root,
+        false,
+        DownloadSource::Soulseek,
+        true,
+        false,
+        Some(copies.clone()),
+        |_| Arc::new(|_: &str| Vec::new()),
+    )
+    .await;
+    let id = walk.songs[0].external_id.clone().expect("an id");
+    walk.registry.set_you_tube_id(&id, OLD_VIDEO);
+    assert!(walk.registry.set_pending_video(&id, OLD_VIDEO, NEW_VIDEO));
+    copies.start(OLD_VIDEO, None);
+    for _ in 0..500 {
+        if copies.is_ready(OLD_VIDEO) {
+            return (walk, id, copies);
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the copy of the old video was never made");
+}
+
+/// The videos the shim was asked to stream, in order.
+async fn streamed(walk: &Walk) -> Vec<String> {
+    walk._server
+        .received_requests()
+        .await
+        .expect("recording")
+        .iter()
+        .filter(|r| r.url.path() == "/stream")
+        .filter_map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(k, _)| k == "id")
+                .map(|(_, v)| v.into_owned())
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_play_picking_up_past_the_first_byte_streams_the_old_video_and_leaves_the_new_one_waiting() {
+    let root = Root::new("octo-stream-");
+    let (walk, id, copies) = waiting_walk(&root).await;
+    // Past the first byte the old copy answers on its own; take it away so the shim is asked.
+    copies.drop_copy(OLD_VIDEO);
+
+    walk.service
+        .get_direct_stream("soulseek", &id, Some("bytes=1000-"), &CancellationToken::new())
+        .await
+        .expect("no error")
+        .expect("a stream");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some(OLD_VIDEO));
+    assert_eq!(routing.pending_video.as_deref(), Some(NEW_VIDEO));
+    assert_eq!(streamed(&walk).await, [OLD_VIDEO]);
+}
+
+#[tokio::test]
+async fn a_play_from_the_first_byte_streams_the_new_video_and_drops_the_old_copy() {
+    let root = Root::new("octo-stream-");
+    let (walk, id, copies) = waiting_walk(&root).await;
+
+    walk.service
+        .get_direct_stream("soulseek", &id, None, &CancellationToken::new())
+        .await
+        .expect("no error")
+        .expect("a stream");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some(NEW_VIDEO));
+    assert_eq!(routing.video_pick, SoulseekRouting::VIDEO_PICK);
+    assert_eq!(routing.pending_video, None);
+    assert_eq!(streamed(&walk).await, [NEW_VIDEO]);
+    assert!(!copies.is_ready(OLD_VIDEO), "the old video's copy went");
+}
+
+#[tokio::test]
+async fn the_old_copy_stays_while_another_song_still_pins_the_old_video() {
+    let root = Root::new("octo-stream-");
+    let (walk, id, copies) = waiting_walk(&root).await;
+    let other = walk.songs[1].external_id.clone().expect("an id");
+    walk.registry.set_you_tube_id(&other, OLD_VIDEO);
+
+    walk.service
+        .get_direct_stream("soulseek", &id, Some("bytes=0-"), &CancellationToken::new())
+        .await
+        .expect("no error")
+        .expect("a stream");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some(NEW_VIDEO));
+    assert!(copies.is_ready(OLD_VIDEO), "another song still plays it");
 }
 
 #[tokio::test]

@@ -5,8 +5,8 @@
 //! player is ever given the bytes of two videos.
 //!
 //! A check the shim could not answer leaves the pin unmarked, so the next start looks at it
-//! again. YouTube Music being busy or unreachable ends the pass, since every later check would
-//! meet the same.
+//! again. The shim being busy or unreachable, from either call, ends the pass, since every later
+//! check would meet the same.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use octo_core::soulseek::SoulseekRouting;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use super::you_tube_resolver::{Checked, YouTubeHit, YouTubeResolver};
+use super::you_tube_resolver::{Checked, Failure, YouTubeHit, YouTubeResolver};
 use crate::services::soulseek::ExternalIdRegistry;
 
 /// Whether a request reads from the first byte on: no `Range`, or a single range `bytes=0-`
@@ -49,9 +49,10 @@ pub struct PassReport {
 enum Checks {
     Kept,
     Better,
-    /// The shim could not answer for this song; the next song may still be asked.
+    /// The shim answered this song oddly (a timeout, another status, not its JSON); the next
+    /// song may still be asked.
     Failed,
-    /// YouTube Music could not answer, so the pass ends.
+    /// The shim was busy or unreachable, so the pass ends.
     Stop,
     /// The song changed under the check; nothing to record.
     Moved,
@@ -83,6 +84,10 @@ impl PinRecheck {
     }
 
     /// One pass over the stale pins, as the worker; ends when the pass is done or `token` is.
+    /// A busy or unreachable shim from either call (YouTube Music or `/search`) leaves that pin
+    /// unstamped and ends the pass; it starts again at the next start. Any other failure (a
+    /// timeout, another status, a non-JSON answer) leaves that pin unstamped, counts it as failed
+    /// and goes on to the next pin. A failed YouTube Music check never falls back to `/search`.
     pub async fn run(self: Arc<Self>, token: CancellationToken) -> anyhow::Result<()> {
         let report = self.pass(&token).await;
         info!(
@@ -169,10 +174,12 @@ impl PinRecheck {
                 {
                     Checked::Hit(hit) if !r.refuses_video(&hit.video_id) => Some(hit),
                     Checked::Hit(_) | Checked::Nothing => None,
-                    Checked::Failed => return Checks::Failed,
+                    Checked::Failed(Failure::Other) => return Checks::Failed,
+                    Checked::Failed(Failure::Busy | Failure::Unreachable) => return Checks::Stop,
                 }
             }
-            Checked::Failed => return Checks::Stop,
+            Checked::Failed(Failure::Busy | Failure::Unreachable) => return Checks::Stop,
+            Checked::Failed(Failure::Other) => return Checks::Failed,
         };
 
         match hit {

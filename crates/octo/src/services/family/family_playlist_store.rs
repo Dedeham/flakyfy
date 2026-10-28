@@ -56,6 +56,14 @@ pub struct FamilyPlaylist {
     pub approve_additions: bool,
     #[serde(default)]
     pub entries: Vec<FamilyPlaylistEntry>,
+    /// When the playlist last changed: a rename, the approval switch, songs added, taken out,
+    /// approved or denied, or a library move.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "datetime::utc_option"
+    )]
+    pub changed: Option<DateTime<Utc>>,
 }
 
 const BASE62: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -116,6 +124,7 @@ impl FamilyPlaylistStore {
                 created_by: by.to_string(),
                 approve_additions: false,
                 entries: Vec::new(),
+                changed: None,
             };
             playlists.push(playlist.clone());
             playlist
@@ -157,6 +166,24 @@ impl FamilyPlaylistStore {
         })
     }
 
+    /// Removes the entries at these positions, but only while the playlist's entries are still
+    /// `expected`. False when the playlist changed or is gone; then nothing is removed.
+    pub fn remove_indexes_if(&self, id: &str, expected: &[FamilyPlaylistEntry], indexes: &[usize]) -> bool {
+        let mut removed = false;
+        self.change(id, |p| {
+            if p.entries == expected {
+                let mut at = 0usize;
+                p.entries.retain(|_| {
+                    let keep = !indexes.contains(&at);
+                    at += 1;
+                    keep
+                });
+                removed = true;
+            }
+        });
+        removed
+    }
+
     /// Lets a waiting entry in. False when there is no such playlist or entry.
     pub fn approve_entry(&self, id: &str, index: usize) -> bool {
         let mut found = false;
@@ -189,11 +216,18 @@ impl FamilyPlaylistStore {
         let changed = {
             let mut playlists = self.playlists.lock();
             let mut changed = 0;
-            for entry in playlists.iter_mut().flat_map(|p| p.entries.iter_mut()) {
-                if entry.library_id.as_deref() == Some(old) {
-                    entry.library_id = Some(new.to_string());
-                    entry.scope = scope.to_string();
-                    changed += 1;
+            for playlist in playlists.iter_mut() {
+                let mut moved = false;
+                for entry in playlist.entries.iter_mut() {
+                    if entry.library_id.as_deref() == Some(old) {
+                        entry.library_id = Some(new.to_string());
+                        entry.scope = scope.to_string();
+                        changed += 1;
+                        moved = true;
+                    }
+                }
+                if moved {
+                    playlist.changed = Some(Utc::now());
                 }
             }
             changed
@@ -209,7 +243,11 @@ impl FamilyPlaylistStore {
             let mut playlists = self.playlists.lock();
             match playlists.iter_mut().find(|p| p.id == id) {
                 Some(playlist) => {
+                    let before = playlist.clone();
                     change(playlist);
+                    if *playlist != before {
+                        playlist.changed = Some(Utc::now());
+                    }
                     true
                 }
                 None => false,
@@ -299,6 +337,49 @@ mod tests {
         let left = store.get(&made.id).expect("there").entries;
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].outside_id.as_deref(), Some("e2"));
+    }
+
+    #[test]
+    fn changes_move_the_change_time_and_refused_ones_do_not() {
+        let store = FamilyPlaylistStore::in_memory();
+        let made = store.create("Road trip", "winters", now());
+        assert_eq!(made.changed, None);
+        store.add_entries(&made.id, vec![entry("e1", "alex")]);
+        let added = store.get(&made.id).expect("there");
+        assert!(added.changed.is_some(), "an add moves it");
+        assert!(store.rename(&made.id, "Road trip"));
+        assert_eq!(
+            store.get(&made.id).expect("there").changed,
+            added.changed,
+            "a rename to the same name moves nothing"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(store.rename(&made.id, "Summer"));
+        let renamed = store.get(&made.id).expect("there");
+        assert!(renamed.changed > added.changed, "a rename moves it");
+        let stale = vec![entry("other", "alex")];
+        assert!(!store.remove_indexes_if(&made.id, &stale, &[0]));
+        assert_eq!(
+            store.get(&made.id).expect("there").changed,
+            renamed.changed,
+            "a refused removal moves nothing"
+        );
+    }
+
+    #[test]
+    fn a_file_written_before_the_change_time_loads() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-playlists.json");
+        std::fs::write(
+            &path,
+            r#"[{"Id":"of1","Name":"Old","Created":"2026-10-20T18:00:00Z","CreatedBy":"winters","ApproveAdditions":false,"Entries":[]}]"#,
+        )
+        .expect("written");
+        let store = FamilyPlaylistStore::new(Some(&path));
+        assert_eq!(store.load_warning(), None);
+        let got = store.get("of1").expect("loaded");
+        assert_eq!(got.name, "Old");
+        assert_eq!(got.changed, None);
     }
 
     #[test]

@@ -61,6 +61,15 @@ impl Lists {
     }
 
     async fn with(charts: &str, discovery: bool, filter: ExplicitFilter) -> Lists {
+        Self::build(charts, discovery, filter, false).await
+    }
+
+    /// Lists that remember what the library lacks between builds.
+    async fn remembering(charts: &str) -> Lists {
+        Self::build(charts, true, ExplicitFilter::All, true).await
+    }
+
+    async fn build(charts: &str, discovery: bool, filter: ExplicitFilter, remembers: bool) -> Lists {
         let navidrome = MockServer::builder().start().await;
         let apple = MockServer::start().await;
         for (at, genre, body) in [
@@ -118,6 +127,11 @@ impl Lists {
             Arc::clone(&settings),
             Clock::new(move || *clock_now.lock()),
         );
+        let service = if remembers {
+            service.with_library_matches(Arc::new(LibraryMatchCache::new()))
+        } else {
+            service
+        };
         Lists {
             service,
             top_songs,
@@ -315,6 +329,41 @@ async fn a_song_on_two_lists_is_searched_once() {
 
     // Solar Eclipse leads both Popular right now and Best New Songs.
     assert_eq!(lists.searches_for("Drake Solar Eclipse").await, 1);
+}
+
+#[tokio::test]
+async fn a_build_skips_a_song_the_library_lacked_until_the_library_changes() {
+    let lists = Lists::remembering("").await;
+    lists.library(Vec::new()).await;
+    let scan_status = std::sync::Arc::new(Mutex::new("2026-10-01T00:00:00Z".to_string()));
+    let answered = std::sync::Arc::clone(&scan_status);
+    Mock::given(method("GET"))
+        .and(path("/rest/getScanStatus"))
+        .respond_with(move |_: &Request| {
+            ResponseTemplate::new(200).set_body_json(json!({
+                "subsonic-response": {"status": "ok", "scanStatus": {"lastScan": *answered.lock()}}
+            }))
+        })
+        .mount(&lists.navidrome)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getMusicFolders"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "subsonic-response": {"status": "ok", "musicFolders": {"musicFolder": [{"id": 1, "name": "Music"}]}}
+        })))
+        .mount(&lists.navidrome)
+        .await;
+
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    let first = lists.searches().await;
+    lists.advance(7);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(lists.searches().await, first, "nothing in the library changed");
+
+    *scan_status.lock() = "2026-10-02T00:00:00Z".into();
+    lists.advance(7);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(lists.searches().await, first * 2, "a new scan asks again");
 }
 
 #[tokio::test]

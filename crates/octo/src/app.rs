@@ -84,7 +84,6 @@ use crate::services::last_fm::{
     LastFmService, RandomRadioTuneInSelector,
 };
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
-use crate::services::library::ChartPlaylistService;
 use crate::services::library::artist_country::{self, ArtistCountryLookup, CountryLibrary};
 use crate::services::library::explicit_backfill::{
     ExplicitBackfill, ExplicitBackfillServices, ExplicitBackfillStore,
@@ -101,6 +100,7 @@ use crate::services::library::navidrome_song_list;
 use crate::services::library::tidy::worker::ListSongs;
 use crate::services::library::tidy::{TidyJournal, TidyServices, TidyStore, TidyWorker};
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
+use crate::services::library::{ChartPlaylistService, LibraryMatchCache};
 use crate::services::library::{
     DuplicateScanWorker, EditServiceSweepEdits, ExecutorSweepReplacer, FingerprintSweepVerifier,
     IdentitySweepStore, LibraryIdentitySweep, LibraryIdentitySweepParts, LibraryReviewSweepParts,
@@ -456,6 +456,9 @@ pub struct AppInner {
     pub top_songs: TopSongsService,
     /// The chart lists as read-only playlists for every listener.
     pub chart_playlists: Arc<ChartPlaylistService>,
+    /// What each listener's library has already said it lacks, shared by the chart lists and the
+    /// top songs answers.
+    pub library_matches: Arc<LibraryMatchCache>,
     /// Apple Music's animated album art for the Octo apps, kept in `animated-art.json`.
     pub animated_art: Arc<AnimatedArt>,
     /// `SyncCatalogService`: the discovery catalog appended to a syncing client's library walk,
@@ -2305,6 +2308,7 @@ impl LibraryActions {
 struct Charts {
     top_songs: TopSongsService,
     playlists: Arc<ChartPlaylistService>,
+    library_matches: Arc<LibraryMatchCache>,
     warm: Arc<ChartsWarmWorker>,
     animated_art: Arc<AnimatedArt>,
 }
@@ -2348,6 +2352,7 @@ impl Charts {
         .with_genre_names(Arc::new(GenreNames::new(Some(
             config_dir.join("genre-names.json"),
         ))));
+        let library_matches = Arc::new(LibraryMatchCache::new());
         let playlists = ChartPlaylistService::new(
             top_songs.clone(),
             Arc::clone(&stores.subsonic_response_builder),
@@ -2356,7 +2361,8 @@ impl Charts {
             settings.clone(),
             Clock::system(),
         )
-        .with_family(stores.family_store.clone());
+        .with_family(stores.family_store.clone())
+        .with_library_matches(Arc::clone(&library_matches));
         let warm = Arc::new(ChartsWarmWorker::new(
             top_songs.clone(),
             playlists.clone(),
@@ -2365,6 +2371,7 @@ impl Charts {
         Charts {
             top_songs,
             playlists: Arc::new(playlists),
+            library_matches,
             warm,
             animated_art,
         }
@@ -3260,6 +3267,7 @@ impl AppState {
             generated_playlists: radio.generated_playlists,
             top_songs: charts.top_songs,
             chart_playlists: charts.playlists,
+            library_matches: charts.library_matches,
             animated_art: charts.animated_art,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
@@ -3696,6 +3704,7 @@ impl AppState {
             generated_playlists: radio.generated_playlists,
             top_songs: charts.top_songs,
             chart_playlists: charts.playlists,
+            library_matches: charts.library_matches,
             animated_art: charts.animated_art,
             sync_catalog,
             library_action_journal: stores.library_action_journal,

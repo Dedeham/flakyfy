@@ -46,6 +46,7 @@ use crate::services::cover_art::ArtworkHints;
 use crate::services::framework::{InFlight, MemoryCache};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::last_fm_service::LastFmService;
+use crate::services::library::MatchSession;
 use crate::services::library::for_you_lists;
 use crate::services::metadata::deezer_metadata_service::{CHART_LIMIT, DeezerMetadataService};
 use crate::services::soulseek::external_id_registry::ExternalIdRegistry;
@@ -1019,17 +1020,36 @@ impl TopSongsService {
         F: Fn(String) -> Fut,
         Fut: Future<Output = Option<Vec<Value>>>,
     {
+        Self::match_library_with(rows, search_songs, &MatchSession::none()).await
+    }
+
+    /// [`Self::match_library`] under a session: a row the library already answered it lacks is
+    /// not searched, and every answer is recorded. A row it matched is searched each time, so
+    /// the song comes back as the library has it now.
+    pub async fn match_library_with<F, Fut>(
+        rows: &[TopSong],
+        search_songs: F,
+        session: &MatchSession<'_>,
+    ) -> Vec<Option<Value>>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = Option<Vec<Value>>>,
+    {
         // Plain futures behind a semaphore, not a stream combinator: a combinator's closures
         // make a handler's future fail rustc's Send check ("not general enough").
         let gate = tokio::sync::Semaphore::new(LIBRARY_SEARCHES_AT_ONCE);
         let searches = rows.iter().map(|row| {
             let (artist, title) = (row.song.artist.clone(), row.song.title.clone());
-            let search = search_songs(library_query(&artist, &title));
+            let query = library_query(&artist, &title);
+            let search = (!session.skips(&query)).then(|| search_songs(query.clone()));
             let gate = &gate;
             async move {
+                let search = search?;
                 let _turn = gate.acquire().await.ok()?;
                 let hits = search.await?;
-                library_hit(&artist, &title, &hits).cloned()
+                let hit = library_hit(&artist, &title, &hits).cloned();
+                session.record(&query, hit.as_ref());
+                hit
             }
         });
         let mut found: Vec<Option<Value>> = futures::future::join_all(searches).await;

@@ -525,16 +525,22 @@ pub async fn get_top_songs(State(state): State<AppState>, req: Request) -> AppRe
     } else {
         list.songs.clone()
     };
+    let username = listener_name(&state, &call).await;
     let library = if candidates.is_empty() {
         Vec::new()
     } else {
-        TopSongsService::match_library(&candidates, |query| {
-            library_songs_matching(&call.proxy, &call.parameters, query)
-        })
+        let session = state
+            .library_matches
+            .session(&call.proxy, &call.parameters, &username)
+            .await;
+        TopSongsService::match_library_with(
+            &candidates,
+            |query| library_songs_matching(&call.proxy, &call.parameters, query),
+            &session,
+        )
         .await
     };
 
-    let username = listener_name(&state, &call).await;
     let mut rows: Vec<TopSongRow> = Vec::new();
     for (i, top) in candidates.iter().enumerate() {
         if rows.len() >= count {
@@ -633,9 +639,16 @@ fn synced_song(state: &AppState, username: &str, song: &Song) -> Song {
 async fn answer(state: &AppState, call: &SubsonicCall, list: &TopList, count: usize) -> Response {
     let skip_covers_and_instrumentals = state.settings.current().soulseek.skip_covers_and_instrumentals;
     let candidates = TopSongsService::rows_to_match(&list.songs, count, skip_covers_and_instrumentals);
-    let library = TopSongsService::match_library(&candidates, |query| {
-        library_songs_matching(&call.proxy, &call.parameters, query)
-    })
+    let username = listener_name(state, call).await;
+    let session = state
+        .library_matches
+        .session(&call.proxy, &call.parameters, &username)
+        .await;
+    let library = TopSongsService::match_library_with(
+        &candidates,
+        |query| library_songs_matching(&call.proxy, &call.parameters, query),
+        &session,
+    )
     .await;
     let (shown, library) =
         TopSongsService::shown_rows(candidates, library, count, skip_covers_and_instrumentals);

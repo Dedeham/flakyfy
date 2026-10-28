@@ -44,6 +44,7 @@ use crate::services::common::{TopSong, TopSongsService, top_songs_service::LIBRA
 use crate::services::family::{FamilyStore, kid_filter};
 use crate::services::framework::InFlight;
 use crate::services::library::GeneratedPlaylist;
+use crate::services::library::library_match_cache::{LibraryMatchCache, MatchSession};
 use crate::services::soulseek::external_id_registry::ExternalIdRegistry;
 use crate::services::subsonic::SubsonicProxyService;
 
@@ -112,6 +113,8 @@ struct Inner {
     builds: InFlight<bool>,
     /// The family, whose kid profiles get clean lists.
     family: Option<Arc<FamilyStore>>,
+    /// What each listener's library already said it lacks, so a build searches it once.
+    library_matches: Option<Arc<LibraryMatchCache>>,
 }
 
 impl ChartPlaylistService {
@@ -135,8 +138,18 @@ impl ChartPlaylistService {
                 failed_at: Mutex::new(HashMap::new()),
                 builds: InFlight::new(),
                 family: None,
+                library_matches: None,
             }),
         }
+    }
+
+    /// The service with a cache of library matches shared across builds. Call it before the
+    /// service is cloned.
+    pub fn with_library_matches(mut self, cache: Arc<LibraryMatchCache>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.library_matches = Some(cache);
+        }
+        self
     }
 
     /// The service with the family, so a kid profile's lists are clean. Call it before the
@@ -565,6 +578,10 @@ impl ChartPlaylistService {
         let skip_covers_and_instrumentals = settings.soulseek.skip_covers_and_instrumentals;
         let explicit_filter = self.explicit_filter_for(username);
         let mut searched: HashMap<String, Option<Vec<Value>>> = HashMap::new();
+        let session = match &self.inner.library_matches {
+            Some(cache) => cache.session(&self.inner.proxy, &auth, username).await,
+            None => MatchSession::none(),
+        };
         let mut any = false;
         let mut trouble_with: Vec<String> = Vec::new();
         let mut whole: Vec<String> = Vec::new();
@@ -591,7 +608,13 @@ impl ChartPlaylistService {
             let missing: Vec<String> = {
                 let mut seen = Vec::new();
                 for q in &queries {
-                    if !searched.contains_key(q) && !seen.contains(q) {
+                    if searched.contains_key(q) || seen.contains(q) {
+                        continue;
+                    }
+                    if session.skips(q) {
+                        // The library already said it lacks this song.
+                        searched.insert(q.clone(), Some(Vec::new()));
+                    } else {
                         seen.push(q.clone());
                     }
                 }
@@ -615,7 +638,11 @@ impl ChartPlaylistService {
                 .iter()
                 .zip(&queries)
                 .map(|(row, query)| match searched.get(query).cloned().flatten() {
-                    Some(hits) => library_hit(&row.song.artist, &row.song.title, &hits).cloned(),
+                    Some(hits) => {
+                        let hit = library_hit(&row.song.artist, &row.song.title, &hits).cloned();
+                        session.record(query, hit.as_ref());
+                        hit
+                    }
                     None => {
                         unanswered += 1;
                         None

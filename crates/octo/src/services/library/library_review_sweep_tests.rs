@@ -257,6 +257,8 @@ struct Options {
     clock: Option<Clock>,
     while_listing: Option<Box<dyn Fn(&LibraryReviewSweepWorker) + Send + Sync>>,
     replacer: Option<Arc<FakeReplacer>>,
+    /// The download source; Soulseek when none.
+    source: Option<DownloadSource>,
 }
 
 impl Sweep {
@@ -317,6 +319,12 @@ impl Sweep {
             library_actions: options.settings.unwrap_or_else(|| settings_of(60)),
             subsonic: SubsonicSettings {
                 admin_username: Some("bob".into()),
+                download_source: options.source.unwrap_or_default(),
+                ..Default::default()
+            },
+            soulseek: SoulseekSettings {
+                enabled: true,
+                base_url: Some("http://slskd.test".into()),
                 ..Default::default()
             },
             ..Default::default()
@@ -969,6 +977,10 @@ struct FakeReplacer {
     marked: Option<bool>,
     state: Mutex<LibraryActionState>,
     requests: Mutex<Vec<(LibraryAction, String, String)>>,
+    /// The `only_source` of each request.
+    sources: Mutex<Vec<Option<DownloadSource>>>,
+    /// The code every outcome carries.
+    code: Option<&'static str>,
 }
 
 impl FakeReplacer {
@@ -978,6 +990,20 @@ impl FakeReplacer {
             marked: Some(false),
             state: Mutex::new(state),
             requests: Mutex::new(Vec::new()),
+            sources: Mutex::new(Vec::new()),
+            code: None,
+        })
+    }
+
+    /// Wrong song that finds Soulseek out: it fails with the code that makes a sweep wait.
+    fn soulseek_out() -> Arc<Self> {
+        Arc::new(FakeReplacer {
+            shown: true,
+            marked: Some(false),
+            state: Mutex::new(LibraryActionState::Failed),
+            requests: Mutex::new(Vec::new()),
+            sources: Mutex::new(Vec::new()),
+            code: Some(LibraryActionCodes::SOULSEEK_OFFLINE),
         })
     }
 
@@ -988,11 +1014,17 @@ impl FakeReplacer {
             marked,
             state: Mutex::new(LibraryActionState::Applied),
             requests: Mutex::new(Vec::new()),
+            sources: Mutex::new(Vec::new()),
+            code: None,
         })
     }
 
     fn requests(&self) -> Vec<(LibraryAction, String, String)> {
         self.requests.lock().clone()
+    }
+
+    fn sources(&self) -> Vec<Option<DownloadSource>> {
+        self.sources.lock().clone()
     }
 }
 
@@ -1008,10 +1040,17 @@ impl SweepReplacer for FakeReplacer {
     }
 
     async fn replace(&self, request: LibraryActionRequest) -> anyhow::Result<LibraryActionOutcome> {
+        self.sources.lock().push(request.only_source);
         self.requests
             .lock()
             .push((request.action, request.navidrome_id, request.username));
-        Ok(LibraryActionOutcome::new(*self.state.lock(), Some("done".into())))
+        Ok(match self.code {
+            Some(code) => LibraryActionOutcome {
+                code: Some(code.to_string()),
+                ..LibraryActionOutcome::new(*self.state.lock(), Some("done".into()))
+            },
+            None => LibraryActionOutcome::new(*self.state.lock(), Some("done".into())),
+        })
     }
 }
 
@@ -1131,6 +1170,11 @@ fn classify_then_decide_replaces_only_a_confident_other_song() {
 /// other gate open, unless `change` closes one.
 fn decide_by_preview(change: impl FnOnce(&mut AppSettings)) -> AutoReplace {
     let mut settings = app_settings(replacing_by_preview(60));
+    settings.soulseek = SoulseekSettings {
+        enabled: true,
+        base_url: Some("http://slskd.test".into()),
+        ..Default::default()
+    };
     change(&mut settings);
     let question = VerificationResult {
         verdict: VerificationVerdict::Inconclusive,
@@ -1154,20 +1198,98 @@ fn decide_by_preview(change: impl FnOnce(&mut AppSettings)) -> AutoReplace {
 fn the_preview_replaces_only_with_a_source_it_checks_and_the_original_kept() {
     assert_eq!(decide_by_preview(|_| {}), AutoReplace::Replace);
     for source in [
-        DownloadSource::YouTube,
+        DownloadSource::Soulseek,
         DownloadSource::SoulseekThenYouTube,
         DownloadSource::Lidarr,
     ] {
         assert_eq!(
             decide_by_preview(|s| s.subsonic.download_source = source),
-            AutoReplace::Ask,
+            AutoReplace::Replace,
             "{source:?}"
         );
     }
+    // A YouTube download is the preview itself, so it vouches for nothing.
+    assert_eq!(
+        decide_by_preview(|s| s.subsonic.download_source = DownloadSource::YouTube),
+        AutoReplace::Ask
+    );
     assert_eq!(
         decide_by_preview(|s| s.library_actions.keep_replaced_originals = false),
         AutoReplace::Ask
     );
+}
+
+/// Neither Soulseek nor SpotiFLAC on leaves a replacement nothing to fetch from.
+#[test]
+fn the_preview_replaces_nothing_without_a_lossless_source_switched_on() {
+    let neither = |s: &mut AppSettings| s.soulseek.enabled = false;
+    assert_eq!(decide_by_preview(neither), AutoReplace::Ask);
+    let spotiflac = |s: &mut AppSettings| {
+        s.soulseek.enabled = false;
+        s.spotiflac.enabled = true;
+        s.spotiflac.url = "http://spotiflac:8000".into();
+    };
+    assert_eq!(decide_by_preview(spotiflac), AutoReplace::Replace);
+}
+
+/// The sweep builds the request for a replacement it holds to the preview: Soulseek alone under
+/// Soulseek then YouTube, no restriction under Soulseek or Lidarr.
+#[tokio::test]
+async fn the_preview_replacement_never_takes_the_youtube_fallback() {
+    for (source, expected) in [
+        (
+            DownloadSource::SoulseekThenYouTube,
+            Some(DownloadSource::Soulseek),
+        ),
+        (DownloadSource::Soulseek, None),
+        (DownloadSource::Lidarr, None),
+    ] {
+        let sweep = Sweep::new();
+        sweep.teardrop("a.flac");
+        let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+        let worker = sweep.worker(
+            FakeVerifier::never_heard(Some(compared(Heard::Mismatch, 0.5))),
+            Options {
+                settings: Some(replacing_by_preview(60)),
+                replacer: Some(replacer.clone()),
+                source: Some(source),
+                ..Default::default()
+            },
+        );
+        worker.tick().await;
+        worker.tick().await;
+
+        assert_eq!(replacer.sources(), [expected], "{source:?}");
+    }
+}
+
+/// Soulseek out with the replacement bound to it: no breaker count, no question, and the song is
+/// tried again once Soulseek is back.
+#[tokio::test]
+async fn a_replacement_that_finds_soulseek_out_waits_without_counting() {
+    let sweep = Sweep::new();
+    sweep.teardrop("a.flac");
+    let queue = Arc::new(NoticeQueue::new());
+    let replacer = FakeReplacer::soulseek_out();
+    let worker = sweep.worker(
+        FakeVerifier::never_heard(Some(compared(Heard::Mismatch, 0.5))),
+        Options {
+            queue: Some(queue.clone()),
+            settings: Some(replacing_by_preview(60)),
+            replacer: Some(replacer.clone()),
+            source: Some(DownloadSource::SoulseekThenYouTube),
+            ..Default::default()
+        },
+    );
+
+    worker.tick().await;
+    worker.tick().await;
+
+    assert_eq!(replacer.requests().len(), 2, "tried again, not given up on");
+    assert_eq!(worker.status().today.failed, 0);
+    assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
+    assert_eq!(worker.status().found, 0);
+    assert_eq!(worker.status().fine, 0);
 }
 
 /// Off, a dry run, a keeper off the allowlist, Wrong song off, the day's cap and the breaker each
@@ -1656,6 +1778,8 @@ async fn a_file_navidrome_does_not_show_is_asked_about() {
         marked: Some(false),
         state: Mutex::new(LibraryActionState::Applied),
         requests: Mutex::new(Vec::new()),
+        sources: Mutex::new(Vec::new()),
+        code: None,
     });
     sweep
         .worker(

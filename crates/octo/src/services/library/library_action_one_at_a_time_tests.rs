@@ -322,6 +322,45 @@ async fn better_quality_during_a_soulseek_outage_touches_nothing_and_stays_asked
 }
 
 #[tokio::test]
+async fn wrong_song_honors_a_picked_source() {
+    let f = Fixture::new().await;
+    let executor = f.executor(false, Some(Arc::new(OfflineLink)), None);
+
+    for action in [LibraryAction::WrongSong, LibraryAction::WrongVersion] {
+        // Soulseek picked and out: nothing to try. Any other pick is the only source tried.
+        assert!(
+            executor
+                .sources_for(action, Some(DownloadSource::Soulseek))
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            executor.sources_for(action, Some(DownloadSource::Lidarr)).await,
+            vec![Some(DownloadSource::Lidarr)]
+        );
+        assert_eq!(executor.sources_for(action, None).await, vec![None]);
+    }
+
+    // With nothing to try, the request waits as Better quality does: not consumed, nothing touched.
+    let outcome = executor
+        .apply(LibraryActionRequest {
+            only_source: Some(DownloadSource::Soulseek),
+            ..wrong_version()
+        })
+        .await
+        .expect("an outcome");
+    assert_eq!(outcome.state, LibraryActionState::Failed);
+    assert_eq!(
+        outcome.code.as_deref(),
+        Some(LibraryActionCodes::SOULSEEK_OFFLINE)
+    );
+    assert!(!outcome.consumed());
+    assert!(f.queue.is_idle());
+    assert!(Path::new(&f.original).exists());
+    assert!(f.journal.recent(10).is_empty());
+}
+
+#[tokio::test]
 async fn a_second_action_on_the_same_song_is_skipped_while_the_first_runs() {
     let f = Fixture::new().await;
     let executor = f.plain_executor();

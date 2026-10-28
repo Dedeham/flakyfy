@@ -847,6 +847,31 @@ async fn build_full_copies(
     preview_copies: Option<Arc<PreviewCopies>>,
     answers: impl FnOnce(Vec<Song>) -> Answers,
 ) -> Walk {
+    build_all(
+        root,
+        album_folders,
+        source,
+        soulseek_on,
+        verified,
+        preview_copies,
+        None,
+        answers,
+    )
+    .await
+}
+
+/// `build_full_copies` with the service fetching through `lidarr_fetcher`.
+#[allow(clippy::too_many_arguments)]
+async fn build_all(
+    root: &Root,
+    album_folders: bool,
+    source: DownloadSource,
+    soulseek_on: bool,
+    verified: bool,
+    preview_copies: Option<Arc<PreviewCopies>>,
+    lidarr_fetcher: Option<Arc<dyn ILidarrTrackFetcher>>,
+    answers: impl FnOnce(Vec<Song>) -> Answers,
+) -> Walk {
     let registry = Arc::new(ExternalIdRegistry::in_memory());
     let songs: Vec<Song> = TITLES
         .iter()
@@ -988,7 +1013,7 @@ async fn build_full_copies(
         id_registry: registry.clone(),
         soulseek_link: None,
         lidarr_imports: None,
-        lidarr_fetcher: None,
+        lidarr_fetcher,
         spotiflac: None,
         preview_copies,
     };
@@ -1824,6 +1849,119 @@ async fn a_lone_link_without_a_preview_is_kept_and_asked_about() {
     assert_eq!(asked.len(), 1, "{asked:?}");
     assert_eq!(asked[0].reason, InconclusiveReason::LoneLink);
     assert_eq!(asked[0].candidate_recording_id.as_deref(), Some("rec-started"));
+}
+
+/// A Lidarr fetcher that hands over whatever audio it was given.
+#[derive(Default)]
+struct FakeFetcher {
+    audio: Mutex<Vec<u8>>,
+    fetched: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl ILidarrTrackFetcher for FakeFetcher {
+    async fn fetch(
+        &self,
+        _request: &LidarrTrackRequest,
+        destination_directory: &str,
+        _ct: &CancellationToken,
+    ) -> Result<String, octo_core::lidarr::LidarrError> {
+        std::fs::create_dir_all(destination_directory).expect("made");
+        let path = combine(destination_directory, "04 - Started.flac");
+        std::fs::write(&path, self.audio.lock().clone()).expect("written");
+        self.fetched.lock().push(path.clone());
+        Ok(path)
+    }
+}
+
+/// A walk whose Lidarr fetcher hands over the sound `song_and_noise` made for the peer `wanted`
+/// ("A" the noise, "B" the song), with the song's preview playing; None where ffmpeg or fpcalc
+/// is missing.
+async fn lidarr_walk(root: &Root, wanted: &str) -> Option<(Walk, Arc<FakeFetcher>)> {
+    let fetcher = Arc::new(FakeFetcher::default());
+    let walk = build_all(
+        root,
+        false,
+        DownloadSource::Soulseek,
+        true,
+        true,
+        None,
+        Some(fetcher.clone()),
+        |_| Arc::new(|_: &str| Vec::new()),
+    )
+    .await;
+    let preview = song_and_noise(&walk)?;
+    let mut state = walk.slskd.state.lock();
+    *fetcher.audio.lock() = state.sound[&format!(r"{wanted}\Drake\04 - Started.flac")].clone();
+    state.preview = Some(preview);
+    drop(state);
+    Some((walk, fetcher))
+}
+
+/// Lidarr's fetched file gets the checks an imported one does: AcoustID hearing it as another
+/// song removes it and refuses the download.
+#[tokio::test]
+async fn a_lidarr_fetched_file_that_acoust_id_hears_as_another_song_is_removed_and_refused() {
+    let root = Root::new("octo-lidarr-");
+    let Some((walk, fetcher)) = lidarr_walk(&root, "B").await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    walk.slskd.state.lock().lookup_by_video.insert(
+        String::new(),
+        json!({"status": "ok", "results": [{
+            "id": "result", "score": 0.97,
+            "recordings": [{
+                "id": "rec-other", "title": "Another Song", "artists": [{"name": "Someone Else"}],
+                "duration": 180, "sources": 9,
+            }],
+        }]}),
+    );
+
+    let refused = acquire(
+        &walk,
+        walk.songs[3].external_id.as_deref().expect("an id"),
+        Some(DownloadSource::Lidarr),
+    )
+    .await
+    .expect_err("another song is refused");
+
+    assert!(refused.to_string().contains("AcoustID identified"), "{refused}");
+    let fetched = fetcher.fetched.lock().clone();
+    assert_eq!(fetched.len(), 1);
+    assert!(!std::path::Path::new(&fetched[0]).exists(), "{}", fetched[0]);
+    assert_eq!(placed_flacs(&root), 0);
+}
+
+/// A fetched file AcoustID has one person's word for, that sounds nothing like the song's
+/// YouTube preview, is removed and refused.
+#[tokio::test]
+async fn a_lidarr_fetched_file_the_preview_calls_another_song_is_removed_and_refused() {
+    let root = Root::new("octo-lidarr-");
+    let Some((walk, fetcher)) = lidarr_walk(&root, "A").await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    walk.slskd
+        .state
+        .lock()
+        .lookup_by_video
+        .insert(String::new(), lone_lookup());
+    review_on(&walk);
+
+    let refused = acquire(
+        &walk,
+        walk.songs[3].external_id.as_deref().expect("an id"),
+        Some(DownloadSource::Lidarr),
+    )
+    .await
+    .expect_err("the noise is refused");
+
+    assert!(refused.to_string().contains("Lidarr's file for"), "{refused}");
+    let fetched = fetcher.fetched.lock().clone();
+    assert_eq!(fetched.len(), 1);
+    assert!(!std::path::Path::new(&fetched[0]).exists(), "{}", fetched[0]);
+    assert_eq!(placed_flacs(&root), 0);
 }
 
 #[tokio::test]

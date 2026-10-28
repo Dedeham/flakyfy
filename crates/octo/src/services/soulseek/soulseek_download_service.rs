@@ -318,6 +318,26 @@ impl SoulseekDownloadService {
         );
 
         let song = &mut download.song;
+        let verdict = self.check_lidarr_file(base, routing, song, &local).await?;
+        verdict.apply_tags_to(song);
+        song.verification = Some(Box::new(verdict));
+        info!("Took Lidarr's import of '{artist} - {title}' into the pipeline: {local}");
+        Ok(local)
+    }
+
+    /// The checks every file Lidarr hands over meets, whether it was imported ahead of time or
+    /// fetched for this download: AcoustID, then the song's YouTube preview, then the lossless
+    /// spectrum check, which marks a transcode on the song. A file either check refuses is removed
+    /// and an `Err` returned; otherwise the verdict to keep comes back, for the caller to tag the
+    /// song with and record.
+    async fn check_lidarr_file(
+        &self,
+        base: &BaseDownloadService,
+        routing: &SoulseekRouting,
+        song: &mut Song,
+        local: &str,
+    ) -> anyhow::Result<VerificationResult> {
+        let (artist, title) = names(routing);
         if let (Some(provider), Some(id)) = (
             song.external_provider.clone().filter(|p| !p.is_empty()),
             song.external_id.clone().filter(|i| !i.is_empty()),
@@ -327,7 +347,7 @@ impl SoulseekDownloadService {
         let verdict = self
             .verification
             .verify(
-                &local,
+                local,
                 routing.artist.as_deref(),
                 routing.title.as_deref(),
                 song.isrc.as_deref().or(routing.isrc.as_deref()),
@@ -348,23 +368,23 @@ impl SoulseekDownloadService {
                 verdict.heard(),
             );
             // Swept with the job folders when it cannot be removed now.
-            let _ = std::fs::remove_file(&local);
+            let _ = std::fs::remove_file(local);
             return Err(file_not_found(format!(
                 "AcoustID identified Lidarr's file as {}",
                 verdict.describe()
             )));
         }
         let length_known = routing.duration.is_some_and(|s| s > 0)
-            && TagFile::open(&local).is_ok_and(|file| file.duration_seconds() > 0);
+            && TagFile::open(local).is_ok_and(|file| file.duration_seconds() > 0);
         let track_key = song.external_id.clone().unwrap_or_default();
         let verdict = match self
-            .refused_by_preview(base, routing, &track_key, &local, verdict, length_known)
+            .refused_by_preview(base, routing, &track_key, local, verdict, length_known)
             .await
         {
             PreviewSays::Keep(kept) => kept,
             PreviewSays::Refuse(reason) => {
                 // Swept with the job folders when it cannot be removed now.
-                let _ = std::fs::remove_file(&local);
+                let _ = std::fs::remove_file(local);
                 return Err(file_not_found(format!(
                     "Lidarr's file for '{artist} - {title}' {reason}"
                 )));
@@ -381,7 +401,7 @@ impl SoulseekDownloadService {
         }
         let spectrum = self
             .verification
-            .check_lossless(&local, routing.artist.as_deref(), routing.title.as_deref())
+            .check_lossless(local, routing.artist.as_deref(), routing.title.as_deref())
             .await;
         if spectrum.is_likely_lossy() {
             warn!(
@@ -390,10 +410,7 @@ impl SoulseekDownloadService {
             );
             song.transcoded_from = spectrum.estimate.clone();
         }
-        verdict.apply_tags_to(song);
-        song.verification = Some(Box::new(verdict));
-        info!("Took Lidarr's import of '{artist} - {title}' into the pipeline: {local}");
-        Ok(local)
+        Ok(verdict)
     }
 
     /// One song through Lidarr, copied into a job folder under the incoming dot folder, which no
@@ -468,6 +485,10 @@ impl SoulseekDownloadService {
             "Lidarr brought a copy",
             quality.as_deref(),
         );
+        let song = &mut download.song;
+        let verdict = self.check_lidarr_file(base, routing, song, &path).await?;
+        verdict.apply_tags_to(song);
+        song.verification = Some(Box::new(verdict));
         Ok(path)
     }
 

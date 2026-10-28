@@ -32,7 +32,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::NavidromeSongPathResolver;
-use super::library_action_executor::{LibraryActionExecutor, LibraryActionOutcome, LibraryActionRequest};
+use super::library_action_executor::{
+    LibraryActionCodes, LibraryActionExecutor, LibraryActionOutcome, LibraryActionRequest,
+};
 use super::library_action_journal::LibraryActionState;
 use super::navidrome_playlist_api::{NavidromePlaylistApi, SongMarks};
 use super::navidrome_song_path_resolver::get_full_path;
@@ -712,6 +714,17 @@ pub enum Outcome {
     LookupFailed,
 }
 
+/// What came of replacing a file through Wrong song.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Replacing {
+    /// The replacement went in.
+    Done,
+    /// It did not, so the file stays a question.
+    Declined,
+    /// Soulseek is out and the replacement may come from nowhere else: the song stays unchecked.
+    Waits,
+}
+
 /// The audio files the sweep walks: the same extensions the cover upgrade walks.
 const AUDIO_EXTENSIONS: [&str; 14] = crate::services::cover_art::CoverUpgradeWorker::AUDIO_EXTENSIONS;
 
@@ -1337,7 +1350,7 @@ impl LibraryReviewSweepWorker {
 
         self.lookup_failures.store(0, Ordering::SeqCst);
         self.unfingerprinted.store(0, Ordering::SeqCst);
-        let replaced = outcome == Outcome::Ask
+        let replaced = if outcome == Outcome::Ask
             // A file someone was asked about while this check looked at it stays theirs to answer.
             && !self.notices.reviewed_paths().contains(&path)
             && Self::decide(
@@ -1348,7 +1361,26 @@ impl LibraryReviewSweepWorker {
                 self.store.read(|s| s.today(self.clock.now())),
                 witness,
             ) == AutoReplace::Replace
-            && self.replace(step.keeper, &path, &file, &question).await;
+        {
+            match self.replace(step.keeper, &path, &file, &question).await {
+                Replacing::Done => true,
+                Replacing::Declined => false,
+                // Soulseek is out: the song stays unchecked, no try or breaker count is spent, and
+                // the sweep comes back to it.
+                Replacing::Waits => {
+                    if pick.passed != pick.cursor {
+                        self.record(generation, |s| set_cursor(s, lane, &pick.passed));
+                    }
+                    return self.hold(
+                        "Waiting",
+                        Some("Soulseek is out; trying that song again."),
+                        interval,
+                    );
+                }
+            }
+        } else {
+            false
+        };
         let asked = !replaced
             && outcome == Outcome::Ask
             && self
@@ -1396,16 +1428,17 @@ impl LibraryReviewSweepWorker {
     /// leaves the keeper a note in Review; false leaves the file a question. A file whose ISRC
     /// tag the heard recording also carries, or one that cannot be checked, is asked about, and
     /// so is a song anyone starred or rated, or one whose marks cannot be read. A replacement
-    /// that failed counts toward the day's breaker.
+    /// that failed counts toward the day's breaker, except one that found Soulseek out, which
+    /// waits instead.
     async fn replace(
         &self,
         keeper: &str,
         path: &str,
         file: &SweptFile,
         question: &VerificationResult,
-    ) -> bool {
+    ) -> Replacing {
         let Some(replacer) = self.replacer.clone() else {
-            return false;
+            return Replacing::Declined;
         };
         let song = &file.song;
         if let Some(isrc) = file.isrc.as_deref() {
@@ -1419,7 +1452,7 @@ impl LibraryReviewSweepWorker {
                     "Library review sweep: '{} - {}' is tagged {isrc} and {why}, so it is asked about instead of replaced",
                     song.artist, song.title
                 );
-                return false;
+                return Replacing::Declined;
             }
         }
         let Some(id) = replacer.song_id(&song.artist, &song.title, path).await else {
@@ -1427,7 +1460,7 @@ impl LibraryReviewSweepWorker {
                 "Library review sweep: Navidrome does not show '{} - {}' yet, so it is asked about instead of replaced",
                 song.artist, song.title
             );
-            return false;
+            return Replacing::Declined;
         };
         match replacer.marked(&id).await {
             Some(false) => {}
@@ -1436,14 +1469,14 @@ impl LibraryReviewSweepWorker {
                     "Library review sweep: '{} - {}' is starred or rated, so it is asked about instead of replaced",
                     song.artist, song.title
                 );
-                return false;
+                return Replacing::Declined;
             }
             None => {
                 info!(
                     "Library review sweep: the stars and ratings on '{} - {}' could not be read, so it is asked about instead of replaced",
                     song.artist, song.title
                 );
-                return false;
+                return Replacing::Declined;
             }
         }
         let by_preview = question.reason == InconclusiveReason::DiffersFromYouTube;
@@ -1462,12 +1495,16 @@ impl LibraryReviewSweepWorker {
             )
         };
         self.hold("Running", Some(&replacing), Duration::ZERO);
+        // A replacement by the preview comes only from a source the preview checks, never the
+        // YouTube fallback.
+        let only_source = (by_preview
+            && self.settings.current().subsonic.download_source == DownloadSource::SoulseekThenYouTube)
+            .then_some(DownloadSource::Soulseek);
         let outcome = replacer
-            .replace(LibraryActionRequest::new(
-                LibraryAction::WrongSong,
-                id.clone(),
-                keeper,
-            ))
+            .replace(LibraryActionRequest {
+                only_source,
+                ..LibraryActionRequest::new(LibraryAction::WrongSong, id.clone(), keeper)
+            })
             .await;
         let now = self.clock.now();
         match outcome {
@@ -1493,7 +1530,14 @@ impl LibraryReviewSweepWorker {
                     "Library review sweep replaced '{} - {}' through Wrong song as {keeper}: {note}",
                     song.artist, song.title
                 );
-                true
+                Replacing::Done
+            }
+            Ok(outcome) if outcome.code.as_deref() == Some(LibraryActionCodes::SOULSEEK_OFFLINE) => {
+                info!(
+                    "Library review sweep: '{} - {}' waits, because Soulseek is out and the replacement may come from nowhere else",
+                    song.artist, song.title
+                );
+                Replacing::Waits
             }
             Ok(outcome) => {
                 if outcome.state == LibraryActionState::Failed {
@@ -1505,7 +1549,7 @@ impl LibraryReviewSweepWorker {
                     song.title,
                     outcome.detail.as_deref().unwrap_or("no reason given")
                 );
-                false
+                Replacing::Declined
             }
             Err(e) => {
                 self.count_today(now, false);
@@ -1513,7 +1557,7 @@ impl LibraryReviewSweepWorker {
                     "Library review sweep could not replace '{} - {}' ({e}), so it is asked about",
                     song.artist, song.title
                 );
-                false
+                Replacing::Declined
             }
         }
     }
@@ -1529,8 +1573,9 @@ impl LibraryReviewSweepWorker {
     /// run, the keeper on the allowlist, Wrong song on, the day's cap and breaker not reached,
     /// and either `ReviewSweepAutoReplace` on with AcoustID clearly hearing another song, or
     /// `ReviewSweepAutoReplacePreview` on with the song's YouTube preview clearly not matching (at least [`Self::PREVIEW_REPLACE_FROM`] of its bits differ).
-    /// Either needs `KeepReplacedOriginals` on. The preview's replacing also needs Soulseek as the download
-    /// source. It also needs the preview to be a YouTube Music row from the file's own album.
+    /// Either needs `KeepReplacedOriginals` on. The preview's replacing also needs a download
+    /// source other than YouTube alone, and Soulseek or SpotiFLAC switched on to fetch from. It
+    /// also needs the preview to be a YouTube Music row from the file's own album.
     pub fn decide(
         question: &VerificationResult,
         file: &SweptFile,
@@ -1553,8 +1598,9 @@ impl LibraryReviewSweepWorker {
         let by_acoustid = actions.review_sweep_auto_replace
             && actions.keep_replaced_originals
             && Self::clearly_another_song(question, file, &settings.soulseek);
-        // Only a Soulseek replacement is held to the preview (YouTube's and Lidarr's are not), and
-        // one whose original is not kept could not be put back.
+        // A YouTube download is the preview itself, so it cannot vouch for a replacement; every
+        // other source is held to the preview. A replacement with no lossless source to fetch
+        // from could only wait, and one whose original is not kept could not be put back.
         let by_preview = actions.review_sweep_auto_replace_preview
             && file.tagged
             && question.reason == InconclusiveReason::DiffersFromYouTube
@@ -1562,7 +1608,8 @@ impl LibraryReviewSweepWorker {
                 witness.bit_error >= Self::PREVIEW_REPLACE_FROM && witness.album_agrees
             })
             && actions.keep_replaced_originals
-            && settings.subsonic.download_source == DownloadSource::Soulseek;
+            && settings.subsonic.download_source != DownloadSource::YouTube
+            && (settings.soulseek.is_on() || settings.spotiflac.is_on());
         if may && (by_acoustid || by_preview) {
             AutoReplace::Replace
         } else {

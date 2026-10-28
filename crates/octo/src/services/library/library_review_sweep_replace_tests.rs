@@ -252,11 +252,19 @@ async fn the_sweep_replaces_a_song_its_preview_says_is_another_and_put_back_rest
     );
 
     let ticking = worker.clone();
-    let tick = tokio::spawn(async move { ticking.tick().await });
-    let download = tokio::time::timeout(Duration::from_secs(10), queue.dequeue(&CancellationToken::new()))
-        .await
-        .expect("a download in time")
-        .expect("a download");
+    let mut tick = tokio::spawn(async move { ticking.tick().await });
+    let download = tokio::select! {
+        download = tokio::time::timeout(Duration::from_secs(10), queue.dequeue(&CancellationToken::new())) => {
+            download.expect("a download in time").expect("a download")
+        }
+        _ = &mut tick => panic!(
+            "the tick ended without a download: {:?}; asked {}; notes {:?}; journal {:?}",
+            worker.status(),
+            verifier.verified.load(Ordering::SeqCst),
+            notices.for_user("admin", NoticeKind::Review),
+            journal.recent(10),
+        ),
+    };
     // Replaced by its preview: only from a source the preview checks, never the YouTube fallback.
     assert_eq!(download.source_override, Some(DownloadSource::Soulseek));
 

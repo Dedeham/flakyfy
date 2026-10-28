@@ -7982,10 +7982,10 @@ function renderTrickle() {
   if (t.state === 'waitingForSoulseek') parts.push('slskd is not logged in to Soulseek; it goes on once it is back.');
   if (t.state === 'waitingForMusicDatabase') parts.push('MusicBrainz is not answering; songs it has to check go on once it is back.');
   if (t.state === 'off') parts.push('Songs an hour is 0, so nothing starts. Change it above.');
-  else parts.push(`Up to ${t.perHour} ${t.perHour === 1 ? 'song' : 'songs'} an hour.`);
+  else parts.push(`Up to ${t.perHour}\u00a0${t.perHour === 1 ? 'song' : 'songs'} an hour.`);
   if (t.state === 'running' && t.nextUtc && !t.downloading) parts.push(`Next song at ${impWhen(t.nextUtc)}.`);
   const tally = [[t.queued, 'waiting'], [t.downloading, 'fetching'], [t.done, 'fetched'], [t.notFound, 'not found'], [t.skipped, 'skipped']]
-    .filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`);
+    .filter(([count]) => count > 0).map(([count, label]) => `${count}\u00a0${label}`);
   if (tally.length) parts.push(`${tally.join(', ')}.`);
   impEl('imp-trickle-line').textContent = parts.join(' ');
 

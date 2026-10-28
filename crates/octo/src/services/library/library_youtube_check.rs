@@ -114,14 +114,12 @@ impl YoutubeChecker for AppYoutubeChecker {
             seconds,
             video_id: None,
         };
-        let Some(preview) = self.youtube.find(&request).await else {
-            // No video, or no shim to ask: only a shim that answers its health check has said
-            // there is none.
-            return if self.youtube.busy().await.is_some() {
-                Compared::NoCopy
-            } else {
-                Compared::Unavailable
-            };
+        let preview = match self.youtube.find(&request).await {
+            Ok(Some(preview)) => preview,
+            // Both lookups answered and neither had the song.
+            Ok(None) => return Compared::NoCopy,
+            // A lookup could not answer: not an answer, so the song is tried again.
+            Err(_) => return Compared::Unavailable,
         };
         let timeout = self
             .settings

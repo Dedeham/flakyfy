@@ -10,6 +10,7 @@ use octo_core::fingerprint::{InconclusiveReason, VerificationResult, Verificatio
 use octo_core::settings::{AppSettings, LibraryActionSettings, NoticeKind, SubsonicSettings};
 
 use super::*;
+use crate::services::fingerprint::preview_check::LookupFailed;
 use crate::services::library::library_identity_sweep::CheckedSong;
 use crate::services::library::notice_queue::NoticeState;
 
@@ -1010,8 +1011,8 @@ struct OneVideo {
 
 #[async_trait]
 impl PreviewSource for OneVideo {
-    async fn find(&self, _request: &PreviewRequest<'_>) -> Option<PreviewFacts> {
-        Some(Self::default_facts())
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
+        Ok(Some(Self::default_facts()))
     }
 
     async fn fetch(&self, _video_id: &str, dest: &Path) -> bool {

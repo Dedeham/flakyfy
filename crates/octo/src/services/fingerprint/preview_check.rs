@@ -18,7 +18,9 @@ use octo_media::audio::{AudioFingerprinter, RawFingerprint};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
-use crate::services::you_tube::you_tube_resolver::{ShimRefused, ShimStream, YouTubeHit, YouTubeResolver};
+use crate::services::you_tube::you_tube_resolver::{
+    Lookup, ShimRefused, ShimStream, YouTubeHit, YouTubeResolver,
+};
 
 /// Seconds one chromaprint item covers: a frame every 1365 samples at 11025 Hz.
 pub const ITEM_SECONDS: f64 = 4096.0 / 3.0 / 11025.0;
@@ -147,6 +149,13 @@ pub enum PreviewOutcome {
     },
 }
 
+/// A lookup for the song's video that could not be answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LookupFailed {
+    /// The shim said so itself (HTTP 503 busy).
+    pub busy: bool,
+}
+
 /// Why a preview's fingerprint could not be had.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewFailure {
@@ -162,8 +171,10 @@ pub enum PreviewFailure {
 #[async_trait]
 pub trait PreviewSource: Send + Sync {
     /// The preview to compare with: the pinned video, with what a lookup says it is when one
-    /// names it, or else the video a play would pick. None when there is none.
-    async fn find(&self, request: &PreviewRequest<'_>) -> Option<PreviewFacts>;
+    /// names it, or else the video a play would pick. `Ok(None)` only when YouTube Music and
+    /// yt-dlp both answered and neither had the song; `Err` when either could not answer and the
+    /// other did not find it.
+    async fn find(&self, request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed>;
 
     /// Saves the video's audio at `dest`. False when the shim could not send it.
     async fn fetch(&self, video_id: &str, dest: &Path) -> bool;
@@ -197,29 +208,43 @@ pub trait PreviewSource: Send + Sync {
 
 #[async_trait]
 impl PreviewSource for YouTubeResolver {
-    async fn find(&self, request: &PreviewRequest<'_>) -> Option<PreviewFacts> {
+    async fn find(&self, request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
         let pinned = request.video_id.filter(|id| !id.trim().is_empty());
         let is_pinned = |hit: &YouTubeHit| pinned.is_none_or(|id| id == hit.video_id);
         // The order a play picks in: YouTube Music's row for the song, then yt-dlp's search.
         // A row is the song by its title and artists, so it credits the artist asked for.
-        if let Some(row) = self
-            .music_song(request.artist, request.title, request.seconds)
-            .await
-            .filter(is_pinned)
-        {
-            return Some(PreviewFacts::from_hit(row, Some(request.artist.to_string())));
+        let music = self
+            .music_song_lookup(request.artist, request.title, request.seconds)
+            .await;
+        let mut failure: Option<LookupFailed> = None;
+        match music {
+            Lookup::Found(row) if is_pinned(&row) => {
+                return Ok(Some(PreviewFacts::from_hit(
+                    row,
+                    Some(request.artist.to_string()),
+                )));
+            }
+            Lookup::Failed { busy } => failure = Some(LookupFailed { busy }),
+            _ => {}
         }
         let query = format!("{} {}", request.artist, request.title);
-        if let Some(hit) = self
-            .search(&query, request.seconds, true)
-            .await
-            .filter(|hit| !hit.video_id.is_empty())
-            .filter(is_pinned)
-        {
-            let channel = hit.channel.clone();
-            return Some(PreviewFacts::from_hit(hit, channel));
+        match self.search_lookup(&query, request.seconds, true).await {
+            Lookup::Found(hit) if !hit.video_id.is_empty() && is_pinned(&hit) => {
+                let channel = hit.channel.clone();
+                return Ok(Some(PreviewFacts::from_hit(hit, channel)));
+            }
+            Lookup::Failed { busy } => {
+                failure = Some(LookupFailed {
+                    busy: busy || failure.is_some_and(|f| f.busy),
+                });
+            }
+            _ => {}
         }
-        pinned.map(PreviewFacts::bare)
+        // A pinned video is the preview, known by its id alone, whatever the lookups said.
+        if let Some(id) = pinned {
+            return Ok(Some(PreviewFacts::bare(id)));
+        }
+        failure.map_or(Ok(None), Err)
     }
 
     async fn fetch(&self, video_id: &str, dest: &Path) -> bool {
@@ -450,8 +475,13 @@ pub async fn check(
     timeout_seconds: i32,
     background: bool,
 ) -> PreviewOutcome {
-    let Some(mut preview) = source.find(request).await else {
-        return PreviewOutcome::Unavailable("no YouTube video for the song".into());
+    let mut preview = match source.find(request).await {
+        Ok(Some(preview)) => preview,
+        Ok(None) => return PreviewOutcome::Unavailable("no YouTube video for the song".into()),
+        Err(LookupFailed { busy: true }) => return PreviewOutcome::Busy,
+        Err(LookupFailed { busy: false }) => {
+            return PreviewOutcome::NotSent("the YouTube shim could not be asked".into());
+        }
     };
     let Some(file) = fingerprinter
         .raw_fingerprint(path, FILE_SECONDS, timeout_seconds)

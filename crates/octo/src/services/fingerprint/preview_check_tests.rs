@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use async_trait::async_trait;
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_media::audio::AudioFingerprinter;
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
 
@@ -395,8 +397,8 @@ struct DownShim {
 
 #[async_trait]
 impl PreviewSource for DownShim {
-    async fn find(&self, _request: &PreviewRequest<'_>) -> Option<PreviewFacts> {
-        Some(facts("One Dance", Some("Drake"), Some(174)))
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
+        Ok(Some(facts("One Dance", Some("Drake"), Some(174))))
     }
 
     async fn fetch(&self, _video_id: &str, _dest: &Path) -> bool {
@@ -438,8 +440,8 @@ struct CountingShim {
 
 #[async_trait]
 impl PreviewSource for CountingShim {
-    async fn find(&self, _request: &PreviewRequest<'_>) -> Option<PreviewFacts> {
-        Some(facts("One Dance", Some("Drake"), Some(174)))
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
+        Ok(Some(facts("One Dance", Some("Drake"), Some(174))))
     }
 
     async fn fetch(&self, _video_id: &str, _dest: &Path) -> bool {
@@ -479,8 +481,8 @@ struct JunkShim;
 
 #[async_trait]
 impl PreviewSource for JunkShim {
-    async fn find(&self, _request: &PreviewRequest<'_>) -> Option<PreviewFacts> {
-        Some(facts("One Dance", Some("Drake"), Some(174)))
+    async fn find(&self, _request: &PreviewRequest<'_>) -> Result<Option<PreviewFacts>, LookupFailed> {
+        Ok(Some(facts("One Dance", Some("Drake"), Some(174))))
     }
 
     async fn fetch(&self, _video_id: &str, dest: &Path) -> bool {
@@ -512,9 +514,6 @@ async fn a_preview_that_arrives_but_cannot_be_read_is_unavailable_not_retried() 
 /// a preview that was not sent. Neither needs fpcalc.
 #[tokio::test]
 async fn a_full_background_lane_is_busy_and_any_other_refusal_is_not_sent() {
-    use wiremock::matchers::{method, path, query_param};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
     let shim = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/stream"))
@@ -574,12 +573,16 @@ fn noise_flac(dir: &Path) -> Option<std::path::PathBuf> {
     made.then_some(path)
 }
 
-/// The real shim client against an address nothing answers on finds no preview at all.
+/// The real shim client against an address nothing answers on could not be asked, which is not
+/// "no video".
 #[tokio::test]
 async fn an_unreachable_shim_finds_no_preview() {
     let closed = format!("http://{}", crate::services::test_support::refused_address());
     let resolver = YouTubeResolver::with_base_url(Some(&closed));
-    assert_eq!(resolver.find(&request(Some(174))).await, None);
+    assert_eq!(
+        resolver.find(&request(Some(174))).await,
+        Err(LookupFailed { busy: false })
+    );
     assert!(
         !resolver
             .fetch("ki0Ocze98U8", Path::new("/nonexistent/preview"))
@@ -593,6 +596,100 @@ async fn an_unreachable_shim_finds_no_preview() {
     };
     assert_eq!(
         resolver.find(&pinned).await,
-        Some(PreviewFacts::bare("ki0Ocze98U8"))
+        Ok(Some(PreviewFacts::bare("ki0Ocze98U8")))
+    );
+}
+
+/// A shim with `/ytm/search` and `/search` answering as given.
+async fn lookup_shim(ytm: ResponseTemplate, search: ResponseTemplate) -> MockServer {
+    let shim = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/ytm/search"))
+        .respond_with(ytm)
+        .mount(&shim)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(search)
+        .mount(&shim)
+        .await;
+    shim
+}
+
+/// YouTube Music busy and yt-dlp failing: the shim could not be asked, which is never "no video".
+#[tokio::test]
+async fn a_shim_that_cannot_answer_is_an_error_not_no_video() {
+    let shim = lookup_shim(
+        ResponseTemplate::new(503).set_body_string(r#"{"error":"busy"}"#),
+        ResponseTemplate::new(502).set_body_string(r#"{"error":"search_failed"}"#),
+    )
+    .await;
+    let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+    assert_eq!(
+        resolver.find(&request(Some(174))).await,
+        Err(LookupFailed { busy: true })
+    );
+    let outcome = check(
+        &resolver,
+        &AudioFingerprinter::new(),
+        Path::new("/nonexistent/song.flac"),
+        &request(Some(174)),
+        30,
+        false,
+    )
+    .await;
+    assert_eq!(outcome, PreviewOutcome::Busy);
+}
+
+/// Neither answering failure is busy: the check says the shim could not be asked.
+#[tokio::test]
+async fn a_shim_that_fails_without_saying_busy_is_not_sent() {
+    let shim = lookup_shim(
+        ResponseTemplate::new(502).set_body_string(r#"{"error":"ytm_failed"}"#),
+        ResponseTemplate::new(502).set_body_string(r#"{"error":"search_failed"}"#),
+    )
+    .await;
+    let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+    assert_eq!(
+        resolver.find(&request(Some(174))).await,
+        Err(LookupFailed { busy: false })
+    );
+    let outcome = check(
+        &resolver,
+        &AudioFingerprinter::new(),
+        Path::new("/nonexistent/song.flac"),
+        &request(Some(174)),
+        30,
+        false,
+    )
+    .await;
+    assert_eq!(
+        outcome,
+        PreviewOutcome::NotSent("the YouTube shim could not be asked".into())
+    );
+}
+
+/// Both lookups answering with nothing is the one case that is "no video".
+#[tokio::test]
+async fn two_lookups_that_answer_with_nothing_are_no_video() {
+    let shim = lookup_shim(
+        ResponseTemplate::new(200).set_body_string(r#"{"tracks":[]}"#),
+        ResponseTemplate::new(404).set_body_string(r#"{"error":"no_hit"}"#),
+    )
+    .await;
+    let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+    assert_eq!(resolver.find(&request(Some(174))).await, Ok(None));
+    let outcome = check(
+        &resolver,
+        &AudioFingerprinter::new(),
+        Path::new("/nonexistent/song.flac"),
+        &request(Some(174)),
+        30,
+        false,
+    )
+    .await;
+    assert_eq!(
+        outcome,
+        PreviewOutcome::Unavailable("no YouTube video for the song".into())
     );
 }

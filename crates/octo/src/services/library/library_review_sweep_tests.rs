@@ -16,6 +16,7 @@ use super::*;
 use crate::services::fingerprint::preview_check::{Comparison, PreviewFacts};
 use crate::services::library::library_action_executor::{LibraryActionOutcome, LibraryActionRequest};
 use crate::services::library::library_action_journal::LibraryActionState;
+use crate::services::library::library_action_test_support::slash_root;
 use crate::services::library::notice_playlist_worker::NoticePlaylistWorker;
 use crate::services::library::notice_queue::{NoticeEntry, NoticeState};
 use crate::services::local::{LocalSongMapping, ParsedExternalId, ParsedSongId};
@@ -251,7 +252,7 @@ impl Sweep {
     }
 
     fn root(&self) -> String {
-        self.root.path().to_string_lossy().into_owned()
+        slash_root(self.root.path())
     }
 
     fn state_path(&self) -> PathBuf {
@@ -261,7 +262,7 @@ impl Sweep {
     fn song(&self, name: &str) -> String {
         let path = self.root.path().join(name);
         std::fs::write(&path, "x").expect("written");
-        path.to_string_lossy().into_owned()
+        slash_root(&path)
     }
 
     /// A FLAC tagged with `artist` and `title`, and `isrc` when given.
@@ -276,7 +277,7 @@ impl Sweep {
             tag_writer_extras::set_text(&mut file, TagFields::ISRC, Some(isrc));
         }
         file.save().expect("saved");
-        path.to_string_lossy().into_owned()
+        slash_root(&path)
     }
 
     /// Massive Attack's Teardrop, tagged, which the tests hear as Portishead.

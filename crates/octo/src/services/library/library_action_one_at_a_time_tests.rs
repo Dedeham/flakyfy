@@ -17,7 +17,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use super::*;
 use crate::services::common::test_fakes::{OfflineLink, until};
 use crate::services::common::track_acquisition_queue::AcquisitionRequest;
-use crate::services::library::library_action_test_support::{Extras, RecordingLibrary, executor, store};
+use crate::services::library::library_action_test_support::{
+    Extras, RecordingLibrary, executor, slash_root, store,
+};
 use crate::services::library::replacement_handoff::ArrivedTags;
 
 const FILE_NAME: &str = "Massive Attack - Teardrop";
@@ -97,7 +99,7 @@ impl Fixture {
             .await;
 
         Fixture {
-            original: original.to_string_lossy().into_owned(),
+            original: slash_root(&original),
             root,
             _dir: dir,
             original_size,
@@ -110,10 +112,7 @@ impl Fixture {
     }
 
     fn revealed(&self) -> String {
-        self.root
-            .join(format!("{FILE_NAME}.flac"))
-            .to_string_lossy()
-            .into_owned()
+        slash_root(&self.root.join(format!("{FILE_NAME}.flac")))
     }
 
     fn executor(
@@ -151,7 +150,7 @@ impl Fixture {
             },
             ..Default::default()
         });
-        settings.set_raw("Library:DownloadPath", Some(&self.root.to_string_lossy()));
+        settings.set_raw("Library:DownloadPath", Some(&slash_root(&self.root)));
         let executor = executor(
             &settings,
             Extras {
@@ -195,7 +194,7 @@ impl Fixture {
             uuid::Uuid::new_v4().simple()
         ));
         std::fs::write(&staged, bytes).expect("written");
-        staged.to_string_lossy().into_owned()
+        slash_root(&staged)
     }
 
     /// A lossless file larger than the original, as Better quality demands.
@@ -227,7 +226,7 @@ impl Fixture {
                 if path.is_dir() {
                     walk(&path, found);
                 } else if path.extension().is_some_and(|e| e == "mp3") {
-                    found.push(path.to_string_lossy().into_owned());
+                    found.push(slash_root(&path));
                 }
             }
         }

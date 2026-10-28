@@ -13,6 +13,7 @@ use crate::app::{AppState, TestServices};
 use crate::controllers::admin::test_app::{Reply, app, send};
 use crate::http::pipeline::App;
 use crate::services::library::library_action_quarantine::QuarantinedSidecar;
+use crate::services::library::library_action_test_support::slash_root;
 use crate::services::library::{
     LibraryActionEntry, LibraryActionJournal, LibraryActionState, PathSource, QuarantineManifest,
 };
@@ -45,7 +46,7 @@ impl Dashboard {
             settings,
             TestServices {
                 config_dir: Some(dir.path().join("config")),
-                raw_settings: vec![("Library:DownloadPath".into(), root.to_string_lossy().into_owned())],
+                raw_settings: vec![("Library:DownloadPath".into(), slash_root(&root))],
                 ..Default::default()
             },
         );
@@ -86,12 +87,12 @@ fn trashed(root: &Path, id: &str, with_lyrics: bool) -> (LibraryActionEntry, Pat
         let lrc = trash_dir.join(format!("{id}.lrc"));
         std::fs::write(&lrc, "[00:01.00]words").expect("written");
         sidecars.push(QuarantinedSidecar {
-            original_path: original.with_extension("lrc").to_string_lossy().into_owned(),
-            quarantine_path: lrc.to_string_lossy().into_owned(),
+            original_path: slash_root(&original.with_extension("lrc")),
+            quarantine_path: slash_root(&lrc),
         });
     }
     let manifest = QuarantineManifest {
-        original_path: original.to_string_lossy().into_owned(),
+        original_path: slash_root(&original),
         navidrome_id: id.to_string(),
         action: "Delete".to_string(),
         username: "alice".to_string(),
@@ -110,8 +111,8 @@ fn trashed(root: &Path, id: &str, with_lyrics: bool) -> (LibraryActionEntry, Pat
         title: "Digital Love".to_string(),
         artist: "Daft Punk".to_string(),
         album: "Discovery".to_string(),
-        source_path: Some(original.to_string_lossy().into_owned()),
-        quarantine_path: Some(trashed.to_string_lossy().into_owned()),
+        source_path: Some(slash_root(&original)),
+        quarantine_path: Some(slash_root(&trashed)),
         resolution: Some(PathSource::NativeApi),
         state: LibraryActionState::Applied,
         detail: Some("Removed.".to_string()),
@@ -238,7 +239,7 @@ fn replaced(
     mp3_titled(&old, old_title, "Mezzanine");
     mp3_titled(&song, new_title, "Mezzanine");
     let manifest = QuarantineManifest {
-        original_path: song.to_string_lossy().into_owned(),
+        original_path: slash_root(&song),
         navidrome_id: id.to_string(),
         action: "BetterQuality".to_string(),
         username: "alice".to_string(),
@@ -257,15 +258,15 @@ fn replaced(
         title: "Teardrop".to_string(),
         artist: "Massive Attack".to_string(),
         album: "Mezzanine".to_string(),
-        source_path: Some(song.to_string_lossy().into_owned()),
-        quarantine_path: Some(old.to_string_lossy().into_owned()),
+        source_path: Some(slash_root(&song)),
+        quarantine_path: Some(slash_root(&old)),
         resolution: Some(PathSource::NativeApi),
         state: LibraryActionState::Applied,
         detail: Some("Replaced with nd.mp3.".to_string()),
         dry_run: false,
         at_utc: Utc::now() - TimeDelta::hours(1),
         history_kept: Some(true),
-        revealed_path: Some(song.to_string_lossy().into_owned()),
+        revealed_path: Some(slash_root(&song)),
         copy: false,
         download_allowed: false,
     };
@@ -338,10 +339,7 @@ async fn putting_back_after_a_forced_replace_brings_back_the_old_names_at_the_sa
         .iter()
         .find(|e| e.key.contains("putback"))
         .expect("the put back's own entry");
-    assert_eq!(
-        swap.revealed_path.as_deref(),
-        Some(song.to_string_lossy().as_ref())
-    );
+    assert_eq!(swap.revealed_path.as_deref(), Some(slash_root(&song).as_str()));
     let newer = swap.quarantine_path.clone().expect("the newer file's place");
     assert_eq!(title_of(Path::new(&newer)).as_deref(), Some("Teardrop"));
 }

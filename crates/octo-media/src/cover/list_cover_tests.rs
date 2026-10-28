@@ -1009,7 +1009,23 @@ fn words_fit_inside_the_margins() {
                 side,
             );
             let margin = (side as f32 * book().layout.margin).round();
-            assert_eq!(3, art.words.len(), "{name} at {side}");
+            // A name too long to fit whole beside the light line, and then the foot line, gives
+            // them up: it is set smaller, never cut.
+            let alone = art.words.len() < 3;
+            if alone {
+                assert_eq!(
+                    "The Most Unreasonably Long Playlist Name Anyone Ever Typed Into A Music Server", *name,
+                    "{name} at {side}"
+                );
+                let title = art.words.iter().find(|w| w.role == WordsRole::Title);
+                assert!(title.is_some_and(|t| !t.measured.cut), "{name} at {side}");
+                assert!(
+                    art.words.iter().all(|w| w.role != WordsRole::Line),
+                    "{name} at {side}"
+                );
+            } else {
+                assert_eq!(3, art.words.len(), "{name} at {side}");
+            }
             for words in &art.words {
                 let b = words.inked();
                 assert!(
@@ -1034,8 +1050,9 @@ fn words_fit_inside_the_margins() {
             // The foot line comes first in the list; the name, then the line under it, then the
             // foot line, top to bottom.
             assert!(
-                art.words[2].top >= art.words[1].inked()[3] - 0.5
-                    && art.words[0].top >= art.words[2].inked()[3],
+                alone
+                    || (art.words[2].top >= art.words[1].inked()[3] - 0.5
+                        && art.words[0].top >= art.words[2].inked()[3]),
                 "{name} at {side}: order"
             );
         }

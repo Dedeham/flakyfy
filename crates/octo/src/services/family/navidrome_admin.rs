@@ -419,7 +419,8 @@ pub(crate) mod tests {
 
     /// A Navidrome that signs `admin` in with `jwt-1`, then `jwt-2`, and so on.
     pub(crate) async fn navidrome() -> MockServer {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
+        crate::services::library::library_action_playlist_provisioner::forget_claims(&server.uri());
         Mock::given(method("POST"))
             .and(path("/auth/login"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({

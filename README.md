@@ -617,13 +617,15 @@ tags were never confirmed. Octo's own downloads are skipped, since each was chec
 arrived if verification was on at the time; `LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS` checks
 them too.
 
-A song AcoustID has never heard is not left to you while its song's YouTube preview can say, the
-same question a new download is asked. If the file sounds like a preview with the song's title,
-artist and length, it is counted as fine and nothing is asked. If it sounds nothing like such a
+A sound AcoustID has never heard, or one only one person ever linked to the song in AcoustID, is
+not left to you while its song's YouTube preview can say, the same question a new download is
+asked. If the file sounds like a YouTube Music row with the song's title, artist and length from
+the file's own album, it is counted as fine and nothing is asked. If it sounds nothing like such a
 preview, Review gets a question that says so ("it sounds nothing like its YouTube preview, 47% of
 its bits differ"). Anything the preview cannot settle (another version, a preview that may not be
 the song, no preview) stays the question it was, so Review still decides those. When the YouTube
-shim finds the video but does not send it, the song is tried three times in all, then it becomes
+shim does not answer, or is busy with plays, the song waits instead of becoming a question. When
+it finds the video but does not send it, the song is tried three times in all, then it becomes
 the question it was. By default nothing is replaced because of the preview, not even with the
 sweep's replacing on.
 
@@ -634,9 +636,10 @@ artist and length, from the same album as the file's album tag and not a live al
 42% of the file's bits differ from it (from 38% to 42% it is still asked about). It never acts on a
 song with no tags, an ISRC tag, a star or a rating, on anything the preview cannot settle, or on the
 re-check of Octo's own downloads; those stay questions. It needs what the replacing below needs
-(Wrong song on, dry run off, the keeper on the allowlist), Soulseek as the download source
-(`DOWNLOAD_SOURCE=Soulseek`, the one source whose replacement is held to the song's YouTube preview
-like any download), and `LIBRARY_ACTIONS_KEEP_REPLACED` on, so the old file can be put back from
+(Wrong song on, dry run off, the keeper on the allowlist), a download source other than YouTube
+alone (`DOWNLOAD_SOURCE` Soulseek, Lidarr, or SoulseekThenYouTube, whose replacement then comes
+from Soulseek only, never the YouTube fallback), so the replacement is held to the song's YouTube
+preview like any download, and `LIBRARY_ACTIONS_KEEP_REPLACED` on, so the old file can be put back from
 Recently removed for `LIBRARY_ACTIONS_TRASH_DAYS` days. It counts toward the same
 `LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY` and the same stop after three failures as the
 replacing below. Review keeps a note of each replacement ("Octo replaced this: it
@@ -713,7 +716,10 @@ accepts everything. A song asked for with an ISRC (an album track Deezer listed)
 to that code: a file whose own tags carry it is confirmed even with no AcoustID key or entry,
 and a fingerprint that names a recording spelled differently (a title in its own script, or
 translated) is confirmed when MusicBrainz lists the ISRC on it. A different ISRC never rejects
-a file, since re-releases are often given new codes.
+a file, since re-releases are often given new codes. A recording only one person ever linked to
+the sound is not proof on its own: it is confirmed when the song's YouTube preview sounds like
+the file, refused when a preview that can be believed sounds nothing like it, and asked about
+otherwise.
 
 "Catch fake lossless files" on the Soulseek admin page (on by default) checks every download
 that claims to be lossless for a lossy file converted to it. Octo decodes a few seconds from

@@ -268,8 +268,9 @@ pub struct LibraryActionSettings {
     /// YouTube Music row with the song's title, artist and length from the file's own album, clearly
     /// sounds nothing like the file, through Wrong song, instead of asking. Off by default. Counts
     /// toward the same daily limit and breaker as the replacing above, and needs the same (DryRun
-    /// off, Wrong song on, the keeper on the allowlist), plus KeepReplacedOriginals on and Soulseek as
-    /// the download source. A song with an ISRC tag, or that anyone starred or rated, is still asked
+    /// off, Wrong song on, the keeper on the allowlist), plus KeepReplacedOriginals on and a download
+    /// source other than YouTube alone (with Soulseek then YouTube, the replacement comes from
+    /// Soulseek only). A song with an ISRC tag, or that anyone starred or rated, is still asked
     /// about.
     /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PREVIEW
     pub review_sweep_auto_replace_preview: bool,

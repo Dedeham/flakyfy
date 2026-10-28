@@ -570,3 +570,54 @@ async fn the_sweep_s_note_reads_as_put_back_and_still_keeps_the_sweep_away() {
     assert_eq!(note.state, NoticeState::Acted);
     assert!(notices.reviewed_paths().contains(&path));
 }
+
+/// The note says what happened last: put back, then replaced again when the replacement comes in
+/// again, then put back once more. It stays answered the whole time.
+#[tokio::test]
+async fn the_sweep_s_note_reads_as_replaced_again_after_a_second_swap() {
+    let dash = Dashboard::new(true, false);
+    let (entry, song, _old) = replaced_by(
+        &dash.root,
+        "nd-17",
+        LibraryAction::WrongSong,
+        "Teardrop",
+        "Teardrop",
+    );
+    dash.state.library_action_journal.record(entry);
+    let notices = &dash.state.notice_queue;
+    let path = slash_root(&song);
+    let first = "Octo replaced this: it sounded nothing like its YouTube preview (50% of its bits differ)";
+    assert!(notices.add_replaced_because(
+        "admin",
+        &path,
+        &octo_core::models::domain::Song {
+            artist: "Massive Attack".into(),
+            title: "Teardrop".into(),
+            album: "Mezzanine".into(),
+            ..Default::default()
+        },
+        &octo_core::fingerprint::verification::VerificationResult::default(),
+        "nd-17",
+        first.into(),
+        None,
+    ));
+    let note = || {
+        notices
+            .for_user("admin", octo_core::settings::NoticeKind::Review)
+            .into_iter()
+            .find(|n| n.local_path == path)
+            .expect("the note")
+    };
+
+    for (swap, expected) in [
+        (1, NoticeQueue::PUT_BACK_REASON),
+        (2, first),
+        (3, NoticeQueue::PUT_BACK_REASON),
+    ] {
+        let answer = put_back(&dash, "nd-17").await;
+        assert_eq!(answer["state"], "applied", "swap {swap}: {answer}");
+        assert_eq!(note().reason, expected, "swap {swap}");
+        assert_eq!(note().state, NoticeState::Acted, "swap {swap}");
+        assert!(notices.reviewed_paths().contains(&path), "swap {swap}");
+    }
+}

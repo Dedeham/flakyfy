@@ -692,22 +692,30 @@ impl LibraryEditService {
     /// What a Wrong song or Wrong version left besides the swap, taken back once its original is
     /// in place again: the Soulseek file it denied as the wrong song (that one denial and no
     /// other), and the library sweep's note, which then says the original was put back. A swap
-    /// back of a put back is not the replacement, so it changes neither.
+    /// back of a put back lifts no denial; it brings the replacement in again, so the note reads
+    /// as replaced again, and whichever way the files last went, the note says so.
     fn undo_replacement_marks(&self, entry: &LibraryActionEntry) {
         if !matches!(
             entry.action,
             LibraryAction::WrongSong | LibraryAction::WrongVersion
-        ) || entry.key.contains(PUT_BACK_KEY)
-        {
+        ) {
             return;
         }
-        if let (Some(denied), Some(rejected)) = (&entry.denied_source, &self.services.rejected_peers) {
+        let swapped_back = entry.key.contains(PUT_BACK_KEY);
+        if !swapped_back
+            && let (Some(denied), Some(rejected)) = (&entry.denied_source, &self.services.rejected_peers)
+        {
             rejected.allow(&denied.username, &denied.filename);
         }
-        if let Some(notices) = &self.services.notices
-            && notices.mark_put_back(&entry.navidrome_id)
-        {
-            notices.flush();
+        if let Some(notices) = &self.services.notices {
+            let reworded = if swapped_back {
+                notices.mark_replaced_again(&entry.navidrome_id) || notices.mark_put_back(&entry.navidrome_id)
+            } else {
+                notices.mark_put_back(&entry.navidrome_id)
+            };
+            if reworded {
+                notices.flush();
+            }
         }
     }
 

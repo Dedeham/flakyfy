@@ -220,6 +220,10 @@ pub struct NoticeEntry {
     /// closest without counting as a match.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closest: Option<String>,
+    /// The words a replacement's note carried before Put back reworded it, kept so the note can
+    /// read as replaced again when the replacement is brought back. Left out of the file when None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced_reason: Option<String>,
 }
 
 impl Default for NoticeEntry {
@@ -253,6 +257,7 @@ impl Default for NoticeEntry {
             threshold: None,
             matched: None,
             closest: None,
+            replaced_reason: None,
         }
     }
 }
@@ -871,7 +876,36 @@ impl NoticeQueue {
                     && entry.navidrome_id.as_deref() == Some(navidrome_id)
                     && entry.reason.starts_with(Self::REPLACED_PREFIX)
                 {
-                    entry.reason = Self::PUT_BACK_REASON.to_string();
+                    entry.replaced_reason = Some(std::mem::replace(
+                        &mut entry.reason,
+                        Self::PUT_BACK_REASON.to_string(),
+                    ));
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
+    /// The replacement the library sweep made of song `navidrome_id` was brought back after a
+    /// Put back: its note reads as replaced again, in the words the sweep first gave it, and
+    /// stays answered. True when a note took the words.
+    pub fn mark_replaced_again(&self, navidrome_id: &str) -> bool {
+        let mut changed = false;
+        {
+            let mut entries = self.entries.lock();
+            for entry in entries.values_mut() {
+                if entry.kind == NoticeKind::Review
+                    && entry.origin == NoticeOrigin::LibrarySweep
+                    && entry.state == NoticeState::Acted
+                    && entry.navidrome_id.as_deref() == Some(navidrome_id)
+                    && entry.reason == Self::PUT_BACK_REASON
+                    && let Some(replaced) = entry.replaced_reason.clone()
+                {
+                    entry.reason = replaced;
                     changed = true;
                 }
             }

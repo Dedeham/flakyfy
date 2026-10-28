@@ -803,6 +803,9 @@ pub struct LibraryReviewSweepWorker {
     recheck_files: Mutex<Option<Arc<Vec<String>>>>,
     generation: AtomicI32,
     lookup_failures: AtomicI32,
+    /// The AcoustID verdict of the song whose preview the shim did not send, kept for its retries:
+    /// library-relative path, stamp, verdict.
+    retry_verdict: Mutex<Option<(String, String, VerificationResult)>>,
     unfingerprinted: AtomicI32,
     hold: Mutex<(String, Option<String>)>,
     /// With Family on, the sweep keeps to the shared library: a member's own songs are never
@@ -850,6 +853,7 @@ impl LibraryReviewSweepWorker {
             recheck_files: Mutex::new(None),
             generation: AtomicI32::new(0),
             lookup_failures: AtomicI32::new(0),
+            retry_verdict: Mutex::new(None),
             unfingerprinted: AtomicI32::new(0),
             hold: Mutex::new(("Off".to_string(), None)),
             scope: None,
@@ -1167,19 +1171,39 @@ impl LibraryReviewSweepWorker {
             Lane::Recheck => Some(Self::RECHECKING),
         };
         let path = full_path(step.root, target);
-        let file = Self::read_tags(&path);
+        let read = path.clone();
+        let Ok(file) = tokio::task::spawn_blocking(move || Self::read_tags(&read)).await else {
+            return interval;
+        };
         let song = &file.song;
-        let verdict = self
-            .verifier
-            .verify(&path, Some(&song.artist), Some(&song.title))
-            .await;
+        let stamp_text = pick.stamp.clone().unwrap_or_default();
+        // The verdict kept for a song whose preview the shim did not send is its own, not asked
+        // for again.
+        let kept = {
+            let mut slot = self.retry_verdict.lock();
+            match slot.take() {
+                Some((kept_path, kept_stamp, kept)) if kept_path == target && kept_stamp == stamp_text => {
+                    Some(kept)
+                }
+                _ => None,
+            }
+        };
+        let verdict = match kept {
+            Some(kept) => kept,
+            None => {
+                self.verifier
+                    .verify(&path, Some(&song.artist), Some(&song.title))
+                    .await
+            }
+        };
         if generation != self.generation.load(Ordering::SeqCst) {
             return interval;
         }
 
+        let acoustid_verdict = verdict.clone();
         let (outcome, question) = Self::classify(verdict);
         // A sound AcoustID has never heard is not left to a person while its song's YouTube
-        // preview can say: a preview with the song's title, artist and length that sounds alike
+        // preview can say: a YouTube Music row from the file's own album that sounds alike
         // settles it, one that sounds nothing like it is a better question, and anything else
         // stays the question it was. A link only one person's submissions make is put to the
         // preview the same way, but one that sounds nothing like it is only ever asked about.
@@ -1192,14 +1216,10 @@ impl LibraryReviewSweepWorker {
             )
             && file.tagged
         {
-            let seconds = TagFile::open(&path)
-                .ok()
-                .map(|tags| tags.duration_seconds())
-                .filter(|seconds| *seconds > 0);
             let request = PreviewRequest {
                 artist: &song.artist,
                 title: &song.title,
-                seconds,
+                seconds: song.duration,
                 video_id: None,
                 background: true,
             };
@@ -1211,8 +1231,9 @@ impl LibraryReviewSweepWorker {
                 PreviewOutcome::Compared {
                     heard: Heard::Match,
                     trusted: true,
+                    preview: facts,
                     ..
-                } => {
+                } if Self::preview_album_agrees(facts.album.as_deref(), &song.album) => {
                     info!(
                         "Library review sweep: '{} - {}' is {}, and it sounds like its YouTube preview",
                         song.artist,
@@ -1277,6 +1298,8 @@ impl LibraryReviewSweepWorker {
                     if pick.passed != pick.cursor {
                         self.record(generation, |s| set_cursor(s, lane, &pick.passed));
                     }
+                    *self.retry_verdict.lock() =
+                        Some((target.to_string(), stamp_text.clone(), acoustid_verdict));
                     let reason = if waited == PreviewOutcome::Busy {
                         "YouTube is busy with plays; trying that song again."
                     } else {
@@ -1293,6 +1316,8 @@ impl LibraryReviewSweepWorker {
                     );
                     if self.lookup_failures.load(Ordering::SeqCst) + 1 < Self::MAX_LOOKUP_FAILURES_PER_FILE {
                         waiting_for = "The YouTube shim";
+                        *self.retry_verdict.lock() =
+                            Some((target.to_string(), stamp_text.clone(), acoustid_verdict));
                         (Outcome::LookupFailed, question)
                     } else {
                         (outcome, question)
@@ -1805,6 +1830,7 @@ impl LibraryReviewSweepWorker {
         let now = self.clock.now();
         let total = i32::try_from(files.len()).unwrap_or(i32::MAX);
         self.generation.fetch_add(1, Ordering::SeqCst);
+        *self.retry_verdict.lock() = None;
         self.lookup_failures.store(0, Ordering::SeqCst);
         self.unfingerprinted.store(0, Ordering::SeqCst);
         self.store.update(|s| {
@@ -1913,6 +1939,7 @@ impl LibraryReviewSweepWorker {
                         artist: performers.join("; "),
                         title: title.map_or(fallback, |title| title.trim().to_string()),
                         album: file.album().unwrap_or_default(),
+                        duration: Some(file.duration_seconds()).filter(|seconds| *seconds > 0),
                         ..Default::default()
                     },
                     tagged,
@@ -2012,6 +2039,7 @@ impl LibraryReviewSweepWorker {
 
     pub fn reset(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
+        *self.retry_verdict.lock() = None;
         *self.files.lock() = None;
         *self.recheck_files.lock() = None;
         self.store.update(|s| {

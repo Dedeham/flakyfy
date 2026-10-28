@@ -2580,6 +2580,71 @@ async fn a_match_with_a_preview_that_may_not_be_the_song_settles_nothing() {
     assert_eq!(worker.status().fine, 0);
 }
 
+/// A believed match from a row of `album`, against a file tagged "Mezzanine": whether it was
+/// counted fine, and the questions it left.
+async fn believed_match_from(album: Option<&str>) -> (i32, Vec<InconclusiveReason>) {
+    let verifier = FakeVerifier::never_heard(Some(compared_from(Heard::Match, 0.04, album)));
+    let (_sweep, worker, queue) = never_heard_song(verifier, settings_of(60)).await;
+    let asked = queue
+        .for_user("bob", NoticeKind::Review)
+        .iter()
+        .map(|entry| entry.cause)
+        .collect();
+    (worker.status().fine, asked)
+}
+
+#[tokio::test]
+async fn a_believed_match_from_another_album_is_asked_about() {
+    assert_eq!(
+        believed_match_from(Some("Collected")).await,
+        (0, vec![InconclusiveReason::NoEntry])
+    );
+}
+
+#[tokio::test]
+async fn a_believed_match_from_a_row_with_no_album_or_a_live_one_is_asked_about() {
+    for album in [None, Some("Mezzanine (Live at the Roundhouse)")] {
+        assert_eq!(
+            believed_match_from(album).await,
+            (0, vec![InconclusiveReason::NoEntry]),
+            "{album:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_believed_match_from_the_file_s_own_album_settles_it() {
+    assert_eq!(believed_match_from(Some("Mezzanine")).await, (1, Vec::new()));
+}
+
+/// The shim not sending the preview twice, then sending it: AcoustID is asked about the file
+/// once, and the preview three times.
+#[tokio::test]
+async fn a_preview_retry_does_not_ask_acoust_id_again() {
+    let verifier = FakeVerifier::never_heard(Some(compared(Heard::Match, 0.04)));
+    *verifier.preview_script.lock() =
+        std::iter::repeat_n(PreviewOutcome::NotSent("shim".into()), 2).collect();
+    let sweep = Sweep::new();
+    sweep.teardrop("a.flac");
+    let queue = Arc::new(NoticeQueue::new());
+    let worker = sweep.worker(
+        verifier.clone(),
+        Options {
+            queue: Some(queue.clone()),
+            ..Default::default()
+        },
+    );
+
+    for _ in 0..3 {
+        worker.tick().await;
+    }
+
+    assert_eq!(verifier.asked().len(), 1, "{:?}", verifier.asked());
+    assert_eq!(verifier.previews_asked(), 3);
+    assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
+    assert_eq!(worker.status().fine, 1);
+}
+
 #[tokio::test]
 async fn the_preview_is_asked_only_of_a_sound_acoust_id_never_heard_and_of_a_tagged_song() {
     // AcoustID confirmed it, or heard it as another song: its word stands.

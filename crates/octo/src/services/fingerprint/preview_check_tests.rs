@@ -600,7 +600,7 @@ fn noise_flac(dir: &Path) -> Option<std::path::PathBuf> {
 async fn an_unreachable_shim_finds_no_preview() {
     let closed = format!("http://{}", crate::services::test_support::refused_address());
     let resolver = YouTubeResolver::with_base_url(Some(&closed));
-    assert_eq!(resolver.find(&request(Some(174))).await, Err(Failure::Other));
+    assert_eq!(resolver.find(&request(Some(174))).await, Err(Failure::Unreachable));
     assert!(
         !resolver
             .fetch("ki0Ocze98U8", Path::new("/nonexistent/preview"))

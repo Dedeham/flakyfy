@@ -12,7 +12,7 @@ mkdir -p "$work/bin" "$work/music"
 failures=0
 
 # docker only logs, and fails the pull of any service FAKE_NO_IMAGE names (no network to
-# ghcr.io). curl answers 200 to every status code probe and a Last.fm track to the key check,
+# ghcr.io) and the build of any FAKE_NO_BUILD names; its compose config lists FAKE_SERVICES. curl answers 200 to every status code probe and a Last.fm track to the key check,
 # so each question takes the default and Octo looks healthy straight away; with
 # FAKE_SLOW_SLSKD=N, Octo's status says slskd is not ok for its first N answers, and with
 # FAKE_SONIC_DOWN it says octo-sonic is not ok (an empty music folder) every time.
@@ -21,6 +21,18 @@ cat > "$work/bin/docker" <<EOF
 echo "docker \$*" >> "$work/docker.log"
 if [ "\$2" = pull ]; then
   for service in \${FAKE_NO_IMAGE:-}; do [ "\$3" = "\$service" ] && exit 1; done
+fi
+if [ "\$2" = build ]; then
+  for service in \${FAKE_NO_BUILD:-}; do [ "\$3" = "\$service" ] && exit 1; done
+fi
+if [ "\$2" = config ] && [ "\$3" = --services ]; then
+  printf '%s\n' \${FAKE_SERVICES:-}
+fi
+if [ "\$2" = config ] && [ "\$3" = --images ] && [ "\$4" = spotiflac ]; then
+  echo octo-mornye:5660533bf12592e9de68508cef506f173f58d14f
+fi
+if [ "\$1" = image ] && [ "\$2" = inspect ] && [ -n "\${FAKE_NO_LOCAL:-}" ]; then
+  exit 1
 fi
 exit 0
 EOF
@@ -152,7 +164,22 @@ fi
 [ -d "$work/spotiflac-data" ] \
   && pass "SpotiFLAC's data folder is made while its profile is on" || fail "SpotiFLAC's data folder was not made"
 
+grep -q '^docker compose build spotiflac$' "$work/docker.log" && grep -qx 'docker compose up -d' "$work/docker.log" \
+  && pass "Mornye is built while its profile is on, then everything starts" || fail "Mornye was not built before the start"
+grep -q '^docker compose pull spotiflac$' "$work/docker.log" \
+  && fail "Mornye was pulled" || pass "Mornye is never pulled"
+
 cp "$work/octo/.env" "$work/first.env"
+FAKE_NO_BUILD=spotiflac run
+grep -qx 'docker compose up -d' "$work/docker.log" \
+  && pass "a Mornye that will not build keeps its image and everything starts" || fail "a Mornye that will not build stopped the start"
+FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 FAKE_SERVICES="octo octo-sonic slskd spotiflac yt-dlp-shim" run \
+  && pass "the installer finishes without a Mornye it cannot get" || fail "the installer stopped on Mornye"
+grep -qx 'docker compose up -d octo octo-sonic slskd yt-dlp-shim' "$work/docker.log" \
+  && pass "Octo starts without Mornye when it can not be built" || fail "Octo was not started without Mornye: $(grep 'up -d' "$work/docker.log")"
+grep -q 'Mornye (spotiflac) could not be built' "$work/out.log" \
+  && pass "the installer says Mornye was left out" || fail "the installer did not say Mornye was left out"
+
 run
 cmp -s "$work/first.env" "$work/octo/.env" \
   && pass "running it again changes nothing" || { fail "a second run changed .env:"; diff "$work/first.env" "$work/octo/.env"; }
@@ -184,6 +211,7 @@ grep -qx 'LIDARR_COMPLETION_MODE=Accepted' "$work/octo/.env" && grep -qx 'SLSKD_
 fresh
 run
 expect_images "Octo and the sidecars are pulled, nothing is built" "octo yt-dlp-shim octo-sonic | "
+grep -q spotiflac "$work/docker.log" && fail "without its profile something asked about Mornye" || pass "without its profile nothing about Mornye runs"
 grep -q 'compose up -d' "$work/docker.log" && pass "the stack is started" || fail "the stack was not started"
 FAKE_NO_IMAGE=octo run
 expect_images "Octo that will not pull is built from the folder" "octo yt-dlp-shim octo-sonic | octo-source"

@@ -84,7 +84,7 @@
           </button>
           <button class="sidebar-nav-item" data-tab="spotiflac">
             <svg class="icon" aria-hidden="true"><use href="#i-plugs-connected"/></svg>
-            <span>SpotiFLAC</span>
+            <span>Mornye (SpotiFLAC)</span>
           </button>
           <button class="sidebar-nav-item" data-tab="notifications">
             <svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>
@@ -2993,26 +2993,26 @@
       <section data-pane="spotiflac">
         <header class="page-header">
           <div>
-            <h1>SpotiFLAC</h1>
-            <p>Downloads through your own SpotiFLAC server, for songs Soulseek does not have.</p>
+            <h1>Mornye (SpotiFLAC)</h1>
+            <p>Downloads through your own Mornye server, the SpotiFLAC module under its new name, for songs Soulseek does not have.</p>
           </div>
         </header>
 
         <div class="notice">
-          <strong>Octo works with a SpotiFLAC you run yourself.</strong> It includes no SpotiFLAC, no extensions and no places to download from. What SpotiFLAC can find depends on the extensions you install in it. Every file it brings is checked like a Soulseek download (its length, the version it names, AcoustID), and a file that fails is thrown away.
+          <strong>Octo works with a Mornye you run yourself.</strong> It includes no Mornye, no extensions and no places to download from. What Mornye can find depends on the extensions your registry gives it. Every file it brings is checked like a Soulseek download (its length, the version it names, AcoustID), and a file that fails is thrown away.
         </div>
 
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">What you bring</h3>
-            <p class="set-desc">Set these up in SpotiFLAC first, then test the connection below.</p>
+            <p class="set-desc">Set these up in Mornye first, then test the connection below.</p>
           </div>
           <div class="set-card">
             <ol class="bring-list">
-              <li><span class="bring-t">SpotiFLAC with its web page on</span><span class="bring-d">Started with <code>spotiflac --web --host 0.0.0.0</code>, or the optional <code>spotiflac</code> service in Octo's <code>docker-compose.yml</code>.</span></li>
-              <li><span class="bring-t">Your extension registry and an extension</span><span class="bring-d">SpotiFLAC has none of its own. Give it the registry you choose in <code>SPOTIFLAC_REGISTRIES</code>, then install at least one extension on SpotiFLAC's page.</span></li>
-              <li><span class="bring-t">A web token</span><span class="bring-d">Set <code>SPOTIFLAC_WEB_TOKEN</code> on SpotiFLAC and type the same token here, so nobody else can use it.</span></li>
-              <li><span class="bring-t">Octo's music folder, shared</span><span class="bring-d">SpotiFLAC saves into a hidden folder inside Octo's music folder, so it needs that folder mounted. If its path differs in SpotiFLAC, set it under More settings.</span></li>
+              <li><span class="bring-t">Mornye with its web page on</span><span class="bring-d">Started with <code>mornye --web --host 0.0.0.0</code>, or the optional <code>spotiflac</code> service in Octo's <code>docker-compose.yml</code>, which builds and runs Mornye. An older SpotiFLAC works too.</span></li>
+              <li><span class="bring-t">Your extension registry and an extension</span><span class="bring-d">Mornye has none of its own. Give it the registry you choose in <code>SPOTIFLAC_REGISTRIES</code>. Mornye installs every extension it lists by itself, when it starts and again every hour.</span></li>
+              <li><span class="bring-t">A web token</span><span class="bring-d">Set <code>SPOTIFLAC_WEB_TOKEN</code> (Mornye's own name: <code>MORNYE_WEB_TOKEN</code>) and type the same token here, so nobody else can use it.</span></li>
+              <li><span class="bring-t">Octo's music folder, shared</span><span class="bring-d">Mornye saves into a hidden folder inside Octo's music folder, so it needs that folder mounted. If its path differs in Mornye, set it under More settings.</span></li>
             </ol>
           </div>
         </div>
@@ -3020,13 +3020,13 @@
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Connection</h3>
-            <p class="set-desc">How Octo reaches SpotiFLAC. Test it before you save.</p>
+            <p class="set-desc">How Octo reaches Mornye. Test it before you save.</p>
           </div>
           <form data-section="spotiflac-connection" class="set-card" id="spotiflac-connection-form">
             <div class="set-row">
               <div class="set-info">
-                <label class="set-info-t" for="f-spotiflac-enabled">Download with SpotiFLAC</label>
-                <div class="set-info-d">Asks SpotiFLAC for songs beside Soulseek, in the order set below.</div>
+                <label class="set-info-t" for="f-spotiflac-enabled">Download with Mornye</label>
+                <div class="set-info-d">Asks Mornye for songs beside Soulseek, in the order set below.</div>
               </div>
               <label class="switch"><input type="checkbox" id="f-spotiflac-enabled" name="Spotiflac.Enabled" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
@@ -3040,7 +3040,7 @@
             <div class="set-row stack">
               <div class="set-info">
                 <label class="set-info-t" for="f-spotiflac-token">Web token</label>
-                <div class="set-info-d">The <code>SPOTIFLAC_WEB_TOKEN</code> SpotiFLAC was started with.</div>
+                <div class="set-info-d">The token Mornye was started with: <code>SPOTIFLAC_WEB_TOKEN</code> with Octo's compose, otherwise <code>MORNYE_WEB_TOKEN</code>.</div>
               </div>
               <input class="set-input" id="f-spotiflac-token" name="Spotiflac.Token" type="password" autocomplete="new-password" />
             </div>
@@ -3053,14 +3053,14 @@
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Downloads</h3>
-            <p class="set-desc">When SpotiFLAC is asked, and for what.</p>
+            <p class="set-desc">When Mornye is asked, and for what.</p>
           </div>
           <form data-section="spotiflac-downloads" class="set-card" id="spotiflac-downloads-form">
             <div class="set-row stack">
               <div class="set-info">
                 <label class="set-info-t" for="f-spotiflac-placement">When to ask</label>
-                <div class="set-info-d">SpotiFLAC takes Soulseek's place in Heart download priority. With Soulseek off, SpotiFLAC is asked alone.</div>
-                <div class="set-info-more">Asian scripts are Chinese, Japanese, Korean and Thai: a song whose title, artist or album is written in one goes to SpotiFLAC first, every other song to Soulseek first.</div>
+                <div class="set-info-d">Mornye takes Soulseek's place in Heart download priority. With Soulseek off, Mornye is asked alone.</div>
+                <div class="set-info-more">Asian scripts are Chinese, Japanese, Korean and Thai: a song whose title, artist or album is written in one goes to Mornye first, every other song to Soulseek first.</div>
               </div>
               <select class="set-input" id="f-spotiflac-placement" name="Spotiflac.Placement">
                 <option value="AfterSoulseek">After Soulseek finds nothing</option>
@@ -3071,7 +3071,7 @@
             <div class="set-row stack">
               <div class="set-info">
                 <label class="set-info-t" for="f-spotiflac-quality">Quality</label>
-                <div class="set-info-d">What SpotiFLAC is asked for. Hi-res falls back to CD quality when a song has none.</div>
+                <div class="set-info-d">What Mornye is asked for. Hi-res falls back to CD quality when a song has none.</div>
               </div>
               <select class="set-input" id="f-spotiflac-quality" name="Spotiflac.Quality">
                 <option value="LOSSLESS">Lossless, CD quality</option>
@@ -3081,7 +3081,7 @@
             <div class="set-row stack">
               <div class="set-info">
                 <label class="set-info-t" for="f-spotiflac-services">Extensions to try <span class="set-opt">optional</span></label>
-                <div class="set-info-d">Your extension ids in the order to try, separated by commas. Blank leaves the order to SpotiFLAC.</div>
+                <div class="set-info-d">Your extension ids in the order to try, separated by commas. Blank leaves the order to Mornye.</div>
               </div>
               <input class="set-input" id="f-spotiflac-services" name="Spotiflac.Services" placeholder="ext:your-extension" />
             </div>
@@ -3089,8 +3089,8 @@
               <summary>More settings</summary>
               <div class="set-row stack">
                 <div class="set-info">
-                  <label class="set-info-t" for="f-spotiflac-folder">Music folder in SpotiFLAC <span class="set-opt">optional</span></label>
-                  <div class="set-info-d">Where Octo's music folder is mounted in SpotiFLAC, when that is another path. Blank means the same path as in Octo.</div>
+                  <label class="set-info-t" for="f-spotiflac-folder">Music folder in Mornye <span class="set-opt">optional</span></label>
+                  <div class="set-info-d">Where Octo's music folder is mounted in Mornye, when that is another path. Blank means the same path as in Octo.</div>
                 </div>
                 <input class="set-input" id="f-spotiflac-folder" name="Spotiflac.Folder" placeholder="/music" />
               </div>
@@ -3104,7 +3104,7 @@
               <div class="set-row">
                 <div class="set-info">
                   <label class="set-info-t" for="f-spotiflac-at-once">Songs at once <span class="set-opt">1 to 4</span></label>
-                  <div class="set-info-d">How many songs SpotiFLAC is asked for at the same time.</div>
+                  <div class="set-info-d">How many songs Mornye is asked for at the same time.</div>
                 </div>
                 <input class="set-input" id="f-spotiflac-at-once" name="Spotiflac.AtOnce" type="number" min="1" max="4" value="2" />
               </div>

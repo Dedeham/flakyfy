@@ -1071,7 +1071,7 @@ function renderHeartSourceOrder(steps = heartSourceSteps) {
         <span class="source-copy">
           <span class="source-title">${icon(meta.mark)}${meta.title}</span>
           <span class="source-detail">${step.Source === 'Soulseek' && currentSettings?.Spotiflac?.Enabled
-            ? `${meta.detail}, with SpotiFLAC` : meta.detail}</span>
+            ? `${meta.detail}, with Mornye` : meta.detail}</span>
         </span>
         <span class="source-heart-controls" role="group" aria-label="${meta.title} heart types">
           <span class="source-heart-choice">
@@ -3286,7 +3286,7 @@ document.getElementById('spotiflac-test-connection')?.addEventListener('click', 
     if (!r.ok) throw new Error(result.error || `HTTP ${r.status}`);
     renderSpotiflacTest(result.checks || []);
     // What is missing is in the list; the bar only confirms a pass.
-    saveStatus(form, result.ok ? (result.message || 'SpotiFLAC is ready.') : '', 'ok');
+    saveStatus(form, result.ok ? (result.message || 'Mornye is ready.') : '', 'ok');
   } catch (err) {
     renderSpotiflacTest([]);
     saveStatus(form, `Test failed: ${err.message}`, 'error');

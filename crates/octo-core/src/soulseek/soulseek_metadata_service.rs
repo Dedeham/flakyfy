@@ -117,6 +117,11 @@ pub struct SoulseekRouting {
     /// [`Self::VIDEO_NAMED`] for a video the song was named by, 0 for one picked before
     /// rankings were versioned.
     pub video_pick: u8,
+
+    /// A video the current ranking prefers to `you_tube_id`, applied when a play of the song
+    /// next starts at its first byte. Not persisted.
+    #[serde(skip)]
+    pub pending_video: Option<String>,
 }
 
 /// The gain and peak are plain measured numbers, never NaN, so equality is total.

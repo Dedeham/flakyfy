@@ -76,6 +76,23 @@ impl YouTubeMusicClient {
             .map(|(_, rows)| rows))
     }
 
+    /// [`Self::search_limited`] as background work: the shim runs it on its own one-slot gate,
+    /// never fills its cache, and answers busy (so `Ok(None)`) while the slot is taken.
+    pub async fn search_limited_background(
+        &self,
+        query: &str,
+        filter: &str,
+        limit: i32,
+    ) -> anyhow::Result<Option<Vec<YtmRow>>> {
+        Ok(self
+            .get_rows(&format!(
+                "/ytm/search?q={}&filter={filter}&limit={limit}&bg=1",
+                dotnet::escape_data_string(query)
+            ))
+            .await?
+            .map(|(_, rows)| rows))
+    }
+
     pub async fn radio(&self, video_id: &str, limit: i32) -> anyhow::Result<Vec<YtmRow>> {
         Ok(self
             .get_rows(&format!(

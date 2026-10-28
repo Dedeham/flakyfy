@@ -492,6 +492,84 @@ impl ExternalIdRegistry {
         changed
     }
 
+    /// The ids of the songs whose video an older ranking picked, most recently used first: song
+    /// routings with a video, an artist and a title whose `video_pick` is below
+    /// [`SoulseekRouting::VIDEO_PICK`]. A video the song was named by is never listed.
+    pub fn stale_pins(&self) -> Vec<String> {
+        let entries: Vec<(String, SharedRouting)> = {
+            let lru = self.lru.lock();
+            lru.ids()
+                .into_iter()
+                .filter_map(|id| lru.by_id.get(&id).map(|(r, _)| (id, r.clone())))
+                .collect()
+        };
+        entries
+            .into_iter()
+            .filter(|(_, routing)| {
+                let r = routing.lock();
+                r.kind == RoutingKind::Song
+                    && r.has_you_tube()
+                    && r.has_artist_title()
+                    && r.video_pick < SoulseekRouting::VIDEO_PICK
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// Marks the video the song under `short_id` plays as picked by the current ranking, but
+    /// only while it still plays `video`. True when the record changed.
+    pub fn stamp_pick(&self, short_id: &str, video: &str) -> bool {
+        self.remember_pick(short_id, video, SoulseekRouting::VIDEO_PICK)
+    }
+
+    /// Sets `better` as the video the song under `short_id` switches to at a play's first byte,
+    /// but only while the song still plays `current` and does not refuse `better`. True when it
+    /// was set.
+    pub fn set_pending_video(&self, short_id: &str, current: &str, better: &str) -> bool {
+        if short_id.is_empty() || current.is_empty() || better.is_empty() || current == better {
+            return false;
+        }
+        let Some(routing) = self.lru.lock().by_id.get(short_id).map(|(r, _)| r.clone()) else {
+            return false;
+        };
+        let mut r = routing.lock();
+        if r.you_tube_id.as_deref() != Some(current) || r.refuses_video(better) {
+            return false;
+        }
+        r.pending_video = Some(better.to_string());
+        true
+    }
+
+    /// Switches `routing` to the video waiting in its `pending_video`, taking the old video's
+    /// stream facts and a length learned from it with it, and marks the current ranking as its
+    /// picker. Returns the video it left when no other routing pins that video any more, so its
+    /// copy can go. None when nothing was waiting (or the waiting video is refused or already
+    /// playing), or when another routing still pins the old video.
+    pub fn apply_pending_video(&self, routing: &SharedRouting) -> Option<String> {
+        let old = {
+            let mut r = routing.lock();
+            let better = r.pending_video.take()?;
+            let old = r.you_tube_id.clone();
+            if r.refuses_video(&better) || old.as_deref() == Some(better.as_str()) {
+                return None;
+            }
+            if let Some(old) = &old {
+                r.unpin_video(old);
+            }
+            r.pin_video(&better);
+            r.video_pick = SoulseekRouting::VIDEO_PICK;
+            old
+        };
+        self.dirty.store(true, Ordering::SeqCst);
+        let old = old?;
+        let all: Vec<SharedRouting> = self.lru.lock().by_id.values().map(|(r, _)| r.clone()).collect();
+        let pinned_elsewhere = all
+            .into_iter()
+            .filter(|other| !other.ptr_eq(routing))
+            .any(|other| other.lock().you_tube_id.as_deref() == Some(old.as_str()));
+        (!pinned_elsewhere).then_some(old)
+    }
+
     /// The key a song's refused videos are filed under: its artist and title with case, accents
     /// and punctuation set aside. None when either is empty, so a song with no name records
     /// nothing.

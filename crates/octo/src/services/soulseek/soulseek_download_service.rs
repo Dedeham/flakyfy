@@ -70,6 +70,7 @@ use crate::services::prefetch::PreviewCopies;
 use crate::services::prefetch::preview_copies::copy_after;
 use crate::services::spotiflac::SpotiflacClient;
 use crate::services::you_tube::YouTubeResolver;
+use crate::services::you_tube::pin_recheck::starts_at_first_byte;
 use octo_core::common::acquisition_tracker::user_safe;
 use octo_core::lidarr::lidarr_track_fetcher::LidarrStep;
 
@@ -2344,6 +2345,15 @@ impl DownloadBackend for SoulseekDownloadService {
         let Some(routing) = self.routing_for(external_id) else {
             return Ok(None);
         };
+
+        // A video the current ranking prefers is taken only by a play that starts at the first
+        // byte, so no player is ever given bytes of two videos.
+        if starts_at_first_byte(range_header)
+            && let Some(left) = self.id_registry.apply_pending_video(&routing)
+            && let Some(copies) = &self.preview_copies
+        {
+            copies.drop_copy(&left);
+        }
 
         let r = routing.snapshot();
         let mut video_id = r

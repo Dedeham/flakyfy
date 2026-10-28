@@ -64,6 +64,18 @@ pub struct YouTubeResolver {
     music_gate: Arc<Semaphore>,
 }
 
+/// What a background check of the shim came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Checked<T> {
+    /// The shim answered with a pick.
+    Hit(T),
+    /// The shim answered, and nothing matches.
+    Nothing,
+    /// The shim could not answer (busy, timed out, unreachable or not its JSON), so nothing is
+    /// known.
+    Failed,
+}
+
 /// How busy the shim is, from its `/health`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ShimBusy {
@@ -280,6 +292,83 @@ impl YouTubeResolver {
             channel: None,
             stream: StreamFacts::default(),
             pick: SoulseekRouting::VIDEO_PICK,
+        })
+    }
+
+    /// [`Self::music_song`] as a background check, which tells "no row is the song" from "could
+    /// not ask": it goes through the shim's background slot (`bg=1`), is not shared with other
+    /// lookups, and a busy answer, a failure, an unreachable shim, an address that is not set or
+    /// no answer within [`Self::MUSIC_TIMEOUT`] is [`Checked::Failed`].
+    pub async fn music_song_checked(
+        &self,
+        artist: &str,
+        title: &str,
+        length: Option<i32>,
+    ) -> Checked<YouTubeHit> {
+        if !self.music.configured() || (artist.trim().is_empty() && title.trim().is_empty()) {
+            return Checked::Failed;
+        }
+        let query = format!("{artist} {title}");
+        let lookup = self
+            .music
+            .search_limited_background(&query, "songs", Self::MUSIC_ROWS);
+        let rows = match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
+            Ok(Ok(Some(rows))) => rows,
+            Ok(Ok(None)) | Ok(Err(_)) | Err(_) => {
+                debug!("YouTube Music could not answer the background check for '{query}'");
+                return Checked::Failed;
+            }
+        };
+        match pick_song(artist, title, length, &rows) {
+            Some(row) => Checked::Hit(YouTubeHit {
+                video_id: row.video_id.clone(),
+                title: Some(row.title.clone()),
+                duration: row.duration_seconds,
+                channel: None,
+                stream: StreamFacts::default(),
+                pick: SoulseekRouting::VIDEO_PICK,
+            }),
+            None => Checked::Nothing,
+        }
+    }
+
+    /// The shim's ranked pick for `query` as a background check, leaving the videos in `skip`
+    /// out: `/search` with `bg=1` and `resolve=0`, so it ranks only (no stream URL, no cache).
+    /// A 404 (no candidate) is [`Checked::Nothing`]; any other failure is [`Checked::Failed`].
+    pub async fn search_ranked(
+        &self,
+        query: &str,
+        duration_hint: Option<i32>,
+        skip: &[String],
+    ) -> Checked<YouTubeHit> {
+        if query.trim().is_empty() {
+            return Checked::Failed;
+        }
+        let mut url = self.query_url("search", query, duration_hint, true);
+        url.push_str("&resolve=0");
+        if !skip.is_empty() {
+            url.push_str(&format!("&skip={}", escape(&skip.join(","))));
+        }
+        let outcome: anyhow::Result<Checked<YouTubeHit>> = async {
+            let resp = self.search_client.get(&url).send().await?;
+            let status = resp.status();
+            if status.as_u16() == 404 {
+                return Ok(Checked::Nothing);
+            }
+            if !status.is_success() {
+                debug!("shim ranked /search HTTP {} for '{query}'", status.as_u16());
+                return Ok(Checked::Failed);
+            }
+            let root: Value = serde_json::from_str(&resp.text().await?)?;
+            Ok(match parse_hit(&root, true)? {
+                Some(hit) => Checked::Hit(hit),
+                None => Checked::Nothing,
+            })
+        }
+        .await;
+        outcome.unwrap_or_else(|e| {
+            debug!("shim ranked /search failed for '{query}': {e}");
+            Checked::Failed
         })
     }
 

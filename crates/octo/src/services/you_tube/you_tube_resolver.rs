@@ -404,7 +404,7 @@ impl YouTubeResolver {
     /// [`Self::open_stream_in_background`] that tells a full background lane (HTTP 503 with
     /// `{"error":"busy"}`) from any other refusal.
     pub async fn try_open_stream_in_background(&self, video_id: &str) -> Result<ShimStream, ShimRefused> {
-        self.try_open_stream(video_id, None, true).await
+        self.try_open_stream_with(video_id, None, true).await
     }
 
     /// [`Self::open_stream`] that tells a full background lane from any other refusal.

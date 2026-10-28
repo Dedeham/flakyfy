@@ -26,7 +26,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::charts::apple_pages::ChartGenre;
 use octo_core::charts::chart_settings::{self, ChartKind, OVERALL, list_id, list_key, split_list};
-use octo_core::charts::top_songs::{library_hit, library_query, one_row_per_library_song};
+use octo_core::charts::top_songs::{APPLE_SOURCE, library_hit, library_query, one_row_per_library_song};
 use octo_core::common::{Clock, skipped_takes};
 use octo_core::library::generated_playlist_service::{period_index, playlist_id, user_key};
 use octo_core::models::domain::Song;
@@ -76,6 +76,9 @@ struct Made {
     changed_utc: DateTime<Utc>,
     rule: String,
     whole: bool,
+    /// Where the chart came from (`apple`, `deezer`, `lastfm`); a list from anywhere but Apple
+    /// never replaces one that came from Apple.
+    source: String,
     name: String,
     hash: u64,
     entries: Vec<Value>,
@@ -669,7 +672,14 @@ impl ChartPlaylistService {
                 trouble_with.push(list_id);
                 continue;
             }
-            if unanswered > 0 {
+            let from_apple = list.source == APPLE_SOURCE;
+            // A stand-in for Apple's chart keeps the Apple list that was made, and asks Apple
+            // again soon.
+            if !from_apple && before.as_ref().is_some_and(|b| b.source == APPLE_SOURCE) {
+                trouble_with.push(list_id);
+                continue;
+            }
+            if unanswered > 0 || !from_apple {
                 trouble_with.push(list_id.clone());
             } else {
                 whole.push(list_id.clone());
@@ -705,7 +715,8 @@ impl ChartPlaylistService {
                 made_utc: now,
                 changed_utc,
                 rule,
-                whole: unanswered == 0,
+                whole: unanswered == 0 && from_apple,
+                source: list.source.clone(),
                 name,
                 hash,
                 entries,

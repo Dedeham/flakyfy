@@ -42,6 +42,7 @@ use tracing::{debug, info, warn};
 
 use crate::services::charts::apple_music_pages::{AppleMusicPages, LaneCell, PageError};
 use crate::services::charts::{ChartCountryStore, GenreNames};
+use crate::services::common::lastfm_country_names::LASTFM_COUNTRY_NAMES;
 use crate::services::cover_art::ArtworkHints;
 use crate::services::framework::{InFlight, MemoryCache};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
@@ -156,6 +157,8 @@ struct Inner {
     listeners: Arc<ChartCountryStore>,
     /// Per listener, how many other countries are loading for them now.
     others_working: Arc<Mutex<HashMap<String, usize>>>,
+    /// Last.fm's name for each country it has a chart of, by code.
+    geo_names: &'static [(&'static str, &'static str)],
 }
 
 /// One other country's load, counted against its listener until it is dropped.
@@ -225,8 +228,19 @@ impl TopSongsService {
                 warned: Mutex::new(HashMap::new()),
                 listeners: Arc::new(ChartCountryStore::new(None)),
                 others_working: Arc::new(Mutex::new(HashMap::new())),
+                geo_names: LASTFM_COUNTRY_NAMES,
             }),
         }
+    }
+
+    /// The service with its own table of Last.fm's country names. Call it before the service is
+    /// cloned.
+    #[cfg(test)]
+    pub(crate) fn with_geo_names(mut self, table: &'static [(&'static str, &'static str)]) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.geo_names = table;
+        }
+        self
     }
 
     /// The service with each listener's chart countries. Call it before the service is cloned.
@@ -784,28 +798,32 @@ impl TopSongsService {
             Err(error) => {
                 let why = error.describe();
                 self.warn_once(id, country.as_deref(), &why);
-                if chart_kind != ChartKind::Overall || !backup {
+                if chart_kind != ChartKind::Overall {
                     return Built {
                         list: TopList::default(),
                         whole: false,
                         error: Some(why),
                     };
                 }
-                self.backup_overall(why).await
+                self.backup_overall(country.as_deref(), backup, why).await
             }
         }
     }
 
-    /// Popular right now when Apple's chart cannot be read: Deezer's, then Last.fm's.
-    async fn backup_overall(&self, apple_error: String) -> Built {
-        if let Some(catalog) = self.inner.deezer.get_chart(CHART_LIMIT).await {
-            let (rows, source) = merge(
-                Some(catalog.as_slice()),
-                None,
-                false,
-                max_songs(OVERALL),
-                DEEZER_SOURCE,
-            );
+    /// Popular right now when Apple's chart cannot be read, for `country` (None is wherever
+    /// Apple puts the server). `server_own`: it is the server's own country. In order:
+    /// - Deezer's chart, which follows the server's address, so only for the country Apple puts
+    ///   the server in (or the server's own while that is not learned yet);
+    /// - Last.fm's chart of that country, when Last.fm has one;
+    /// - Last.fm's global chart, for the server's own country only.
+    async fn backup_overall(&self, country: Option<&str>, server_own: bool, apple_error: String) -> Built {
+        let max = max_songs(OVERALL);
+        let by_address = match self.inner.apple.known_country() {
+            Some(known) => country.is_none_or(|c| c == known),
+            None => server_own,
+        };
+        if by_address && let Some(catalog) = self.inner.deezer.get_chart(CHART_LIMIT).await {
+            let (rows, source) = merge(Some(catalog.as_slice()), None, false, max, DEEZER_SOURCE);
             let songs = self.build_songs(&rows).await;
             return Built {
                 list: TopList {
@@ -817,12 +835,42 @@ impl TopSongsService {
                 error: Some(apple_error),
             };
         }
-        let counts: Option<Vec<CountedTrack>> = match self.inner.last_fm.as_ref().filter(|l| l.has_api_key())
+        let last_fm = self.inner.last_fm.as_ref().filter(|l| l.has_api_key());
+        if let (Some(last_fm), Some(code)) = (last_fm, country)
+            && let Some(name) = self
+                .inner
+                .geo_names
+                .iter()
+                .find(|(listed, _)| listed.eq_ignore_ascii_case(code))
+                .map(|(_, name)| *name)
+            && let Some(counts) = last_fm.get_country_chart(name, max as i32).await
         {
-            Some(l) => l.get_chart(max_songs(OVERALL) as i32).await,
+            let (rows, source) = merge(None, Some(counts.as_slice()), false, max, DEEZER_SOURCE);
+            let songs = self.build_songs(&rows).await;
+            if !songs.is_empty() {
+                return Built {
+                    list: TopList {
+                        source: source.to_string(),
+                        songs,
+                        ..Default::default()
+                    },
+                    whole: false,
+                    error: Some(apple_error),
+                };
+            }
+        }
+        if !server_own {
+            return Built {
+                list: TopList::default(),
+                whole: false,
+                error: Some(apple_error),
+            };
+        }
+        let counts: Option<Vec<CountedTrack>> = match last_fm {
+            Some(l) => l.get_chart(max as i32).await,
             None => None,
         };
-        let (rows, source) = merge(None, counts.as_deref(), false, max_songs(OVERALL), DEEZER_SOURCE);
+        let (rows, source) = merge(None, counts.as_deref(), false, max, DEEZER_SOURCE);
         let songs = self.build_songs(&rows).await;
         Built {
             list: TopList {

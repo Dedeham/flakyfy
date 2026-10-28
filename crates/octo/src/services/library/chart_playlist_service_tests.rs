@@ -34,6 +34,7 @@ struct Lists {
     settings: Arc<SettingsStore>,
     navidrome: MockServer,
     _apple: MockServer,
+    _deezer: Option<MockServer>,
     now: Arc<Mutex<DateTime<Utc>>>,
     listeners: Arc<ChartCountryStore>,
     matches: Arc<LibraryMatchCache>,
@@ -70,7 +71,33 @@ impl Lists {
         Self::build(charts, true, ExplicitFilter::All, true).await
     }
 
+    /// Lists whose Deezer answers its chart with `chart`.
+    async fn with_deezer(charts: &str, chart: &str) -> Lists {
+        Self::build_with(charts, true, ExplicitFilter::All, false, Some(chart)).await
+    }
+
     async fn build(charts: &str, discovery: bool, filter: ExplicitFilter, remembers: bool) -> Lists {
+        Self::build_with(charts, discovery, filter, remembers, None).await
+    }
+
+    async fn build_with(
+        charts: &str,
+        discovery: bool,
+        filter: ExplicitFilter,
+        remembers: bool,
+        deezer_chart: Option<&str>,
+    ) -> Lists {
+        let deezer_server = match deezer_chart {
+            Some(body) => Some(
+                crate::services::test_support::Routes::new(
+                    vec![("/chart/0/tracks", vec![body])],
+                    crate::services::test_support::Matching::IgnoreCase,
+                )
+                .serve()
+                .await,
+            ),
+            None => None,
+        };
         let navidrome = MockServer::builder().start().await;
         let apple = MockServer::start().await;
         for (at, genre, body) in [
@@ -99,7 +126,10 @@ impl Lists {
         let deezer = DeezerMetadataService::with_base_url(
             http,
             Arc::clone(&settings),
-            format!("http://{}", crate::services::test_support::refused_address()),
+            deezer_server.as_ref().map_or_else(
+                || format!("http://{}", crate::services::test_support::refused_address()),
+                MockServer::uri,
+            ),
         );
         let registry = Arc::new(ExternalIdRegistry::in_memory());
         let listeners = Arc::new(ChartCountryStore::new(None));
@@ -140,6 +170,7 @@ impl Lists {
             settings,
             navidrome,
             _apple: apple,
+            _deezer: deezer_server,
             now,
             listeners,
             matches,
@@ -738,6 +769,67 @@ async fn the_warm_worker_does_nothing_with_every_list_off() {
             .unwrap_or_default()
             .is_empty()
     );
+}
+
+const DEEZER_BODY: &str = r#"{"data":[
+  {"id":11,"title":"Dracula","duration":185,"explicit_lyrics":false,
+   "artist":{"id":27,"name":"Tame Impala"},"album":{"id":302,"title":"Deadbeat","cover_xl":"https://cdn/xl.jpg"}}
+]}"#;
+
+fn an_apple_list(period: i64) -> Made {
+    Made {
+        period,
+        made_utc: Utc.with_ymd_and_hms(2026, 10, 7, 3, 0, 0).unwrap(),
+        changed_utc: Utc.with_ymd_and_hms(2026, 10, 7, 3, 0, 0).unwrap(),
+        rule: "old".into(),
+        whole: true,
+        source: "apple".into(),
+        name: "Popular right now".into(),
+        hash: 1,
+        entries: vec![json!({"id": "apple-song"})],
+        outside: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn a_stand_in_never_replaces_an_apple_list() {
+    let lists = Lists::with_deezer("", DEEZER_BODY).await;
+    lists.library(Vec::new()).await;
+    // Apple has no pages for this country, so Deezer's chart stands in for it.
+    let mut moved = (*lists.settings.current()).clone();
+    moved.generated_playlists.chart_country = "gb".into();
+    lists.settings.set(moved);
+    let last_period = period_index(*lists.now.lock(), REFRESH_HOURS) - 1;
+    lists
+        .service
+        .inner
+        .made
+        .lock()
+        .entry("alice".into())
+        .or_default()
+        .insert(OVERALL.into(), an_apple_list(last_period));
+
+    let kept = lists.service.songs("alice", OVERALL, &auth()).await;
+
+    let made = lists.service.current("alice", OVERALL).unwrap();
+    assert_eq!(kept, vec![json!({"id": "apple-song"})]);
+    assert_eq!(made.source, "apple", "the stand-in did not take its place");
+    assert!(
+        lists
+            .service
+            .inner
+            .failed_at
+            .lock()
+            .contains_key(&("alice".to_string(), OVERALL.to_string())),
+        "Apple is asked again soon"
+    );
+
+    // With nothing made, the stand-in is the list, and it is not whole.
+    let first = lists.service.songs("bob", OVERALL, &auth()).await;
+    let made = lists.service.current("bob", OVERALL).unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(made.source, "deezer");
+    assert!(!made.whole, "the next build tries Apple again");
 }
 
 /// A warm worker that also checks Navidrome's people, which answers `/api/user` with `users`.

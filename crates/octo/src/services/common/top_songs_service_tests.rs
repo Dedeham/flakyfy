@@ -41,9 +41,31 @@ struct Charts {
     hints: Arc<ArtworkHints>,
     listeners: Arc<ChartCountryStore>,
     settings: Arc<SettingsStore>,
+    metadata: Arc<FakeMetadata>,
 }
 
+/// Last.fm's names for two countries, in place of the generated table.
+const GEO_FIXTURE: &[(&str, &str)] = &[("jp", "Japan"), ("us", "United States")];
+
 impl Charts {
+    /// The service reading Last.fm's country names from [`GEO_FIXTURE`].
+    fn with_geo_fixture(mut self) -> Charts {
+        self.service = self.service.with_geo_names(GEO_FIXTURE);
+        self
+    }
+
+    /// The catalog knows these songs, so a Last.fm row for one of them is listed.
+    fn knows(&self, artist: &str, title: &str) {
+        self.metadata.hits.lock().insert(
+            (artist.to_string(), title.to_string()),
+            Song {
+                artist: artist.to_string(),
+                title: title.to_string(),
+                ..Default::default()
+            },
+        );
+    }
+
     async fn new(country: &str, deezer_chart: Option<&str>, last_fm: Option<&MockServer>) -> Charts {
         Charts::with_gap(country, deezer_chart, last_fm, Duration::ZERO).await
     }
@@ -88,10 +110,11 @@ impl Charts {
         });
         let hints = Arc::new(ArtworkHints::new());
         let listeners = Arc::new(ChartCountryStore::new(None));
+        let metadata = Arc::new(FakeMetadata::default());
         let service = TopSongsService::new(
             deezer,
             last_fm,
-            Arc::new(FakeMetadata::default()),
+            metadata.clone(),
             Arc::new(ExternalIdRegistry::in_memory()),
             Arc::new(AppleMusicPages::with_base_url(&apple.uri(), gap).with_genres_base_url(&apple.uri())),
             Arc::clone(&hints),
@@ -106,6 +129,7 @@ impl Charts {
             hints,
             listeners,
             settings,
+            metadata,
         }
     }
 
@@ -503,6 +527,201 @@ async fn no_deezer_stand_in_for_another_country() {
     let home = charts.service.chart("34").await;
     assert_eq!(home.source, "deezer");
     assert_eq!(charts.service.fetches().len(), 2, "one fetch per country");
+}
+
+fn last_fm_tracks(artist: &str, title: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_string(
+        json!({"tracks": {"track": [{"name": title, "playcount": "10", "artist": {"name": artist}}]}})
+            .to_string(),
+    )
+}
+
+async fn last_fm_answers(
+    server: &MockServer,
+    method_name: &str,
+    country: Option<&str>,
+    answer: ResponseTemplate,
+) {
+    let mock = Mock::given(method("GET")).and(query_param("method", method_name));
+    let mock = match country {
+        Some(country) => mock.and(query_param("country", country)),
+        None => mock,
+    };
+    mock.respond_with(answer).mount(server).await;
+}
+
+async fn last_fm_asked(server: &MockServer, method_name: &str) -> Vec<String> {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| {
+            r.url
+                .query_pairs()
+                .any(|(k, v)| k == "method" && v == method_name)
+        })
+        .map(|r| r.url.query().unwrap_or_default().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn an_other_country_with_apple_down_and_nothing_made_uses_last_fm_geo() {
+    let last_fm = MockServer::start().await;
+    last_fm_answers(
+        &last_fm,
+        "geo.gettoptracks",
+        Some("Japan"),
+        last_fm_tracks("Tame Impala", "Dracula"),
+    )
+    .await;
+    let charts = Charts::new("us", Some(DEEZER_CHART), Some(&last_fm))
+        .await
+        .with_geo_fixture();
+    charts.knows("Tame Impala", "Dracula");
+    charts.apple_down().await;
+
+    let japan = charts.service.chart_in(Some("jp".into()), "34").await;
+
+    assert_eq!(japan.source, "lastfm");
+    assert_eq!(titles(&japan), vec!["Dracula"]);
+    assert_eq!(
+        charts.deezer_routes.calls("/chart/0/tracks"),
+        0,
+        "Deezer follows the server's address, not Japan"
+    );
+    assert!(
+        last_fm_asked(&last_fm, "chart.gettoptracks").await.is_empty(),
+        "the global chart is for the server's own country"
+    );
+    let fetch = charts
+        .service
+        .fetches()
+        .into_iter()
+        .find(|f| f.asked.as_deref() == Some("jp"))
+        .unwrap();
+    assert!(fetch.error.is_some(), "Apple's failure is still shown");
+}
+
+#[tokio::test]
+async fn the_server_country_tries_deezer_then_geo_then_global() {
+    // Deezer first.
+    let last_fm = MockServer::start().await;
+    last_fm_answers(
+        &last_fm,
+        "geo.gettoptracks",
+        Some("United States"),
+        last_fm_tracks("Geo Artist", "Geo Song"),
+    )
+    .await;
+    last_fm_answers(
+        &last_fm,
+        "chart.gettoptracks",
+        None,
+        last_fm_tracks("Global Artist", "Global Song"),
+    )
+    .await;
+    let charts = Charts::new("us", Some(DEEZER_CHART), Some(&last_fm))
+        .await
+        .with_geo_fixture();
+    charts.knows("Geo Artist", "Geo Song");
+    charts.knows("Global Artist", "Global Song");
+    charts.apple_down().await;
+    assert_eq!(charts.service.chart("34").await.source, "deezer");
+    assert!(last_fm_asked(&last_fm, "geo.gettoptracks").await.is_empty());
+
+    // No Deezer chart: the country's own chart.
+    let charts = Charts::new("us", None, Some(&last_fm)).await.with_geo_fixture();
+    charts.knows("Geo Artist", "Geo Song");
+    charts.knows("Global Artist", "Global Song");
+    charts.apple_down().await;
+    let list = charts.service.chart("34").await;
+    assert_eq!(list.source, "lastfm");
+    assert_eq!(titles(&list), vec!["Geo Song"]);
+    assert!(last_fm_asked(&last_fm, "chart.gettoptracks").await.is_empty());
+
+    // Last.fm has no such country (error 6): the global chart.
+    let no_country = MockServer::start().await;
+    last_fm_answers(
+        &no_country,
+        "geo.gettoptracks",
+        None,
+        ResponseTemplate::new(200).set_body_string(r#"{"error":6,"message":"country param invalid"}"#),
+    )
+    .await;
+    last_fm_answers(
+        &no_country,
+        "chart.gettoptracks",
+        None,
+        last_fm_tracks("Global Artist", "Global Song"),
+    )
+    .await;
+    let charts = Charts::new("us", None, Some(&no_country))
+        .await
+        .with_geo_fixture();
+    charts.knows("Global Artist", "Global Song");
+    charts.apple_down().await;
+    let list = charts.service.chart("34").await;
+    assert_eq!(list.source, "lastfm");
+    assert_eq!(titles(&list), vec!["Global Song"]);
+    assert_eq!(last_fm_asked(&no_country, "geo.gettoptracks").await.len(), 1);
+    assert_eq!(last_fm_asked(&no_country, "chart.gettoptracks").await.len(), 1);
+}
+
+#[tokio::test]
+async fn geo_asks_the_table_name() {
+    let last_fm = MockServer::start().await;
+    last_fm_answers(
+        &last_fm,
+        "geo.gettoptracks",
+        None,
+        last_fm_tracks("Tame Impala", "Dracula"),
+    )
+    .await;
+    let charts = Charts::new("gb", None, Some(&last_fm)).await.with_geo_fixture();
+    charts.knows("Tame Impala", "Dracula");
+    charts.apple_down().await;
+
+    charts.service.chart_in(Some("jp".into()), "34").await;
+    charts.service.chart_in(Some("fr".into()), "34").await;
+
+    let asked = last_fm_asked(&last_fm, "geo.gettoptracks").await;
+    assert_eq!(asked.len(), 1, "France is not in the table: {asked:?}");
+    assert!(asked[0].contains("country=Japan"), "{}", asked[0]);
+}
+
+#[tokio::test]
+async fn a_fixed_country_unlike_the_ip_skips_deezer() {
+    let last_fm = MockServer::start().await;
+    last_fm_answers(
+        &last_fm,
+        "geo.gettoptracks",
+        Some("United States"),
+        last_fm_tracks("Geo Artist", "Geo Song"),
+    )
+    .await;
+    let charts = Charts::new("us", Some(DEEZER_CHART), Some(&last_fm))
+        .await
+        .with_geo_fixture();
+    charts.knows("Geo Artist", "Geo Song");
+    // Apple puts this server in Great Britain.
+    let gb = fixture!("us_all").replace("\"storefront\":\"us\"", "\"storefront\":\"gb\"");
+    charts.serve("/new/top-charts/songs", None, &gb).await;
+    assert_eq!(
+        charts
+            .service
+            .apple()
+            .detected_country_on(&crate::services::charts::apple_music_pages::LaneCell::behind())
+            .await
+            .as_deref(),
+        Some("gb")
+    );
+
+    let list = charts.service.chart("34").await;
+
+    assert_eq!(charts.deezer_routes.calls("/chart/0/tracks"), 0);
+    assert_eq!(list.source, "lastfm");
+    assert_eq!(titles(&list), vec!["Geo Song"]);
 }
 
 #[tokio::test]

@@ -182,12 +182,13 @@ impl Gate {
         BehindWait { gate: self, ticket }
     }
 
-    /// Whether a background read may queue for the slot: nothing interactive is waiting, or
-    /// interactive reads have had their run and this is the oldest background read.
+    /// Whether a background read may queue for the slot: it is the oldest background read, and
+    /// either nothing interactive is waiting or interactive reads have had their run. Background
+    /// reads so go one at a time in the order they came.
     fn behind_may_go(&self, ticket: u64) -> bool {
-        self.waiting_now.load(Ordering::SeqCst) == 0
-            || (self.now_streak.load(Ordering::SeqCst) >= NOW_STREAK
-                && self.serving_behind.lock().first() == Some(&ticket))
+        self.serving_behind.lock().first() == Some(&ticket)
+            && (self.waiting_now.load(Ordering::SeqCst) == 0
+                || self.now_streak.load(Ordering::SeqCst) >= NOW_STREAK)
     }
 
     /// Whether an interactive read lets the background read that is due go first.

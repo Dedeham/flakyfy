@@ -140,6 +140,16 @@ impl SpotiflacSettings {
         self.at_once.clamp(1, 4) as usize
     }
 
+    /// Why a web token cannot be used, or None. The token travels in a cookie, whose value
+    /// may hold only printable ASCII other than space, `"`, `,`, `;` and `\` (RFC 6265).
+    pub fn token_problem(token: &str) -> Option<&'static str> {
+        let fits = |c: char| matches!(c as u32, 0x21 | 0x23..=0x2B | 0x2D..=0x3A | 0x3C..=0x5B | 0x5D..=0x7E);
+        (!token.chars().all(fits)).then_some(
+            "The web token travels in a cookie, so it can't contain spaces, quotes, commas, semicolons, \
+             backslashes or letters outside plain ASCII. Use letters, digits and simple symbols such as - _ . ~",
+        )
+    }
+
     /// Whether SpotiFLAC is asked before Soulseek for a song with these names.
     pub fn goes_first(&self, names: &[Option<&str>]) -> bool {
         match self.placement {
@@ -187,6 +197,18 @@ mod tests {
         assert_eq!(settings.placement, SpotiflacPlacement::AfterSoulseek);
         assert_eq!(settings.effective_timeout_seconds(), 600);
         assert_eq!(settings.effective_at_once(), 2);
+    }
+
+    #[test]
+    fn a_token_that_cannot_travel_in_a_cookie_is_refused() {
+        assert_eq!(
+            SpotiflacSettings::token_problem("abc-DEF_123.~!#$%&'()*+/:<=>?@[]^`{|}"),
+            None
+        );
+        assert_eq!(SpotiflacSettings::token_problem(""), None);
+        for bad in ["a b", "a\"b", "a,b", "a;b", "a\\b", "a\tb", "é"] {
+            assert!(SpotiflacSettings::token_problem(bad).is_some(), "{bad:?}");
+        }
     }
 
     #[test]

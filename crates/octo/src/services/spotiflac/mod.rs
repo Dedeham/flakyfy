@@ -2,8 +2,8 @@
 //! client the download path asks for songs, the gate that keeps to the number of songs asked for
 //! at once, and the dashboard's Test, which says plainly what is missing.
 //!
-//! Octo sends SpotiFLAC a catalog link and a folder, and takes the file SpotiFLAC writes there.
-//! How SpotiFLAC gets the audio is up to the extensions the person installed in it.
+//! Octo sends Mornye a catalog link and a folder, and takes the file Mornye writes there.
+//! How Mornye gets the audio is up to the extensions the person installed in it.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -28,14 +28,14 @@ use crate::services::http_client_factory::{
 /// either one reads it.
 pub const TOKEN_COOKIES: [&str; 2] = ["mornye_web_token", "spotiflac_web_token"];
 
-/// Where SpotiFLAC's downloads land, under Octo's music folder: a dot folder, which Navidrome's
+/// Where Mornye's downloads land, under Octo's music folder: a dot folder, which Navidrome's
 /// scanner skips.
 pub const SPOTIFLAC_FOLDER: &str = ".octo-incoming/spotiflac";
 
-/// How long one call to SpotiFLAC's API may take.
+/// How long one call to Mornye's API may take.
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// A call to SpotiFLAC that did not work, in words a person can act on.
+/// A call to Mornye that did not work, in words a person can act on.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SpotiflacError {
     #[error("Octo could not reach Mornye at {url}. {why}")]
@@ -104,7 +104,7 @@ impl SpotiflacClient {
             http: http_client_factory::builder()
                 .timeout(CALL_TIMEOUT)
                 .build()
-                .expect("the SpotiFLAC client builds"),
+                .expect("the Mornye client builds"),
             busy: Mutex::new(0),
             freed: Notify::new(),
             poll_interval,
@@ -246,7 +246,7 @@ impl SpotiflacClient {
             .unwrap_or_default())
     }
 
-    /// `GET /api/v1/search?q=`: the catalog tracks SpotiFLAC finds for the words.
+    /// `GET /api/v1/search?q=`: the catalog tracks Mornye finds for the words.
     pub async fn search(
         &self,
         connection: &Connection,
@@ -262,8 +262,8 @@ impl SpotiflacClient {
             .unwrap_or_default())
     }
 
-    /// `POST /api/v1/downloads`: asks SpotiFLAC to save the track at `link` into `output_dir`, a
-    /// folder on SpotiFLAC's side.
+    /// `POST /api/v1/downloads`: asks Mornye to save the track at `link` into `output_dir`, a
+    /// folder on Mornye's side.
     pub async fn queue(
         &self,
         connection: &Connection,
@@ -296,7 +296,7 @@ impl SpotiflacClient {
             })
     }
 
-    /// `GET /api/v1/downloads/{id}`, or None when SpotiFLAC no longer knows the job.
+    /// `GET /api/v1/downloads/{id}`, or None when Mornye no longer knows the job.
     pub async fn job(&self, connection: &Connection, id: &str) -> Result<Option<Job>, SpotiflacError> {
         self.get::<Job>(
             connection,
@@ -314,11 +314,11 @@ impl SpotiflacClient {
             &format!("/api/v1/downloads/{}/cancel", escape_data_string(id)),
         );
         if let Err(e) = self.send::<serde_json::Value>(connection, request).await {
-            tracing::debug!("SpotiFLAC did not cancel job {id}: {e}");
+            tracing::debug!("Mornye did not cancel job {id}: {e}");
         }
     }
 
-    /// The dashboard's Test: whether SpotiFLAC answers at the address, with the token, has an
+    /// The dashboard's Test: whether Mornye answers at the address, with the token, has an
     /// extension to download with, and whether Octo can make the folder downloads land in.
     /// Nothing is downloaded.
     pub async fn test(
@@ -337,6 +337,10 @@ impl SpotiflacClient {
         }
         if !(connection.url.starts_with("http://") || connection.url.starts_with("https://")) {
             report.fail("The address must start with http:// or https://.");
+            return report.finish();
+        }
+        if let Some(problem) = SpotiflacSettings::token_problem(&connection.token) {
+            report.fail(problem);
             return report.finish();
         }
         match self.info(connection).await {
@@ -373,8 +377,9 @@ impl SpotiflacClient {
                 if installed == 0 {
                     report.fail(
                         "Mornye has no extensions installed, so it cannot download anything yet. \
-                         Give Mornye your extension registry (SPOTIFLAC_REGISTRIES) and install an extension on Mornye's own page. \
-                         Coming from SpotiFLAC? Mornye starts without its extensions, so install them again there.",
+                         Mornye installs every extension in your registry by itself, when it starts and again every hour: \
+                         check the registry address (SPOTIFLAC_REGISTRIES with Octo's spotiflac service, MORNYE_REGISTRIES \
+                         on a Mornye you run yourself), then restart Mornye.",
                     );
                 } else {
                     report.pass(&format!(
@@ -406,7 +411,7 @@ impl SpotiflacClient {
     }
 }
 
-/// Makes a folder SpotiFLAC writes into. SpotiFLAC's container usually runs as another user
+/// Makes a folder Mornye writes into. Mornye's container usually runs as another user
 /// than Octo's, so the folder is open to every user.
 pub fn make_shared_folder(path: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(path)?;

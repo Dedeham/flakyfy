@@ -95,6 +95,32 @@ async fn a_test_that_reaches_nothing_says_where_it_looked() {
 }
 
 #[tokio::test]
+async fn a_token_that_cannot_travel_in_a_cookie_is_refused_before_any_call() {
+    let server = MockServer::builder().start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let music = tempfile::tempdir().expect("a folder");
+    let report = client(SpotiflacSettings::default())
+        .test(
+            &connection(&server.uri(), "bad token"),
+            true,
+            None,
+            &music.path().to_string_lossy(),
+        )
+        .await;
+    assert!(!report.ok);
+    assert!(
+        report.message.starts_with("The web token travels in a cookie"),
+        "{}",
+        report.message
+    );
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn a_wrong_token_is_named() {
     let server = MockServer::builder().start().await;
     Mock::given(method("GET"))

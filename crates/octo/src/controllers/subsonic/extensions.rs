@@ -384,8 +384,8 @@ async fn apply_song_answer(
     name: &str,
 ) -> AppResult {
     let builder = &state.subsonic_response_builder;
-    let name = listener_name(state, call).await;
-    let Some(username) = named(&name).map(str::to_string) else {
+    let listener = listener_name(state, call).await;
+    let Some(username) = named(&listener).map(str::to_string) else {
         return Ok(builder
             .create_library_action_outcome_response(
                 id,

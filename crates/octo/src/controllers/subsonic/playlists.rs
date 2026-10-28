@@ -498,7 +498,9 @@ fn utc_millis(at: &DateTime<Utc>) -> String {
 
 /// One family playlist's row as `viewer` sees it: owned by "Family", public, with the number
 /// of songs this viewer is shown and how long they last. Read-only for a viewer who cannot
-/// change it.
+/// change it. It also carries `octoFamily` (true), `octoFamilyCreatedBy`, and, for this viewer,
+/// `octoFamilyMayRename` and `octoFamilyMayDelete`. `changed` is the newest of when it was made,
+/// when any song was added, and its own change time.
 fn family_playlist_fields(
     playlist: &FamilyPlaylist,
     viewer: &FamilyCaller,
@@ -510,6 +512,7 @@ fn family_playlist_fields(
         .iter()
         .map(|entry| entry.added)
         .chain([playlist.created])
+        .chain(playlist.changed)
         .max()
         .unwrap_or(playlist.created);
     let mut fields = serde_json::Map::new();
@@ -523,6 +526,16 @@ fn family_playlist_fields(
     fields.insert("created".into(), utc_millis(&playlist.created).into());
     fields.insert("changed".into(), utc_millis(&changed).into());
     fields.insert("readonly".into(), (!family_playlists::may_edit(viewer)).into());
+    fields.insert("octoFamily".into(), true.into());
+    fields.insert("octoFamilyCreatedBy".into(), playlist.created_by.clone().into());
+    fields.insert(
+        "octoFamilyMayRename".into(),
+        family_playlists::may_rename(viewer, playlist).into(),
+    );
+    fields.insert(
+        "octoFamilyMayDelete".into(),
+        family_playlists::may_delete(viewer).into(),
+    );
     fields
 }
 
@@ -1358,12 +1371,39 @@ async fn family_mutate(state: &AppState, call: &SubsonicCall, id: &str, change: 
                     ),
                 );
             }
+            let song_removals = call.incoming.parameter_values("octoSongToRemove");
+            if !song_removals.is_empty() && !call.incoming.parameter_values("songIndexToRemove").is_empty() {
+                return family_error(
+                    state,
+                    call,
+                    10,
+                    "Use octoSongToRemove or songIndexToRemove, not both.",
+                );
+            }
             let removals: Vec<usize> = call
                 .incoming
                 .parameter_values("songIndexToRemove")
                 .iter()
                 .filter_map(|index| index.trim().parse().ok())
                 .collect();
+            // Songs named by id are found in the stored list without reading Navidrome, so the
+            // places cannot drift.
+            let pairs: Vec<(String, usize)> = song_removals
+                .iter()
+                .filter_map(|value| {
+                    let (id, n) = value.trim().rsplit_once('@')?;
+                    let n: usize = n.trim().parse().ok().filter(|n| *n > 0)?;
+                    (!id.is_empty()).then(|| (id.to_string(), n))
+                })
+                .collect();
+            if !pairs.is_empty() {
+                let stored = family_playlists::stored_places_of(&playlist, caller, &pairs);
+                if let Err(error) =
+                    family_playlists::remove_stored(store, caller, id, &playlist.entries, &stored)
+                {
+                    return playlist_error(state, call, error);
+                }
+            }
             // Places count over the songs the caller's answer lists (see served_places), worked out
             // and applied before the name changes, so a refused removal changes nothing.
             let removal_places = if removals.is_empty() {

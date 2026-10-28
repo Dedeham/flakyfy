@@ -894,6 +894,187 @@ async fn of_ids_are_relayed_when_family_off() {
     assert!(f.entries(&made.id).is_empty());
 }
 
+#[tokio::test]
+async fn rows_carry_family_rights() {
+    let f = fixture(true).await;
+    let made = family_playlists::create(
+        &f.state.family_playlists,
+        &f.caller("alex"),
+        "Alex's trip",
+        false,
+        Utc::now(),
+    )
+    .expect("made");
+    let id = made.id;
+    for (user, may_rename, may_delete) in [
+        ("alex", true, false),
+        ("sam", false, false),
+        ("winters", true, true),
+    ] {
+        let answer = f.json(user, "getPlaylists").await;
+        let listed = row(&answer, &id).unwrap_or_else(|| panic!("{user} sees it: {answer}"));
+        assert_eq!(listed["octoFamily"], true, "{user}");
+        assert_eq!(listed["octoFamilyCreatedBy"], "alex", "{user}");
+        assert_eq!(listed["octoFamilyMayRename"], may_rename, "{user}");
+        assert_eq!(listed["octoFamilyMayDelete"], may_delete, "{user}");
+        let one = f.json(user, &format!("getPlaylist?id={id}")).await;
+        assert_eq!(one["playlist"]["octoFamily"], true, "{user}: {one}");
+        assert_eq!(one["playlist"]["octoFamilyCreatedBy"], "alex", "{user}");
+        assert_eq!(one["playlist"]["octoFamilyMayRename"], may_rename, "{user}");
+        assert_eq!(one["playlist"]["octoFamilyMayDelete"], may_delete, "{user}");
+    }
+    let xml = f.get("alex", "getPlaylists").await.text();
+    for attribute in [
+        "octoFamily=\"true\"",
+        "octoFamilyCreatedBy=\"alex\"",
+        "octoFamilyMayRename=\"true\"",
+        "octoFamilyMayDelete=\"false\"",
+    ] {
+        assert!(xml.contains(attribute), "{attribute} in {xml}");
+    }
+    let xml = f.get("alex", &format!("getPlaylist?id={id}")).await.text();
+    assert!(xml.contains("octoFamilyMayRename=\"true\""), "{xml}");
+}
+
+#[tokio::test]
+async fn removal_by_song_takes_that_song() {
+    let f = fixture(true).await;
+    let id = f.playlist(
+        false,
+        vec![
+            library("s-clean", SHARED_SCOPE, None),
+            library("s-unrated", SHARED_SCOPE, None),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    let answer = f
+        .json(
+            "alex",
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove=s-clean@2"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(
+        left_ids(&f, &id),
+        [Some("s-clean".to_string()), Some("s-unrated".to_string())]
+    );
+    let answer = f
+        .json(
+            "alex",
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove=zzz@1"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(f.entries(&id).len(), 2);
+}
+
+#[tokio::test]
+async fn removal_by_song_reads_no_navidrome_and_ignores_unreadable_entries() {
+    let f = fixture(true).await;
+    let id = f.playlist(
+        false,
+        vec![
+            library("s-missing", SHARED_SCOPE, None),
+            outside(OUTSIDE),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    let answer = f
+        .json(
+            "alex",
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove=s-clean@1"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(
+        left_ids(&f, &id),
+        [Some("s-missing".to_string()), Some(OUTSIDE.to_string())]
+    );
+}
+
+#[tokio::test]
+async fn removal_by_song_works_for_clean_only_editors() {
+    let f = fixture(true).await;
+    let mut editor = f.state.family_store.member("kid").expect("a member");
+    editor.edits.insert("familyPlaylistsEdit".into(), json!(true));
+    f.state.family_store.upsert_member(editor);
+    let id = f.playlist(
+        false,
+        vec![
+            outside(OUTSIDE_EXPLICIT),
+            outside(OUTSIDE),
+            library("s-clean", SHARED_SCOPE, None),
+        ],
+    );
+    let answer = f
+        .json(
+            "kid",
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove={OUTSIDE}@1"),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(
+        left_ids(&f, &id),
+        [Some(OUTSIDE_EXPLICIT.to_string()), Some("s-clean".to_string())]
+    );
+}
+
+#[tokio::test]
+async fn both_removal_kinds_refused() {
+    let f = fixture(true).await;
+    let id = f.playlist(
+        false,
+        vec![outside(OUTSIDE), library("s-clean", SHARED_SCOPE, None)],
+    );
+    let answer = f
+        .json(
+            "alex",
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove=s-clean@1&songIndexToRemove=0"),
+        )
+        .await;
+    assert_eq!(answer["status"], "failed", "{answer}");
+    assert_eq!(answer["error"]["code"], 10, "{answer}");
+    assert_eq!(
+        answer["error"]["message"],
+        "Use octoSongToRemove or songIndexToRemove, not both."
+    );
+    assert_eq!(f.entries(&id).len(), 2);
+}
+
+#[tokio::test]
+async fn rename_moves_the_row_change_time() {
+    let f = fixture(true).await;
+    let id = f.playlist(false, vec![outside(OUTSIDE)]);
+    let changed = |answer: &Value| row(answer, &id).expect("listed")["changed"].clone();
+    let before = changed(&f.json("alex", "getPlaylists").await);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let renamed = f
+        .json("winters", &format!("updatePlaylist?playlistId={id}&name=Summer"))
+        .await;
+    assert_eq!(renamed["status"], "ok", "{renamed}");
+    let after = changed(&f.json("alex", "getPlaylists").await);
+    assert!(
+        after.as_str() > before.as_str(),
+        "changed moved from {before} to {after}"
+    );
+}
+
+#[tokio::test]
+async fn extension_listed_with_family_on() {
+    for on in [true, false] {
+        let f = fixture(on).await;
+        let answer = f.json("alex", "getOpenSubsonicExtensions").await;
+        let listed = answer["openSubsonicExtensions"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .any(|item| item["name"] == "octoFamilyPlaylists" && item["versions"] == json!([1]))
+            })
+            .unwrap_or(false);
+        assert_eq!(listed, on, "{answer}");
+    }
+}
+
 // ---- kid profiles ----
 
 #[tokio::test]

@@ -342,6 +342,35 @@ pub fn remove_shown(
     Ok(stored.len())
 }
 
+/// The stored places of the songs these (id, occurrence) pairs name in the list `viewer` is
+/// shown: the `n`th (1-based) shown entry that answers to `id`, by its library id or its
+/// outside id. A pair that names nothing is left out (the song is already gone).
+pub fn stored_places_of(
+    playlist: &FamilyPlaylist,
+    viewer: &FamilyCaller,
+    songs: &[(String, usize)],
+) -> Vec<usize> {
+    let shown = shown_entries(playlist, viewer);
+    let mut places: Vec<usize> = songs
+        .iter()
+        .filter_map(|(id, n)| {
+            shown
+                .iter()
+                .filter(|entry| match &entry.serve {
+                    Serve::Library { id: library, outside } => {
+                        library == id || outside.as_deref() == Some(id)
+                    }
+                    Serve::Outside(outside) => outside == id,
+                })
+                .nth(n.checked_sub(1)?)
+                .map(|entry| entry.stored)
+        })
+        .collect();
+    places.sort_unstable();
+    places.dedup();
+    places
+}
+
 /// Removes the entries at these places of the stored playlist (places past its end are left
 /// alone), only while the playlist's entries are still `expected` (the ones the places were
 /// worked out from). Answers how many went.
@@ -650,6 +679,61 @@ mod tests {
             Err(PlaylistError::Changed)
         );
         assert_eq!(store.get(&list.id).expect("there").entries.len(), 3);
+    }
+
+    #[test]
+    fn songs_named_by_id_and_occurrence_find_their_stored_places() {
+        let store = FamilyPlaylistStore::in_memory();
+        let list = create(&store, &owner(), "Road trip", true, now()).expect("made");
+        let alex = caller("alex", Preset::Member);
+        let sam = caller("sam", Preset::Listener);
+        add(
+            &store,
+            &NoPlaylistAddRequests,
+            &alex,
+            &list.id,
+            vec![
+                library("a", SHARED_SCOPE, None),
+                library("b", SHARED_SCOPE, Some("ext-b")),
+                library("a", SHARED_SCOPE, None),
+                outside("o1"),
+            ],
+            now(),
+        )
+        .expect("added");
+        // Sam's addition waits, so alex does not see it.
+        add(
+            &store,
+            &NoPlaylistAddRequests,
+            &sam,
+            &list.id,
+            vec![library("a", SHARED_SCOPE, None)],
+            now(),
+        )
+        .expect("added");
+        let list = store.get(&list.id).expect("there");
+        let pair = |id: &str, n: usize| (id.to_string(), n);
+        assert_eq!(stored_places_of(&list, &alex, &[pair("a", 2)]), vec![2]);
+        assert_eq!(
+            stored_places_of(&list, &alex, &[pair("a", 1), pair("a", 2)]),
+            vec![0, 2]
+        );
+        assert_eq!(
+            stored_places_of(&list, &alex, &[pair("ext-b", 1), pair("o1", 1)]),
+            vec![1, 3],
+            "an outside id answers too"
+        );
+        assert_eq!(
+            stored_places_of(&list, &alex, &[pair("zzz", 1), pair("a", 9)]),
+            Vec::<usize>::new(),
+            "a song that is not there is left out"
+        );
+        assert_eq!(
+            stored_places_of(&list, &alex, &[pair("a", 3)]),
+            Vec::<usize>::new(),
+            "a waiting entry alex cannot see is not counted"
+        );
+        assert_eq!(stored_places_of(&list, &owner(), &[pair("a", 3)]), vec![4]);
     }
 
     #[test]

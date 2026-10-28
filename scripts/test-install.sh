@@ -28,6 +28,12 @@ fi
 if [ "\$2" = config ] && [ "\$3" = --services ]; then
   printf '%s\n' \${FAKE_SERVICES:-}
 fi
+if [ "\$2" = config ] && [ "\$3" = --images ] && [ "\$4" = spotiflac ]; then
+  echo octo-mornye:5660533bf12592e9de68508cef506f173f58d14f
+fi
+if [ "\$1" = image ] && [ "\$2" = inspect ] && [ -n "\${FAKE_NO_LOCAL:-}" ]; then
+  exit 1
+fi
 exit 0
 EOF
 cat > "$work/bin/curl" <<'EOF'
@@ -158,18 +164,20 @@ fi
 [ -d "$work/spotiflac-data" ] \
   && pass "SpotiFLAC's data folder is made while its profile is on" || fail "SpotiFLAC's data folder was not made"
 
-grep -q '^docker compose pull spotiflac$' "$work/docker.log" && grep -qx 'docker compose up -d' "$work/docker.log" \
-  && pass "Mornye is pulled while its profile is on, then everything starts" || fail "Mornye was not pulled before the start"
+grep -q '^docker compose build spotiflac$' "$work/docker.log" && grep -qx 'docker compose up -d' "$work/docker.log" \
+  && pass "Mornye is built while its profile is on, then everything starts" || fail "Mornye was not built before the start"
+grep -q '^docker compose pull spotiflac$' "$work/docker.log" \
+  && fail "Mornye was pulled" || pass "Mornye is never pulled"
 
 cp "$work/octo/.env" "$work/first.env"
-FAKE_NO_IMAGE=spotiflac run
-grep -q '^docker compose build spotiflac$' "$work/docker.log" && grep -qx 'docker compose up -d' "$work/docker.log" \
-  && pass "a Mornye that will not pull is built, then everything starts" || fail "a Mornye that will not pull was not built"
-FAKE_NO_IMAGE=spotiflac FAKE_NO_BUILD=spotiflac FAKE_SERVICES="octo octo-sonic slskd spotiflac yt-dlp-shim" run \
+FAKE_NO_BUILD=spotiflac run
+grep -qx 'docker compose up -d' "$work/docker.log" \
+  && pass "a Mornye that will not build keeps its image and everything starts" || fail "a Mornye that will not build stopped the start"
+FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 FAKE_SERVICES="octo octo-sonic slskd spotiflac yt-dlp-shim" run \
   && pass "the installer finishes without a Mornye it cannot get" || fail "the installer stopped on Mornye"
 grep -qx 'docker compose up -d octo octo-sonic slskd yt-dlp-shim' "$work/docker.log" \
-  && pass "Octo starts without Mornye when it can be neither pulled nor built" || fail "Octo was not started without Mornye: $(grep 'up -d' "$work/docker.log")"
-grep -q 'Mornye (spotiflac) could not be pulled or built' "$work/out.log" \
+  && pass "Octo starts without Mornye when it can not be built" || fail "Octo was not started without Mornye: $(grep 'up -d' "$work/docker.log")"
+grep -q 'Mornye (spotiflac) could not be built' "$work/out.log" \
   && pass "the installer says Mornye was left out" || fail "the installer did not say Mornye was left out"
 
 run

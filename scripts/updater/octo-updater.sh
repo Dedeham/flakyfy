@@ -162,9 +162,9 @@ published_services() {
 # and this list lacks is still pulled, by `up -d`, because it is missing.
 IMAGES=(octo yt-dlp-shim octo-sonic)
 
-# Optional services that are not Octo's own: today only spotiflac (Mornye's image), present
-# only when its profile is on. Each is made ready before Octo restarts: pulled, else built from
-# its build: section, else kept as the image already here. One that is none of these is left as
+# Optional services that are not Octo's own: today only spotiflac (Mornye, built here), present
+# only when its profile is on. Each is made ready before Octo restarts: built from its pinned
+# build: section (cached after the first time), else kept as the image already here. One that is none of these is left as
 # it was, so it never holds Octo back. Without the profile none of this runs.
 OPTIONAL=(spotiflac)
 left_out=()
@@ -176,14 +176,13 @@ ready_optional() {
   for service in "${OPTIONAL[@]}"; do
     [[ "$services" == *" $service "* ]] || continue
     write_status building "Getting $service ready"
-    run docker compose pull "$service" && continue
     run docker compose build "$service" && continue
     image="$({ docker compose config --images "$service" 2>/dev/null || true; } | head -n 1)"
     if [ -n "$image" ] && run docker image inspect "$image"; then
-      log "$service could not be pulled or built, so it keeps the image it has"
+      log "$service could not be built, so it keeps the image it has"
       continue
     fi
-    log "$service could not be pulled or built, so it is left as it was and Octo starts without it"
+    log "$service could not be built, so it is left as it was and Octo starts without it"
     left_out+=("$service")
   done
 }
@@ -382,7 +381,7 @@ fi
 
 ready_optional
 if [ "${#left_out[@]}" -gt 0 ]; then
-  built="$built. Mornye (the ${left_out[*]} service) could not be pulled or built, so it was left as it was"
+  built="$built. Mornye (the ${left_out[*]} service) could not be built, so it was left as it was"
 fi
 
 write_status restarting "Restarting Octo"

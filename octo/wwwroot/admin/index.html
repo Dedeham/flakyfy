@@ -2982,7 +2982,7 @@
         </header>
 
         <div class="notice">
-          <strong>Octo works with a Mornye you run yourself.</strong> It includes no Mornye, no extensions and no places to download from. What Mornye can find depends on the extensions you install in it. Every file it brings is checked like a Soulseek download (its length, the version it names, AcoustID), and a file that fails is thrown away.
+          <strong>Octo works with a Mornye you run yourself.</strong> It includes no Mornye, no extensions and no places to download from. What Mornye can find depends on the extensions your registry gives it. Every file it brings is checked like a Soulseek download (its length, the version it names, AcoustID), and a file that fails is thrown away.
         </div>
 
         <div class="set-section">
@@ -2992,8 +2992,8 @@
           </div>
           <div class="set-card">
             <ol class="bring-list">
-              <li><span class="bring-t">Mornye with its web page on</span><span class="bring-d">Started with <code>mornye --web --host 0.0.0.0</code>, or the optional <code>spotiflac</code> service in Octo's <code>docker-compose.yml</code>, which runs Mornye's image. An older SpotiFLAC works too.</span></li>
-              <li><span class="bring-t">Your extension registry and an extension</span><span class="bring-d">Mornye has none of its own. Give it the registry you choose in <code>SPOTIFLAC_REGISTRIES</code>, then install at least one extension on Mornye's page.</span></li>
+              <li><span class="bring-t">Mornye with its web page on</span><span class="bring-d">Started with <code>mornye --web --host 0.0.0.0</code>, or the optional <code>spotiflac</code> service in Octo's <code>docker-compose.yml</code>, which builds and runs Mornye. An older SpotiFLAC works too.</span></li>
+              <li><span class="bring-t">Your extension registry and an extension</span><span class="bring-d">Mornye has none of its own. Give it the registry you choose in <code>SPOTIFLAC_REGISTRIES</code>. Mornye installs every extension it lists by itself, when it starts and again every hour.</span></li>
               <li><span class="bring-t">A web token</span><span class="bring-d">Set <code>SPOTIFLAC_WEB_TOKEN</code> (Mornye's own name: <code>MORNYE_WEB_TOKEN</code>) and type the same token here, so nobody else can use it.</span></li>
               <li><span class="bring-t">Octo's music folder, shared</span><span class="bring-d">Mornye saves into a hidden folder inside Octo's music folder, so it needs that folder mounted. If its path differs in Mornye, set it under More settings.</span></li>
             </ol>

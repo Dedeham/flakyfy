@@ -595,20 +595,23 @@ services:
       - ${NAVIDROME_DATA_DIR:-./navidrome-data}:/data
 
   # Your own Mornye (the SpotiFLAC Python module before its rename), for the optional
-  # download source. It starts only with spotiflac in COMPOSE_PROFILES (.env). This is
-  # Mornye's own image, not Octo's: Octo includes no Mornye, no extensions and no places
-  # to download from. When its image cannot be pulled, Compose builds it from Mornye's own
-  # repository at SPOTIFLAC_BUILD_REF instead, which takes a few minutes the first time.
+  # download source. It starts only with spotiflac in COMPOSE_PROFILES (.env).
+  # Compose builds Mornye here from its own repository at SPOTIFLAC_BUILD_REF (a pinned
+  # commit, so every install runs the same Mornye) and never pulls it: the first build takes
+  # a few minutes and about 2 GB, later ones are cached. Octo includes no Mornye, no
+  # extensions and no places to download from.
   # Mornye downloads nothing until you give it the extension registry you choose
-  # (SPOTIFLAC_REGISTRIES) and install an extension on its page, on the port below. It
+  # (SPOTIFLAC_REGISTRIES); it installs every extension the registry lists by itself, when
+  # it starts and again every hour. Its own page is on the port below. It
   # saves into a hidden folder of the music folder Octo uses, mounted at the same path, so
   # Octo checks the file and files it like any download. Then set SPOTIFLAC_ENABLED=true
   # and SPOTIFLAC_URL=http://spotiflac:8000, or use the dashboard's Mornye page.
   spotiflac:
-    image: ghcr.io/mornyeapp/mornye-python:${SPOTIFLAC_IMAGE_TAG:-latest}
-    # v1.0.3 is commit 5660533b.
+    image: octo-mornye:${SPOTIFLAC_BUILD_REF:-5660533bf12592e9de68508cef506f173f58d14f}
+    pull_policy: never
+    # 5660533b is Mornye 1.0.3. The image is built here and never pulled.
     build:
-      context: https://github.com/mornyeapp/Mornye-Python.git#${SPOTIFLAC_BUILD_REF:-v1.0.3}
+      context: https://github.com/mornyeapp/Mornye-Python.git#${SPOTIFLAC_BUILD_REF:-5660533bf12592e9de68508cef506f173f58d14f}
     container_name: spotiflac
     restart: unless-stopped
     logging: *logging

@@ -167,27 +167,23 @@ expect "without the spotiflac profile nothing about Mornye runs" never 'spotifla
 # ----- Mornye (the optional spotiflac service) never holds Octo back -----
 
 fresh; request 2026.10.04
-FAKE_SPOTIFLAC=1 check "Mornye pulled with the rest" "done" 2026.10.04 ""
-expect_compose "pulls Mornye before the restart" "pull octo|pull yt-dlp-shim|pull octo-sonic|pull spotiflac|up -d"
-
-fresh; request 2026.10.04
-FAKE_SPOTIFLAC=1 FAKE_NO_IMAGE=spotiflac check "Mornye built when it will not pull" "done" 2026.10.04 ""
-expect_compose "builds Mornye from its repository, then restarts everything" "pull octo|pull yt-dlp-shim|pull octo-sonic|pull spotiflac|build spotiflac|up -d"
+FAKE_SPOTIFLAC=1 check "Mornye built before the restart" "done" 2026.10.04 ""
+expect_compose "builds Mornye from its repository, then restarts everything" "pull octo|pull yt-dlp-shim|pull octo-sonic|build spotiflac|up -d"
 expect "a Mornye built here is not called Octo's build" test "$(status_of step)" = "Octo now runs 2026.10.04"
 
 fresh; request 2026.10.04
-FAKE_SPOTIFLAC=1 FAKE_NO_IMAGE=spotiflac FAKE_NO_BUILD=spotiflac check "Mornye keeps the image it has" "done" 2026.10.04 ""
-expect_compose "restarts everything with Mornye's old image" "pull octo|pull yt-dlp-shim|pull octo-sonic|pull spotiflac|build spotiflac|up -d"
-expect "the log says Mornye kept its image" in_log 'spotiflac could not be pulled or built, so it keeps the image it has'
+FAKE_SPOTIFLAC=1 FAKE_NO_BUILD=spotiflac check "Mornye keeps the image it has" "done" 2026.10.04 ""
+expect_compose "restarts everything with Mornye's old image" "pull octo|pull yt-dlp-shim|pull octo-sonic|build spotiflac|up -d"
+expect "the log says Mornye kept its image" in_log 'spotiflac could not be built, so it keeps the image it has'
 
 fresh; request 2026.10.04
-FAKE_SPOTIFLAC=1 FAKE_NO_IMAGE=spotiflac FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 check "Octo updates without a Mornye it cannot get" "done" 2026.10.04 ""
-expect_compose "starts every service but Mornye" "pull octo|pull yt-dlp-shim|pull octo-sonic|pull spotiflac|build spotiflac|up -d octo octo-sonic slskd unrelated yt-dlp-shim"
-expect "the dashboard says Mornye was left as it was" test "$(status_of step)" = "Octo now runs 2026.10.04. Mornye (the spotiflac service) could not be pulled or built, so it was left as it was"
+FAKE_SPOTIFLAC=1 FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 check "Octo updates without a Mornye it cannot get" "done" 2026.10.04 ""
+expect_compose "starts every service but Mornye" "pull octo|pull yt-dlp-shim|pull octo-sonic|build spotiflac|up -d octo octo-sonic slskd unrelated yt-dlp-shim"
+expect "the dashboard says Mornye was left as it was" test "$(status_of step)" = "Octo now runs 2026.10.04. Mornye (the spotiflac service) could not be built, so it was left as it was"
 
 fresh; request 2026.10.04
-FAKE_SPOTIFLAC=1 FAKE_NO_IMAGE=spotiflac FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 FAKE_BAD_VERSION=2026.10.04 check "going back leaves Mornye out too" failed 2026.10.01 "which is running again"
-expect_compose "rebuilds and restarts the old release without Mornye" "pull octo|pull yt-dlp-shim|pull octo-sonic|pull spotiflac|build spotiflac|up -d octo octo-sonic slskd unrelated yt-dlp-shim|build octo octo-sonic slskd unrelated yt-dlp-shim|up -d octo octo-sonic slskd unrelated yt-dlp-shim"
+FAKE_SPOTIFLAC=1 FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 FAKE_BAD_VERSION=2026.10.04 check "going back leaves Mornye out too" failed 2026.10.01 "which is running again"
+expect_compose "rebuilds and restarts the old release without Mornye" "pull octo|pull yt-dlp-shim|pull octo-sonic|build spotiflac|up -d octo octo-sonic slskd unrelated yt-dlp-shim|build octo octo-sonic slskd unrelated yt-dlp-shim|up -d octo octo-sonic slskd unrelated yt-dlp-shim"
 
 fresh; request 2026.10.04
 FAKE_NO_IMAGE=octo check "Octo that will not pull is built from the folder" "done" 2026.10.04 ""

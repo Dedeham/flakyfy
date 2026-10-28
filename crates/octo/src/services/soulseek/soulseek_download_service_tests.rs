@@ -490,6 +490,15 @@ struct SlskdState {
     sound: HashMap<String, Vec<u8>>,
     /// The audio the shim's /stream sends whole; none answers the two-byte partial reply.
     preview: Option<Vec<u8>>,
+    /// The videos the shim's /search answers with, best first; the first one not skipped wins.
+    /// Empty answers the one video "vid123".
+    search_videos: Vec<String>,
+    /// The audio the shim's /download writes; none writes silent frames.
+    download_audio: Option<Vec<u8>>,
+    /// What AcoustID answers for the file of each video, by video id.
+    lookup_by_video: HashMap<String, Value>,
+    /// The video the shim wrote a file for last.
+    last_download: String,
 }
 
 /// slskd as far as one walk needs: logged in, searches answered from a script, and every batch
@@ -617,15 +626,39 @@ impl Respond for FakeSlskd {
             };
         }
         if path == "/search" {
+            let skipped: Vec<String> = request
+                .url
+                .query_pairs()
+                .find(|(k, _)| k == "skip")
+                .map(|(_, v)| v.split(',').map(str::to_string).collect())
+                .unwrap_or_default();
+            let video = {
+                let state = self.state.lock();
+                if state.search_videos.is_empty() {
+                    Some("vid123".to_string())
+                } else {
+                    state.search_videos.iter().find(|v| !skipped.contains(v)).cloned()
+                }
+            };
+            let Some(video) = video else {
+                return json_answer(&json!({"error": "no_hit"}), 404);
+            };
             return json_answer(
-                &json!({"video_id": "vid123", "title": "Started", "duration": 180,
+                &json!({"video_id": video, "title": "Started", "duration": 180,
                         "size": 12000, "itag": "140", "ext": "m4a", "abr": 129.5}),
                 200,
             );
         }
         if path == "/v2/lookup" {
-            // An AcoustID that has never heard any of it.
-            return json_answer(&json!({"status": "ok", "results": []}), 200);
+            // The answer set for the video last downloaded; else an AcoustID that has never
+            // heard any of it.
+            let state = self.state.lock();
+            let answer = state
+                .lookup_by_video
+                .get(&state.last_download)
+                .cloned()
+                .unwrap_or_else(|| json!({"status": "ok", "results": []}));
+            return json_answer(&answer, 200);
         }
         if path == "/stream"
             && let Some(preview) = self.state.lock().preview.clone()
@@ -646,8 +679,22 @@ impl Respond for FakeSlskd {
                 .unwrap_or_default();
             let file = format!("{dest}.mp3");
             std::fs::create_dir_all(std::path::Path::new(&file).parent().expect("a parent")).expect("made");
-            std::fs::write(&file, crate::services::test_support::mp3()).expect("written");
-            self.state.lock().you_tube_downloads.push(file.clone());
+            let audio = self
+                .state
+                .lock()
+                .download_audio
+                .clone()
+                .unwrap_or_else(crate::services::test_support::mp3);
+            std::fs::write(&file, audio).expect("written");
+            let video = request
+                .url
+                .query_pairs()
+                .find(|(k, _)| k == "id")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            let mut state = self.state.lock();
+            state.last_download = video;
+            state.you_tube_downloads.push(file.clone());
             return json_answer(&json!({"path": file}), 200);
         }
         if path == "/api/v0/transfers/downloads/batches" {
@@ -1901,48 +1948,105 @@ fn heard(verdict: VerificationVerdict, artist: &str, title: &str) -> Verificatio
     heard_at(verdict, artist, title, Some(153))
 }
 
+/// Whether `verdict` names another recording than `KILLY - Killamonjaro`, when the catalog says
+/// the song runs `catalog` seconds and any take is wanted.
+fn another_recording(verdict: &VerificationResult, catalog: i32) -> bool {
+    names_another_recording(verdict, "KILLY", "Killamonjaro", Some(catalog), &Takes::Any)
+}
+
 #[test]
-fn another_artists_song_of_another_title_is_another_song() {
+fn another_artists_song_of_another_title_is_another_recording() {
     // A video of another artist's song of a like title.
     let summer_cem = heard(
         VerificationVerdict::Mismatch,
         "Summer Cem & BILLA JOE",
         "KILLY MANJARO",
     );
-    assert!(names_another_song(&summer_cem, "KILLY", "Killamonjaro"));
+    assert!(another_recording(&summer_cem, 153));
 }
 
 #[test]
-fn a_take_of_the_same_song_a_cover_and_an_unnamed_verdict_are_not() {
-    // Another take, or another artist's recording of the same title: kept and asked about.
-    let live = heard(VerificationVerdict::Mismatch, "KILLY", "Killamonjaro (Live)");
-    let cover = heard(VerificationVerdict::Mismatch, "Some Band", "Killamonjaro");
-    let live_cover = heard(VerificationVerdict::Mismatch, "Some Band", "Killamonjaro (Live)");
-    // The same artist's other song: also kept and asked about.
+fn the_artists_other_song_is_another_recording_only_at_another_length() {
     let other_song = heard(VerificationVerdict::Mismatch, "KILLY", "Distance");
+    assert!(another_recording(&other_song, 179));
+    assert!(!another_recording(&other_song, 153));
+}
+
+#[test]
+fn a_cover_by_another_artist_is_another_recording_only_at_another_length() {
+    let cover = heard(VerificationVerdict::Mismatch, "Some Band", "Killamonjaro");
+    assert!(another_recording(&cover, 173));
+    // At the song's own length it may be an alias of the artist: asked about, not thrown away.
+    assert!(!another_recording(&cover, 153));
+}
+
+#[test]
+fn a_title_variant_at_the_songs_length_is_kept_and_asked_about() {
+    let variant = heard(VerificationVerdict::Mismatch, "KILLY", "Killamonjaro Part 2");
+    assert!(!names_another_recording(
+        &variant,
+        "KILLY",
+        "Killamonjaro Pt. 2",
+        Some(153),
+        &Takes::Any
+    ));
+}
+
+#[test]
+fn a_certain_take_nobody_asked_for_is_another_recording() {
+    let mut live = heard(VerificationVerdict::Mismatch, "KILLY", "Killamonjaro");
+    live.kind = Some(RecordingKind::Live);
+    live.kind_certain = true;
+    assert!(another_recording(&live, 153));
+    // The same take, asked for by the title, is the song.
+    assert!(!names_another_recording(
+        &live,
+        "KILLY",
+        "Killamonjaro (Live)",
+        Some(153),
+        &Takes::Any
+    ));
+    // A take the verdict is not sure of is a question.
+    live.kind_certain = false;
+    assert!(!another_recording(&live, 153));
+}
+
+#[test]
+fn another_version_of_the_title_is_another_recording() {
+    let remix = heard(VerificationVerdict::Mismatch, "KILLY", "Killamonjaro (Remix)");
+    assert!(another_recording(&remix, 153));
+}
+
+#[test]
+fn a_verdict_that_names_nothing_or_confirms_is_not() {
     let nothing_named = VerificationResult {
         verdict: VerificationVerdict::Mismatch,
         ..Default::default()
     };
     let confirmed = heard(VerificationVerdict::Confirmed, "Summer Cem", "KILLY MANJARO");
-    for verdict in [live, cover, live_cover, other_song, nothing_named, confirmed] {
-        assert!(
-            !names_another_song(&verdict, "KILLY", "Killamonjaro"),
-            "{verdict:?}"
-        );
+    for verdict in [nothing_named, confirmed] {
+        assert!(!another_recording(&verdict, 153), "{verdict:?}");
     }
 }
 
 #[test]
 fn a_name_in_another_script_is_kept_and_asked_about() {
     let japanese = heard(VerificationVerdict::Mismatch, "高橋洋子", "残酷な天使のテーゼ");
-    assert!(!names_another_song(
+    assert!(!names_another_recording(
         &japanese,
         "Yoko Takahashi",
-        "A Cruel Angel's Thesis"
+        "A Cruel Angel's Thesis",
+        Some(153),
+        &Takes::Any
     ));
     let russian = heard(VerificationVerdict::Mismatch, "Кино", "Звезда по имени Солнце");
-    assert!(!names_another_song(&russian, "Viktor Tsoi", "Star Called Sun"));
+    assert!(!names_another_recording(
+        &russian,
+        "Viktor Tsoi",
+        "Star Called Sun",
+        Some(153),
+        &Takes::Any
+    ));
 }
 
 #[test]
@@ -1979,10 +2083,7 @@ fn an_unbelieved_link_is_kept_and_asked_about() {
     );
     no_lookup.lookup = None;
     for verdict in [too_long, no_length, dwarfed, no_lookup] {
-        assert!(
-            !names_another_song(&verdict, "KILLY", "Killamonjaro"),
-            "{verdict:?}"
-        );
+        assert!(!another_recording(&verdict, 153), "{verdict:?}");
     }
 }
 
@@ -2015,6 +2116,127 @@ async fn a_refused_video_is_not_taken_again() {
             .any(|r| r.url.path() == "/search" && r.url.query().unwrap_or("").contains("skip=ytm-atv")),
         "{asked:?}"
     );
+}
+
+// ---- A YouTube file that is another recording: the next video is tried ----------------------
+
+/// What AcoustID answers for a 180 s file it hears as `artist - title`.
+fn heard_lookup(artist: &str, title: &str) -> Value {
+    json!({"status": "ok", "results": [{
+        "id": "result", "score": 0.97,
+        "recordings": [{
+            "id": "rec", "title": title, "artists": [{"name": artist}],
+            "duration": 180, "sources": 10,
+        }],
+    }]})
+}
+
+/// A walk whose YouTube downloads are real 180 s audio; None where ffmpeg or fpcalc is missing.
+async fn recording_walk(root: &Root, videos: &[&str]) -> Option<Walk> {
+    let melody = "aevalsrc=exprs=0.4*sin(2*PI*t*220*pow(2\\,floor(mod(t*2\\,8))*2/12))\
+                  +0.3*sin(2*PI*t*330*pow(2\\,floor(mod(t*3\\,5))*3/12)):s=44100:d=180";
+    let audio = made_sound(melody, &["-c:a", "libmp3lame", "-f", "mp3"])?;
+    let walk = build_full(root, false, DownloadSource::YouTube, true, true, |_| {
+        Arc::new(|_: &str| Vec::new())
+    })
+    .await;
+    {
+        let mut state = walk.slskd.state.lock();
+        state.download_audio = Some(audio);
+        state.search_videos = videos.iter().map(|v| v.to_string()).collect();
+    }
+    Some(walk)
+}
+
+fn searches_of(requests: &[Request]) -> Vec<String> {
+    requests
+        .iter()
+        .filter(|r| r.url.path() == "/search")
+        .map(|r| r.url.query().unwrap_or("").to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_video_that_is_another_recording_is_refused_and_the_next_one_is_kept() {
+    let root = Root::new("octo-attempts-");
+    let Some(walk) = recording_walk(&root, &["bad", "good"]).await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    {
+        let mut state = walk.slskd.state.lock();
+        state
+            .lookup_by_video
+            .insert("bad".into(), heard_lookup("Other Artist", "Other Song"));
+        state
+            .lookup_by_video
+            .insert("good".into(), heard_lookup("Drake", "Started"));
+    }
+    let id = walk.songs[3].external_id.clone().expect("an id");
+
+    acquire(&walk, &id, None).await.expect("the second video lands");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some("good"));
+    assert_eq!(routing.refused_videos, ["bad"]);
+    assert_eq!(walk.registry.refusals_for(&routing), ["bad"]);
+    assert_eq!(walk.slskd.state.lock().you_tube_downloads.len(), 2);
+    let asked = walk._server.received_requests().await.expect("recording");
+    let searches = searches_of(&asked);
+    assert!(searches.len() >= 2, "{searches:?}");
+    assert!(!searches[0].contains("skip="), "{searches:?}");
+    assert!(searches[1].contains("skip=bad"), "{searches:?}");
+}
+
+#[tokio::test]
+async fn three_videos_that_are_other_recordings_fail_the_download() {
+    let root = Root::new("octo-attempts-");
+    let Some(walk) = recording_walk(&root, &["a", "b", "c", "d"]).await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    for video in ["a", "b", "c", "d"] {
+        walk.slskd
+            .state
+            .lock()
+            .lookup_by_video
+            .insert(video.into(), heard_lookup("Other Artist", "Other Song"));
+    }
+    let id = walk.songs[3].external_id.clone().expect("an id");
+
+    let error = acquire(&walk, &id, None).await.expect_err("no video is right");
+
+    assert!(error.to_string().contains("AcoustID identified"), "{error:#}");
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.refused_videos, ["a", "b", "c"]);
+    assert_eq!(walk.slskd.state.lock().you_tube_downloads.len(), 3);
+}
+
+#[tokio::test]
+async fn a_pinned_video_that_is_refused_is_never_downloaded_twice() {
+    let root = Root::new("octo-attempts-");
+    let Some(walk) = recording_walk(&root, &["bad", "good"]).await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    {
+        let mut state = walk.slskd.state.lock();
+        state
+            .lookup_by_video
+            .insert("bad".into(), heard_lookup("Other Artist", "Other Song"));
+        state
+            .lookup_by_video
+            .insert("good".into(), heard_lookup("Drake", "Started"));
+    }
+    let id = walk.songs[3].external_id.clone().expect("an id");
+    assert!(walk.registry.set_you_tube_id(&id, "bad"));
+
+    acquire(&walk, &id, None).await.expect("the other video lands");
+
+    let downloads = walk.slskd.state.lock().you_tube_downloads.clone();
+    assert_eq!(downloads.len(), 2, "{downloads:?}");
+    assert!(downloads[0].contains("bad-"), "{downloads:?}");
+    assert!(downloads[1].contains("good-"), "{downloads:?}");
 }
 
 #[tokio::test]

@@ -328,13 +328,14 @@ async fn save_preview(
 }
 
 /// Whether a verdict leaves the question to the preview: AcoustID has no entry for the sound, or
+/// ties it to a song through one person's submissions only, or
 /// the length that would have caught a wrong file is unknown and AcoustID named nothing that
 /// settles it. A verdict that names the song (a confirmation, a doubted length, a source that
 /// disagreed) is never second-guessed.
 pub fn wanted(verdict: &VerificationResult, length_known: bool) -> bool {
     verdict.verdict == VerificationVerdict::Inconclusive
         && match verdict.reason {
-            InconclusiveReason::NoEntry => true,
+            InconclusiveReason::NoEntry | InconclusiveReason::LoneLink => true,
             InconclusiveReason::SourceDisagreed | InconclusiveReason::LengthOff => false,
             _ => !length_known,
         }

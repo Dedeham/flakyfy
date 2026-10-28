@@ -1168,11 +1168,15 @@ impl LibraryReviewSweepWorker {
         // A sound AcoustID has never heard is not left to a person while its song's YouTube
         // preview can say: a preview with the song's title, artist and length that sounds alike
         // settles it, one that sounds nothing like it is a better question, and anything else
-        // stays the question it was.
+        // stays the question it was. A link only one person's submissions make is put to the
+        // preview the same way, but one that sounds nothing like it is only ever asked about.
         let mut waiting_for = "AcoustID";
         let mut witness: Option<PreviewWitness> = None;
         let (outcome, question) = if outcome == Outcome::Ask
-            && question.reason == InconclusiveReason::NoEntry
+            && matches!(
+                question.reason,
+                InconclusiveReason::NoEntry | InconclusiveReason::LoneLink
+            )
             && file.tagged
         {
             let seconds = TagFile::open(&path)
@@ -1197,10 +1201,34 @@ impl LibraryReviewSweepWorker {
                     ..
                 } => {
                     info!(
-                        "Library review sweep: '{} - {}' is a sound AcoustID has never heard, and it sounds like its YouTube preview",
-                        song.artist, song.title
+                        "Library review sweep: '{} - {}' is {}, and it sounds like its YouTube preview",
+                        song.artist,
+                        song.title,
+                        if question.reason == InconclusiveReason::LoneLink {
+                            "tied to its song by one person's AcoustID submissions only"
+                        } else {
+                            "a sound AcoustID has never heard"
+                        }
                     );
                     (Outcome::Fine, question)
+                }
+                PreviewOutcome::Compared {
+                    heard: Heard::Mismatch,
+                    comparison,
+                    ..
+                } if question.reason == InconclusiveReason::LoneLink => {
+                    // One person's link against a preview that disagrees: two single words, so a
+                    // question, and never a replacement.
+                    (
+                        Outcome::Ask,
+                        VerificationResult {
+                            evidence: Some(format!(
+                                "{}% of its bits differ from its YouTube preview",
+                                (comparison.bit_error * 100.0).round()
+                            )),
+                            ..question
+                        },
+                    )
                 }
                 PreviewOutcome::Compared {
                     heard: Heard::Mismatch,
@@ -1501,7 +1529,7 @@ impl LibraryReviewSweepWorker {
     /// run, the keeper on the allowlist, Wrong song on, the day's cap and breaker not reached,
     /// and either `ReviewSweepAutoReplace` on with AcoustID clearly hearing another song, or
     /// `ReviewSweepAutoReplacePreview` on with the song's YouTube preview clearly not matching (at least [`Self::PREVIEW_REPLACE_FROM`] of its bits differ).
-    /// The preview's replacing also needs `KeepReplacedOriginals` on and Soulseek as the download
+    /// Either needs `KeepReplacedOriginals` on. The preview's replacing also needs Soulseek as the download
     /// source. It also needs the preview to be a YouTube Music row from the file's own album.
     pub fn decide(
         question: &VerificationResult,
@@ -1521,7 +1549,9 @@ impl LibraryReviewSweepWorker {
             && wrong_song_on
             && today.replaced < actions.effective_review_sweep_auto_replace_per_day()
             && today.failed < Self::MAX_FAILED_REPLACEMENTS_PER_DAY;
+        // A replacement whose original is not kept could not be put back.
         let by_acoustid = actions.review_sweep_auto_replace
+            && actions.keep_replaced_originals
             && Self::clearly_another_song(question, file, &settings.soulseek);
         // Only a Soulseek replacement is held to the preview (YouTube's and Lidarr's are not), and
         // one whose original is not kept could not be put back.
@@ -1543,7 +1573,8 @@ impl LibraryReviewSweepWorker {
     /// A `Mismatch` naming a recording, at or above `MinMatchScore`, on a file whose artist and
     /// title come from its tags, by another artist and with another title. Another take or a
     /// remaster of the same song, the same artist's song under a title in another script or
-    /// translated, an untagged file, a wrong length and anything AcoustID was unsure of are not.
+    /// translated, an untagged file, a wrong length and anything AcoustID was unsure of are not,
+    /// and neither is a song fewer than two submissions tie the sound to.
     pub fn clearly_another_song(
         question: &VerificationResult,
         file: &SweptFile,
@@ -1553,12 +1584,50 @@ impl LibraryReviewSweepWorker {
             && question.verdict == VerificationVerdict::Mismatch
             && question.reason == InconclusiveReason::SoundsLikeAnother
             && question.recording_id.as_deref().is_some_and(|id| !id.is_empty())
+            && Self::submissions_for_named(question) >= Self::MIN_SUBMISSIONS_TO_REPLACE
             && whole_percent(question.score) >= soulseek.effective_min_match_score()
             && question
                 .matched_title
                 .as_deref()
                 .is_some_and(|heard| !Self::same_title(heard, &file.song.title))
             && !Self::shares_artist(question, &file.song.artist)
+    }
+
+    /// How many submissions a replacement by AcoustID needs behind the song it heard: one is one
+    /// person's word.
+    pub const MIN_SUBMISSIONS_TO_REPLACE: i32 = 2;
+
+    /// How many submissions tie the sound to the song the question names: every recording with
+    /// its title and artist in the result that holds it. 0 without AcoustID's answer.
+    pub fn submissions_for_named(question: &VerificationResult) -> i32 {
+        let (Some(lookup), Some(id)) = (
+            &question.lookup,
+            question.recording_id.as_deref().filter(|id| !id.is_empty()),
+        ) else {
+            return 0;
+        };
+        let key = |r: &octo_core::fingerprint::AcoustIdRecording| {
+            (SongIdentity::key(&r.title), SongIdentity::key(&r.artist_credit()))
+        };
+        lookup
+            .results
+            .iter()
+            .filter_map(|result| {
+                let named = result
+                    .recordings
+                    .iter()
+                    .find(|r| dotnet::eq_ignore_case(&r.recording_id, id))?;
+                let song = key(named);
+                Some(
+                    result
+                        .recordings
+                        .iter()
+                        .filter(|r| key(r) == song)
+                        .fold(0i32, |total, r| total.saturating_add(r.sources.max(0))),
+                )
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     /// Whether what AcoustID heard may be by the file's own artist: its named artist, or any

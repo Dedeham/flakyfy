@@ -454,15 +454,18 @@ impl SoulseekDownloadService {
             )));
         }
         let length_known = routing.duration.is_some_and(|s| s > 0) && actual_secs > 0;
-        if let Some(reason) = self
-            .refused_by_preview(base, routing, &track_key, path, &verdict, length_known)
+        let verdict = match self
+            .refused_by_preview(base, routing, &track_key, path, verdict, length_known)
             .await
         {
-            discard_rejected_download(path, started_utc);
-            return Err(file_not_found(format!(
-                "SpotiFLAC's file for '{artist} - {title}' {reason}"
-            )));
-        }
+            PreviewSays::Keep(kept) => kept,
+            PreviewSays::Refuse(reason) => {
+                discard_rejected_download(path, started_utc);
+                return Err(file_not_found(format!(
+                    "SpotiFLAC's file for '{artist} - {title}' {reason}"
+                )));
+            }
+        };
 
         let spectrum = self
             .verification

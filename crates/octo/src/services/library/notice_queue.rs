@@ -422,6 +422,16 @@ impl NoticeQueue {
                 "AcoustID has never heard this recording, and it sounds nothing like its YouTube preview ({})",
                 verdict.evidence.as_deref().unwrap_or("not the same song")
             ),
+            InconclusiveReason::LoneLink => {
+                let told = format!(
+                    "Only one person ever told AcoustID this is {}",
+                    verdict.describe()
+                );
+                match verdict.evidence.as_deref().filter(|e| !e.is_empty()) {
+                    Some(evidence) => format!("{told}, and {evidence}"),
+                    None => told,
+                }
+            }
             _ => "Octo could not check this download".to_string(),
         };
         self.insert_review(username, local_path, song, verdict, origin, reason)
@@ -505,10 +515,13 @@ impl NoticeQueue {
 
     /// The cause written with an entry. A file its YouTube preview says is another song is stored
     /// as one that sounds like another, which every earlier release reads; its reason carries the
-    /// preview's words.
+    /// preview's words. A link only one person's submissions make is stored as a match AcoustID
+    /// was not sure of, which every earlier release reads too, and a Keep on it sends AcoustID a
+    /// second link.
     fn stored_cause(reason: InconclusiveReason) -> InconclusiveReason {
         match reason {
             InconclusiveReason::DiffersFromYouTube => InconclusiveReason::SoundsLikeAnother,
+            InconclusiveReason::LoneLink => InconclusiveReason::BelowThreshold,
             other => other,
         }
     }

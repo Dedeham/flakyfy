@@ -771,6 +771,17 @@ impl Respond for FakeSlskd {
     }
 }
 
+/// A Review queue that keeps every verdict a download asked about.
+#[derive(Default)]
+struct AskedReviews(Mutex<Vec<VerificationResult>>);
+
+impl crate::services::common::ReviewQueue for AskedReviews {
+    fn add_review(&self, _: &str, _: &str, _: &Song, verdict: &VerificationResult) -> bool {
+        self.0.lock().push(verdict.clone());
+        true
+    }
+}
+
 struct Walk {
     service: Arc<BaseDownloadService>,
     registry: Arc<ExternalIdRegistry>,
@@ -778,6 +789,9 @@ struct Walk {
     songs: Vec<Song>,
     album_id: String,
     rejected: Arc<RejectedPeerRegistry>,
+    settings: Arc<SettingsStore>,
+    /// What downloads asked about in Review, once Review is switched on in `settings`.
+    reviews: Arc<AskedReviews>,
     _server: MockServer,
 }
 
@@ -949,8 +963,10 @@ async fn build_full_copies(
         history: Arc::new(DownloadHistoryService::new(root.0.path().join("history.json"))),
         notifications: Arc::new(NotificationService::new(Vec::new(), Arc::clone(&settings), None)),
     };
+    let reviews = Arc::new(AskedReviews::default());
     let services = DownloadServices {
         concurrency: Some(Arc::new(DownloadConcurrency::new(Arc::clone(&settings)))),
+        review_queue: Some(reviews.clone()),
         ..Default::default()
     };
     let acoust_id = url::Url::parse(&format!("{}/", server.uri())).expect("parses");
@@ -984,6 +1000,8 @@ async fn build_full_copies(
         songs,
         album_id: "album-1".into(),
         rejected,
+        settings,
+        reviews,
         _server: server,
     }
 }
@@ -1698,6 +1716,116 @@ async fn without_a_preview_the_file_acoustid_never_heard_is_kept() {
     assert_eq!(walk.rejected.count(), 0);
 }
 
+/// What AcoustID answers for every Soulseek file: "Drake - Started", through one submission.
+fn lone_lookup() -> Value {
+    json!({"status": "ok", "results": [{
+        "id": "result", "score": 0.97,
+        "recordings": [{
+            "id": "rec-started", "title": "Started", "artists": [{"name": "Drake"}],
+            "duration": 180, "sources": 1,
+        }],
+    }]})
+}
+
+#[test]
+fn a_lone_link_to_the_song_still_says_which_take_a_file_is() {
+    let live = VerificationResult {
+        reason: InconclusiveReason::LoneLink,
+        recording_id: Some("rec".into()),
+        kind: Some(RecordingKind::Live),
+        ..Default::default()
+    };
+    assert_eq!(take_of(&live), Some(RecordingKind::Live));
+    let confirmed = VerificationResult {
+        verdict: VerificationVerdict::Confirmed,
+        reason: InconclusiveReason::None,
+        ..live.clone()
+    };
+    assert_eq!(take_of(&confirmed), Some(RecordingKind::Live));
+    let elsewhere = VerificationResult {
+        recording_id: None,
+        ..live.clone()
+    };
+    assert_eq!(take_of(&elsewhere), None);
+    let unsure = VerificationResult {
+        reason: InconclusiveReason::BelowThreshold,
+        ..live
+    };
+    assert_eq!(take_of(&unsure), None);
+}
+
+/// Review switched on, with alice keeping the library.
+fn review_on(walk: &Walk) {
+    let mut settings = (*walk.settings.current()).clone();
+    settings.library_actions.enabled = true;
+    settings.library_actions.review_enabled = true;
+    settings.library_actions.allowed_users = vec!["alice".into()];
+    walk.settings.set(settings);
+}
+
+/// One person's link to the song is not enough alone: the preview a believed row plays refuses
+/// the noise (its peer remembered) and confirms the song, which is then asked about nowhere.
+#[tokio::test]
+async fn a_lone_link_is_confirmed_by_a_preview_that_agrees_and_refused_by_one_that_does_not() {
+    let root = Root::new("octo-preview-");
+    let Some((walk, preview)) = verified_walk(&root).await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    {
+        let mut state = walk.slskd.state.lock();
+        state.preview = Some(preview);
+        state.lookup_by_video.insert(String::new(), lone_lookup());
+    }
+    review_on(&walk);
+
+    let path = acquire(&walk, walk.songs[3].external_id.as_deref().expect("an id"), None)
+        .await
+        .expect("the second peer's file is kept");
+
+    let users: Vec<String> = walk.slskd.batches().into_iter().map(|(u, ..)| u).collect();
+    assert_eq!(users, names(&["wrongpeer", "rightpeer"]));
+    assert!(std::path::Path::new(&path).is_file(), "{path}");
+    assert!(
+        walk.rejected
+            .is_denied(Some("wrongpeer"), Some(r"A\Drake\04 - Started.flac"))
+    );
+    assert!(
+        !walk
+            .rejected
+            .is_denied(Some("rightpeer"), Some(r"B\Drake\04 - Started.flac"))
+    );
+    // Confirmed, so nobody is asked about it.
+    assert!(walk.reviews.0.lock().is_empty());
+}
+
+/// With no preview to back it, a lone link is kept and asked about, carrying the recording a
+/// person's Keep sends AcoustID a second link to.
+#[tokio::test]
+async fn a_lone_link_without_a_preview_is_kept_and_asked_about() {
+    let root = Root::new("octo-preview-");
+    let Some((walk, _)) = verified_walk(&root).await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    walk.slskd
+        .state
+        .lock()
+        .lookup_by_video
+        .insert(String::new(), lone_lookup());
+    review_on(&walk);
+
+    acquire(&walk, walk.songs[3].external_id.as_deref().expect("an id"), None)
+        .await
+        .expect("the first peer's file is kept");
+
+    assert_eq!(walk.rejected.count(), 0);
+    let asked = walk.reviews.0.lock().clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(asked[0].reason, InconclusiveReason::LoneLink);
+    assert_eq!(asked[0].candidate_recording_id.as_deref(), Some("rec-started"));
+}
+
 #[tokio::test]
 async fn without_batches_the_file_is_found_by_name_the_old_way() {
     let root = Root::new("octo-attempts-");
@@ -2328,6 +2456,56 @@ async fn a_video_that_is_another_recording_is_refused_and_the_next_one_is_kept()
     assert!(searches.len() >= 2, "{searches:?}");
     assert!(!searches[0].contains("skip="), "{searches:?}");
     assert!(searches[1].contains("skip=bad"), "{searches:?}");
+}
+
+/// A YouTube Music row that names the song, artist and length is a second word beside one
+/// person's AcoustID link: the MP3 is confirmed and nobody is asked about it.
+#[tokio::test]
+async fn a_lone_link_through_a_row_that_names_the_song_is_confirmed() {
+    let root = Root::new("octo-attempts-");
+    let Some(walk) = recording_walk(&root, &["vid"]).await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    {
+        let mut state = walk.slskd.state.lock();
+        state.ytm_tracks = Some(json!([{
+            "videoId": "ytm-row", "title": "Started", "artists": ["Drake"],
+            "durationSeconds": 180, "videoType": "MUSIC_VIDEO_TYPE_ATV",
+        }]));
+        state.lookup_by_video.insert("ytm-row".into(), lone_lookup());
+    }
+    review_on(&walk);
+    let id = walk.songs[3].external_id.clone().expect("an id");
+
+    acquire(&walk, &id, None).await.expect("the row's MP3 lands");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some("ytm-row"));
+    assert!(walk.reviews.0.lock().is_empty());
+}
+
+/// A video whose own facts do not name the song backs nothing: the lone link stays a question.
+#[tokio::test]
+async fn a_lone_link_through_a_video_nothing_names_is_asked_about() {
+    let root = Root::new("octo-attempts-");
+    let Some(walk) = recording_walk(&root, &["vid"]).await else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    walk.slskd
+        .state
+        .lock()
+        .lookup_by_video
+        .insert("vid".into(), lone_lookup());
+    review_on(&walk);
+    let id = walk.songs[3].external_id.clone().expect("an id");
+
+    acquire(&walk, &id, None).await.expect("the video's MP3 lands");
+
+    let asked = walk.reviews.0.lock().clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(asked[0].reason, InconclusiveReason::LoneLink);
 }
 
 #[tokio::test]

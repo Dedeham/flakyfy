@@ -1030,8 +1030,17 @@ fn replacing(per_hour: i32) -> LibraryActionSettings {
     }
 }
 
-/// AcoustID hears the file as Portishead's `title`, `score` sure.
+/// AcoustID hears the file as Portishead's `title`, `score` sure, through two submissions.
 fn heard_as(title: &str, score: f64) -> VerificationResult {
+    heard_as_by(title, score, 2)
+}
+
+/// [`heard_as`] with `sources` submissions behind the recording.
+fn heard_as_by(title: &str, score: f64, sources: i32) -> VerificationResult {
+    let named = AcoustIdRecording {
+        sources,
+        ..AcoustIdRecording::new("rec-roads", title, vec!["Portishead".to_string()], None, None)
+    };
     VerificationResult {
         verdict: VerificationVerdict::Mismatch,
         score,
@@ -1040,6 +1049,11 @@ fn heard_as(title: &str, score: f64) -> VerificationResult {
         recording_id: Some("rec-roads".into()),
         duration_seconds: 305,
         threshold: 0.85,
+        lookup: Some(octo_core::fingerprint::AcoustIdLookup::new(
+            true,
+            None,
+            vec![octo_core::fingerprint::AcoustIdResult::new(score, vec![named])],
+        )),
         ..Default::default()
     }
 }
@@ -1450,7 +1464,10 @@ async fn any_recording_by_the_files_artist_in_the_heard_result_is_asked_about() 
     use octo_core::fingerprint::{AcoustIdLookup, AcoustIdResult};
     let sweep = Sweep::new();
     sweep.teardrop("a.flac");
-    let named = AcoustIdRecording::new("rec-roads", "Roads", vec!["Portishead".to_string()], None, None);
+    let named = AcoustIdRecording {
+        sources: 2,
+        ..AcoustIdRecording::new("rec-roads", "Roads", vec!["Portishead".to_string()], None, None)
+    };
     let own = AcoustIdRecording::new(
         "rec-teardrop-jp",
         "\u{30c6}\u{30a3}\u{30a2}\u{30c9}\u{30ed}\u{30c3}\u{30d7}",
@@ -2761,4 +2778,130 @@ async fn an_unclear_preview_is_never_replaced_on() {
     assert!(replacer.requests().is_empty());
     let entries = queue.for_user("bob", NoticeKind::Review);
     assert_eq!(entries[0].cause, InconclusiveReason::NoEntry);
+}
+
+// ---- A link one person's submissions make ---------------------------------------------------
+
+/// AcoustID ties the file to its own song, Teardrop, through one submission.
+fn lone_link() -> VerificationResult {
+    VerificationResult {
+        reason: InconclusiveReason::LoneLink,
+        score: 0.97,
+        matched_artist: Some("Massive Attack".into()),
+        matched_title: Some("Teardrop".into()),
+        recording_id: Some("rec".into()),
+        candidate_recording_id: Some("rec".into()),
+        fingerprint: Some("AQADtEqk".into()),
+        duration_seconds: 330,
+        threshold: 0.85,
+        ..Default::default()
+    }
+}
+
+/// A lone link, and the preview saying `preview` of it.
+fn lone_linked(preview: PreviewOutcome) -> Arc<FakeVerifier> {
+    let verifier = FakeVerifier::answering(lone_link);
+    *verifier.preview_answer.lock() = Some(preview);
+    verifier
+}
+
+#[test]
+fn a_lone_link_is_a_question() {
+    assert!(lone_link().needs_review());
+    assert_eq!(LibraryReviewSweepWorker::classify(lone_link()).0, Outcome::Ask);
+}
+
+#[tokio::test]
+async fn a_lone_link_is_put_to_the_preview_like_a_sound_never_heard() {
+    let verifier = lone_linked(compared(Heard::Match, 0.04));
+
+    let (_sweep, worker, queue) = never_heard_song(verifier.clone(), settings_of(60)).await;
+
+    assert_eq!(verifier.previews_asked(), 1);
+    assert_eq!(*verifier.preview_backgrounds.lock(), vec![true]);
+    assert!(queue.for_user("bob", NoticeKind::Review).is_empty());
+    let status = worker.status();
+    assert_eq!((status.found, status.fine), (0, 1));
+}
+
+#[tokio::test]
+async fn a_lone_link_its_preview_calls_another_song_is_asked_never_replaced() {
+    let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+    let sweep = Sweep::new();
+    sweep.teardrop("a.flac");
+    let queue = Arc::new(NoticeQueue::new());
+    let worker = sweep.worker(
+        lone_linked(compared(Heard::Mismatch, 0.5)),
+        Options {
+            queue: Some(queue.clone()),
+            settings: Some(LibraryActionSettings {
+                review_sweep_auto_replace: true,
+                ..replacing_by_preview(60)
+            }),
+            replacer: Some(replacer.clone()),
+            ..Default::default()
+        },
+    );
+
+    worker.tick().await;
+
+    assert!(replacer.requests().is_empty());
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].state, NoticeState::Waiting);
+    assert_eq!(entries[0].cause, InconclusiveReason::BelowThreshold);
+    assert_eq!(
+        entries[0].reason,
+        "Only one person ever told AcoustID this is 'Massive Attack - Teardrop', and 50% of its bits differ from its YouTube preview"
+    );
+}
+
+/// AcoustID's replacing needs two submissions behind the song it heard.
+#[test]
+fn a_song_one_submission_names_is_never_clearly_another() {
+    let settings = app_settings(replacing(60));
+    let decide = |question: &VerificationResult| {
+        LibraryReviewSweepWorker::decide(
+            question,
+            &file_titled("Teardrop"),
+            &settings,
+            "bob",
+            Today::default(),
+            None,
+        )
+    };
+    let (_, two) = LibraryReviewSweepWorker::classify(heard_as_by("Roads", 0.97, 2));
+    assert_eq!(decide(&two), AutoReplace::Replace);
+    let (_, one) = LibraryReviewSweepWorker::classify(heard_as_by("Roads", 0.97, 1));
+    assert_eq!(decide(&one), AutoReplace::Ask);
+    let unanswered = VerificationResult {
+        lookup: None,
+        ..two.clone()
+    };
+    assert_eq!(decide(&unanswered), AutoReplace::Ask);
+    assert_eq!(LibraryReviewSweepWorker::submissions_for_named(&two), 2);
+}
+
+/// AcoustID's replacing needs the original kept, so Put back can undo it.
+#[test]
+fn acoust_id_replaces_only_with_the_original_kept() {
+    let (_, question) = LibraryReviewSweepWorker::classify(heard_as("Roads", 0.97));
+    let decide = |actions: LibraryActionSettings| {
+        LibraryReviewSweepWorker::decide(
+            &question,
+            &file_titled("Teardrop"),
+            &app_settings(actions),
+            "bob",
+            Today::default(),
+            None,
+        )
+    };
+    assert_eq!(decide(replacing(60)), AutoReplace::Replace);
+    assert_eq!(
+        decide(LibraryActionSettings {
+            keep_replaced_originals: false,
+            ..replacing(60)
+        }),
+        AutoReplace::Ask
+    );
 }

@@ -851,7 +851,8 @@ impl LibraryYoutubeCheck {
         }
     }
 
-    /// The tag check heard AcoustID confirm this file, and the file has not changed since.
+    /// The tag check heard AcoustID confirm this file, under the rule that one person's
+    /// submissions confirm nothing alone, and the file has not changed since.
     async fn confirmed_by_tag_check(&self, full: &str) -> bool {
         let Some(identities) = self.identities.clone() else {
             return false;
@@ -864,6 +865,7 @@ impl LibraryYoutubeCheck {
             identities.read(|state| {
                 state.songs.values().any(|checked| {
                     checked.recording_id.as_deref().is_some_and(|id| !id.is_empty())
+                        && checked.confirmed_by_two
                         && checked.stamp == stamp
                         && get_full_path(&checked.path) == file
                 })

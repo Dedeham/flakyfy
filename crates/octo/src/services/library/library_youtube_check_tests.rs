@@ -908,6 +908,7 @@ async fn a_song_the_tag_check_confirmed_needs_no_lookup_until_it_changes() {
                 stamp: stamp_of(&path).expect("a stamp"),
                 path: path.clone(),
                 recording_id: Some("rec-1".into()),
+                confirmed_by_two: true,
                 ..Default::default()
             },
         );
@@ -926,6 +927,36 @@ async fn a_song_the_tag_check_confirmed_needs_no_lookup_until_it_changes() {
 
     // The file changed since the tag check heard it: AcoustID is asked again.
     identities.update(|s| s.songs.get_mut("nd-1").expect("kept").stamp = "1:2".into());
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert_eq!(verifier.lookups(), 1);
+    assert_eq!(checker.asked(), ["a.flac"]);
+}
+
+/// A confirmation the tag check stored before one person's submissions stopped confirming a file
+/// is not taken: AcoustID is asked again.
+#[tokio::test]
+async fn a_confirmation_stored_before_the_two_submission_rule_is_looked_up_again() {
+    let check = Check::new();
+    let path = check.tagged("a.flac");
+    let identities = Arc::new(IdentitySweepStore::new(None));
+    identities.update(|s| {
+        s.songs.insert(
+            "nd-1".into(),
+            CheckedSong {
+                stamp: stamp_of(&path).expect("a stamp"),
+                path: path.clone(),
+                recording_id: Some("rec-1".into()),
+                ..Default::default()
+            },
+        );
+    });
+    let checker = FakeChecker::answering(vec![heard(Heard::Match, 0.05)]);
+    let verifier = FakeVerifier::answering(vec![unsettled(InconclusiveReason::NoEntry)]);
+    let (worker, _) = check.simple(checker.clone());
+    let worker = worker.with_acoustid(identities, verifier.clone());
+
     worker.start();
     run_to_the_end(&worker).await;
 

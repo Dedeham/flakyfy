@@ -70,6 +70,13 @@ fn a_sound_acoustid_never_heard_is_always_compared() {
 }
 
 #[test]
+fn a_lone_link_is_always_compared() {
+    let lone = verdict(VerificationVerdict::Inconclusive, InconclusiveReason::LoneLink);
+    assert!(wanted(&lone, true));
+    assert!(wanted(&lone, false));
+}
+
+#[test]
 fn an_unknown_length_is_compared_unless_acoustid_named_the_song() {
     for reason in [
         InconclusiveReason::BelowThreshold,

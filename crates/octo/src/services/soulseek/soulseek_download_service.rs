@@ -60,7 +60,9 @@ use crate::services::common::{
 };
 use crate::services::fingerprint::DownloadVerificationService;
 use crate::services::fingerprint::download_verification_service::trustworthy;
-use crate::services::fingerprint::preview_check::{Heard, PreviewOutcome, PreviewRequest};
+use crate::services::fingerprint::preview_check::{
+    self, Heard, PreviewFacts, PreviewOutcome, PreviewRequest,
+};
 use crate::services::i_download_service::DirectStreamInfo;
 use crate::services::library::library_review_sweep_worker::LibraryReviewSweepWorker;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
@@ -355,16 +357,19 @@ impl SoulseekDownloadService {
         let length_known = routing.duration.is_some_and(|s| s > 0)
             && TagFile::open(&local).is_ok_and(|file| file.duration_seconds() > 0);
         let track_key = song.external_id.clone().unwrap_or_default();
-        if let Some(reason) = self
-            .refused_by_preview(base, routing, &track_key, &local, &verdict, length_known)
+        let verdict = match self
+            .refused_by_preview(base, routing, &track_key, &local, verdict, length_known)
             .await
         {
-            // Swept with the job folders when it cannot be removed now.
-            let _ = std::fs::remove_file(&local);
-            return Err(file_not_found(format!(
-                "Lidarr's file for '{artist} - {title}' {reason}"
-            )));
-        }
+            PreviewSays::Keep(kept) => kept,
+            PreviewSays::Refuse(reason) => {
+                // Swept with the job folders when it cannot be removed now.
+                let _ = std::fs::remove_file(&local);
+                return Err(file_not_found(format!(
+                    "Lidarr's file for '{artist} - {title}' {reason}"
+                )));
+            }
+        };
         if let Some(said) = verdict.acoust_id_text() {
             base.log_song_step_heard(
                 song,
@@ -385,6 +390,8 @@ impl SoulseekDownloadService {
             );
             song.transcoded_from = spectrum.estimate.clone();
         }
+        verdict.apply_tags_to(song);
+        song.verification = Some(Box::new(verdict));
         info!("Took Lidarr's import of '{artist} - {title}' into the pipeline: {local}");
         Ok(local)
     }
@@ -527,23 +534,38 @@ impl SoulseekDownloadService {
                 .you_tube_id
                 .clone()
                 .filter(|v| !v.is_empty() && !skip.contains(v));
+            // What is known of a video looked up here; a pinned one is known by its id alone.
+            let mut picked: Option<PreviewFacts> = None;
             if video_id.is_none() {
                 // YouTube Music's row for the song first, as a play picks: its title, artist and
                 // length are the song's. Else the shim's search. A video refused for the song or
                 // already tried is never taken.
+                // A YouTube Music row credits the artist asked for; a video, its channel.
                 let hit = match self
                     .youtube
                     .music_song(&artist, &title, r.duration, false)
                     .await
                     .filter(|h| !skip.contains(&h.video_id))
                 {
-                    Some(row) => Some(row),
+                    Some(row) => Some((row, Some(artist.clone()))),
                     None => self
                         .youtube
                         .search_skipping(&format!("{artist} {title}"), r.duration, false, &skip)
                         .await
-                        .filter(|h| !h.video_id.is_empty() && !skip.contains(&h.video_id)),
+                        .filter(|h| !h.video_id.is_empty() && !skip.contains(&h.video_id))
+                        .map(|hit| {
+                            let channel = hit.channel.clone();
+                            (hit, channel)
+                        }),
                 };
+                picked = hit.as_ref().map(|(hit, credited)| PreviewFacts {
+                    video_id: hit.video_id.clone(),
+                    title: hit.title.clone(),
+                    artist: credited.clone(),
+                    seconds: hit.duration,
+                    album: hit.album.clone(),
+                });
+                let hit = hit.map(|(hit, _)| hit);
                 if let Some(hit) = &hit {
                     self.id_registry.set_you_tube_id(&track_key, &hit.video_id);
                     self.id_registry
@@ -659,6 +681,21 @@ impl SoulseekDownloadService {
                 verdict.verdict = VerificationVerdict::Inconclusive;
                 verdict.reason = InconclusiveReason::SourceDisagreed;
             } else {
+                // A lone link to the song is backed by the video itself when that video's own
+                // title, artist and length name the song: a second word, independent of AcoustID.
+                let request = PreviewRequest {
+                    artist: &artist,
+                    title: &title,
+                    seconds: r.duration.filter(|s| *s > 0),
+                    video_id: Some(video_id.as_str()),
+                    background: false,
+                };
+                if picked
+                    .as_ref()
+                    .is_some_and(|facts| preview_check::trustworthy(&request, facts))
+                {
+                    verdict = DownloadVerificationService::confirmed_by_preview(verdict);
+                }
                 if let Some(said) = verdict.acoust_id_text() {
                     base.log_step_heard(
                         &track_key,
@@ -682,19 +719,20 @@ impl SoulseekDownloadService {
     // The preview check
     // =========================================================================
 
-    /// Holds a download AcoustID could not place against the song's YouTube preview. Some(the
-    /// reason, for the deny list) when the file is refused; None keeps it, judged as before.
+    /// Holds a download AcoustID could not place against the song's YouTube preview: Refuse(the
+    /// reason, for the deny list) when the file is thrown away, Keep(the verdict it is judged by)
+    /// otherwise. A lone link a believed preview backs is kept as a confirmation.
     /// `length_known`: the file's length and the song's were both read, so the length check
     /// before this one had something to compare.
-    async fn refused_by_preview(
+    pub(crate) async fn refused_by_preview(
         &self,
         base: &BaseDownloadService,
         routing: &SoulseekRouting,
         track_key: &str,
         path: &str,
-        verdict: &VerificationResult,
+        verdict: VerificationResult,
         length_known: bool,
-    ) -> Option<String> {
+    ) -> PreviewSays {
         let (artist, title) = names(routing);
         let request = PreviewRequest {
             artist: &artist,
@@ -715,7 +753,7 @@ impl SoulseekDownloadService {
         };
         let outcome = self
             .verification
-            .hear_against_preview(self.youtube.as_ref(), path, &request, verdict, length_known)
+            .hear_against_preview(self.youtube.as_ref(), path, &request, &verdict, length_known)
             .await;
         let PreviewOutcome::Compared {
             heard,
@@ -741,7 +779,7 @@ impl SoulseekDownloadService {
                 }
                 PreviewOutcome::NotAsked | PreviewOutcome::Compared { .. } => {}
             }
-            return None;
+            return PreviewSays::Keep(verdict);
         };
         let video = &preview.video_id;
         let measured = format!(
@@ -757,7 +795,11 @@ impl SoulseekDownloadService {
                     "Sounds like its YouTube preview",
                     None,
                 );
-                None
+                if trusted {
+                    PreviewSays::Keep(DownloadVerificationService::confirmed_by_preview(verdict))
+                } else {
+                    PreviewSays::Keep(verdict)
+                }
             }
             Heard::Mismatch => {
                 warn!(
@@ -770,7 +812,7 @@ impl SoulseekDownloadService {
                     "Did not sound like the song",
                     Some("Nothing in it sounds like the song's YouTube preview; thrown away"),
                 );
-                Some("did not sound like the song".to_string())
+                PreviewSays::Refuse("did not sound like the song".to_string())
             }
             Heard::Unclear => {
                 info!(
@@ -781,7 +823,7 @@ impl SoulseekDownloadService {
                         "a preview that may not be the song"
                     }
                 );
-                None
+                PreviewSays::Keep(verdict)
             }
         }
     }
@@ -1798,17 +1840,20 @@ impl SoulseekDownloadService {
                     // AcoustID has never heard this sound, or no length stood behind the file:
                     // the song's YouTube preview is asked instead, and a clear no is a failed check.
                     let length_known = routing.duration.is_some_and(|s| s > 0) && actual_secs > 0;
-                    if let Some(reason) = self
-                        .refused_by_preview(base, routing, &track_key, &local_path, &verdict, length_known)
+                    verdict = match self
+                        .refused_by_preview(base, routing, &track_key, &local_path, verdict, length_known)
                         .await
                     {
-                        discard_rejected_download(&local_path, attempt_started_utc);
-                        self.deny_candidate(hit, routing, &reason);
-                        let refused = format!("the file {reason}");
-                        last_refusal = Some((refused.clone(), reason));
-                        last_error = Some(refused);
-                        continue;
-                    }
+                        PreviewSays::Keep(kept) => kept,
+                        PreviewSays::Refuse(reason) => {
+                            discard_rejected_download(&local_path, attempt_started_utc);
+                            self.deny_candidate(hit, routing, &reason);
+                            let refused = format!("the file {reason}");
+                            last_refusal = Some((refused.clone(), reason));
+                            last_error = Some(refused);
+                            continue;
+                        }
+                    };
 
                     // Last, and the only check that never rejects: the right song made from an MP3 is
                     // still the right song. It decides only whether another peer's copy is worth a
@@ -2244,7 +2289,8 @@ impl SoulseekDownloadService {
     }
 
     /// What take a file already in the library is, by its audio: the studio take, a live take,
-    /// an instrumental. None when fingerprinting is off or nothing was decided.
+    /// an instrumental. None when fingerprinting is off or nothing was decided. A link to the song
+    /// one person's submissions make still says which take the file is.
     pub async fn take_of_file(&self, path: &str, artist: &str, title: &str) -> Option<RecordingKind> {
         if !self.verification.is_fingerprinting_enabled() {
             return None;
@@ -2253,9 +2299,7 @@ impl SoulseekDownloadService {
             .verification
             .verify_in_background(path, Some(artist), Some(title))
             .await;
-        (verdict.verdict == VerificationVerdict::Confirmed)
-            .then_some(verdict.kind)
-            .flatten()
+        take_of(&verdict)
     }
 
     /// The rejected-peer list Find songs judges copies against.
@@ -3203,6 +3247,25 @@ fn named_recording_believed(verdict: &VerificationResult) -> bool {
                 })
             })
         })
+}
+
+/// The take a verdict says a file is: a confirmation's, or a lone link's to the song asked for.
+pub(crate) fn take_of(verdict: &VerificationResult) -> Option<RecordingKind> {
+    let lone_to_the_song = verdict.verdict == VerificationVerdict::Inconclusive
+        && verdict.reason == InconclusiveReason::LoneLink
+        && verdict.recording_id.as_deref().is_some_and(|id| !id.is_empty());
+    (verdict.verdict == VerificationVerdict::Confirmed || lone_to_the_song)
+        .then_some(verdict.kind)
+        .flatten()
+}
+
+/// What the preview said of a download.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PreviewSays {
+    /// Keep the file, judged by this verdict (a lone link the preview backs is confirmed by it).
+    Keep(VerificationResult),
+    /// Throw it away, for this reason.
+    Refuse(String),
 }
 
 /// The routing's artist and title, for messages.

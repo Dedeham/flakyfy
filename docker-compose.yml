@@ -617,8 +617,8 @@ services:
     logging: *logging
     profiles: ["spotiflac"]
     command: ["--web", "--host", "0.0.0.0", "--port", "8000"]
-    # Mornye's own page, where extensions are installed. SPOTIFLAC_WEB_TOKEN keeps it
-    # yours: without one, anyone who reaches the port can use it.
+    # Mornye's own page (it installs the registry's extensions by itself). SPOTIFLAC_WEB_TOKEN
+    # keeps it yours: without one, anyone who reaches the port can use it.
     ports:
       - "${SPOTIFLAC_PORT:-8010}:8000"
     # Starts as root only to hand its data folder to PUID:PGID, then runs as that user.

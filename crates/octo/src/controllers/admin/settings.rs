@@ -436,7 +436,12 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 "ReviewSweepAutoReplacePerDay",
                 n_num(actions.review_sweep_auto_replace_per_day),
             ),
+            (
+                "ReviewSweepAutoReplacePreview",
+                Node::Bool(actions.review_sweep_auto_replace_preview),
+            ),
             ("TagCheckPerHour", n_num(actions.tag_check_per_hour)),
+            ("YoutubeCheckPerHour", n_num(actions.youtube_check_per_hour)),
             ("DuplicatesEnabled", Node::Bool(actions.duplicates_enabled)),
             ("DuplicatesPlaylistName", n_str(&actions.duplicates_playlist_name)),
             ("DuplicatesScanHours", n_num(actions.duplicates_scan_hours)),

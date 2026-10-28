@@ -23,7 +23,7 @@ pub struct ListenerCharts {
     pub revision: u64,
     /// The person's Navidrome id, once a check of Navidrome's people matched the row by name; it
     /// finds the row again after Navidrome renames the person. Never part of the choices.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub navidrome_id: String,
 }
 

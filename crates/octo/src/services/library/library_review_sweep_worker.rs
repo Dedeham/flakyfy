@@ -2161,3 +2161,7 @@ fn file_name_without_extension(path: &str) -> String {
 #[cfg(test)]
 #[path = "library_review_sweep_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "library_review_sweep_replace_tests.rs"]
+mod replace_tests;

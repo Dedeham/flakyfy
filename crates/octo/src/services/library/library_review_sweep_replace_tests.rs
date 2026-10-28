@@ -96,9 +96,10 @@ async fn navidrome(size: i64) -> MockServer {
     let server = MockServer::start().await;
     let answer = |body: serde_json::Value| ResponseTemplate::new(200).set_body_json(body);
     Mock::given(path("/auth/login"))
-        .respond_with(answer(
-            json!({"token": "jwt", "isAdmin": true, "username": "admin"}),
-        ))
+        .respond_with(answer(json!({
+            "token": "jwt", "isAdmin": true, "username": "admin",
+            "subsonicToken": "st", "subsonicSalt": "ss",
+        })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -251,10 +252,20 @@ async fn the_sweep_replaces_a_song_its_preview_says_is_another_and_put_back_rest
         .with_replacer(Arc::new(replacer)),
     );
 
+    // Octo signs in to Navidrome as the admin before the sweep's search can name the song.
+    assert!(resolver.resolve("nd-1").await.is_some());
+    assert!(
+        resolver
+            .find_id_by_path("Massive Attack", "Teardrop", &slash_root(&song))
+            .await
+            .is_some()
+    );
+
     let ticking = worker.clone();
     let mut tick = tokio::spawn(async move { ticking.tick().await });
+    let never = CancellationToken::new();
     let download = tokio::select! {
-        download = tokio::time::timeout(Duration::from_secs(10), queue.dequeue(&CancellationToken::new())) => {
+        download = tokio::time::timeout(Duration::from_secs(10), queue.dequeue(&never)) => {
             download.expect("a download in time").expect("a download")
         }
         _ = &mut tick => panic!(

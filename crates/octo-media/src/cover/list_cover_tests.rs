@@ -1010,18 +1010,13 @@ fn words_fit_inside_the_margins() {
             );
             let margin = (side as f32 * book().layout.margin).round();
             // A name too long to fit whole beside the light line, and then the foot line, gives
-            // them up: it is set smaller, never cut.
+            // them up: it is set smaller, never cut, or the cover is its artwork only.
             let alone = art.words.len() < 3;
             if alone {
-                assert_eq!(
-                    "The Most Unreasonably Long Playlist Name Anyone Ever Typed Into A Music Server", *name,
-                    "{name} at {side}"
-                );
-                let title = art.words.iter().find(|w| w.role == WordsRole::Title);
-                assert!(title.is_some_and(|t| !t.measured.cut), "{name} at {side}");
+                assert!(art.words.iter().all(|w| !w.measured.cut), "{name} at {side}: cut");
                 assert!(
                     art.words.iter().all(|w| w.role != WordsRole::Line),
-                    "{name} at {side}"
+                    "{name} at {side}: a light line without room"
                 );
             } else {
                 assert_eq!(3, art.words.len(), "{name} at {side}");

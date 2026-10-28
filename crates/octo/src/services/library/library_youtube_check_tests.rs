@@ -997,13 +997,19 @@ async fn a_file_fpcalc_cannot_read_is_not_sent_to_youtube() {
     let check = Check::new();
     check.tagged("a.flac");
     let checker = FakeChecker::answering(vec![]);
-    let verifier = FakeVerifier::answering(vec![unsettled(InconclusiveReason::NotFingerprinted)]);
+    let verifier = FakeVerifier::answering(
+        (0..LibraryYoutubeCheck::MAX_UNREADABLE_TRIES)
+            .map(|_| unsettled(InconclusiveReason::NotFingerprinted))
+            .collect(),
+    );
     let (worker, _) = check.simple(checker.clone());
-    let worker = worker.with_acoustid(Arc::new(IdentitySweepStore::new(None)), verifier);
+    let worker = worker.with_acoustid(Arc::new(IdentitySweepStore::new(None)), verifier.clone());
 
     worker.start();
     run_to_the_end(&worker).await;
 
+    // Read three times before the song is counted as having no copy.
+    assert_eq!(verifier.lookups(), 3);
     assert!(checker.asked().is_empty());
     assert_eq!(worker.store().read(|s| s.no_copy), 1);
 }

@@ -1093,3 +1093,11 @@ async fn an_answer_learned_while_the_forget_looks_is_kept() {
         "the answer learned meanwhile stays"
     );
 }
+
+#[tokio::test]
+async fn the_trickle_names_its_state_in_words() {
+    let rig = rig().await;
+    let view = serde_json::to_value(rig.service.overview("alice")).expect("json");
+    assert_eq!(view["trickle"]["state"], "idle");
+    assert_eq!(view["trickle"]["label"], "Nothing to fetch");
+}

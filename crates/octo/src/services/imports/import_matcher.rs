@@ -283,9 +283,17 @@ impl ImportMatcher {
         let Some(ask) = self.ask_isrc.lock().clone() else {
             return IsrcLearning::default();
         };
-        let index = self.library_index().await;
+        // While the library could not be read, ask with what is kept and leave the library
+        // alone; it is read again only once an answer could match one of its files.
+        let unread = self.problem.lock().is_some();
+        let index = if unread {
+            self.index.lock().as_ref().map(|(index, _)| Arc::clone(index))
+        } else {
+            self.library_index().await
+        };
         let wanted = self.pending_isrcs(index.as_deref(), tracks, Self::ISRC_ASKS_PER_MATCH);
         let mut learning = IsrcLearning::default();
+        let mut learned: Vec<Vec<IsrcRecording>> = Vec::new();
         for isrc in wanted {
             match ask(isrc.clone()).await {
                 Some(recordings) => {
@@ -293,15 +301,7 @@ impl ImportMatcher {
                         .store(false, std::sync::atomic::Ordering::Relaxed);
                     self.isrc_failed.lock().remove(&isrc);
                     learning.settled += 1;
-                    if index.as_ref().is_some_and(|index| {
-                        recordings.iter().any(|recording| {
-                            index
-                                .by_recording
-                                .contains_key(&recording.id.trim().to_ascii_lowercase())
-                        })
-                    }) {
-                        learning.in_library += 1;
-                    }
+                    learned.push(recordings.clone());
                     self.isrc_recordings.lock().insert(isrc, recordings);
                 }
                 None => {
@@ -313,6 +313,23 @@ impl ImportMatcher {
                     break;
                 }
             }
+        }
+        let index = if unread && !learned.is_empty() {
+            self.library_index().await
+        } else {
+            index
+        };
+        if let Some(index) = &index {
+            learning.in_library = learned
+                .iter()
+                .filter(|recordings| {
+                    recordings.iter().any(|recording| {
+                        index
+                            .by_recording
+                            .contains_key(&recording.id.trim().to_ascii_lowercase())
+                    })
+                })
+                .count();
         }
         if learning.settled > 0 {
             self.keep_isrc_answers();

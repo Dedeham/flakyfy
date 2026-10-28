@@ -78,6 +78,22 @@ pub mod trickle_states {
     pub const WAITING_FOR_SOULSEEK: &str = "waitingForSoulseek";
     /// MusicBrainz is not answering and every waiting song has an ISRC it has to check.
     pub const WAITING_FOR_MUSIC_DATABASE: &str = "waitingForMusicDatabase";
+
+    /// The trickle's state in the words a person reads, the dashboard and the apps alike.
+    /// Running reads "Fetching" while a song downloads.
+    pub fn label(state: &str, downloading: bool) -> &'static str {
+        match state {
+            IDLE => "Nothing to fetch",
+            RUNNING if downloading => "Fetching",
+            RUNNING => "Waiting for the next turn",
+            PAUSED => "Paused",
+            OFF => "Off",
+            YIELDING => "Waiting for other downloads",
+            WAITING_FOR_SOULSEEK => "Waiting for Soulseek",
+            WAITING_FOR_MUSIC_DATABASE => "Waiting for MusicBrainz",
+            _ => "Working on it",
+        }
+    }
 }
 
 /// A song the library already has: its id there, when Navidrome said.
@@ -420,7 +436,7 @@ impl TrickleWorker {
             .lock()
             .as_ref()
             .is_some_and(|task| !task.is_finished());
-        let held = self.hold_for_music_database(&seams).await;
+        let (held, seen) = self.hold_for_music_database(&seams).await;
         if was_running
             || self
                 .running
@@ -446,12 +462,24 @@ impl TrickleWorker {
             return false;
         }
         *self.waiting_for.lock() = trickle_states::RUNNING;
-        let Some(job) = self
-            .queue
-            .take_next_where(|job| !held.contains(&held_id(&job.owner, &job.key)))
-        else {
-            *self.waiting_for.lock() = trickle_states::IDLE;
-            return false;
+        // A song queued since the hold was worked out is asked about when it comes up; one that
+        // waits too goes back with its turn, and the next is taken.
+        let mut passed: HashSet<String> = HashSet::new();
+        let job = loop {
+            let Some(job) = self.queue.take_next_where(|job| {
+                let id = held_id(&job.owner, &job.key);
+                !held.contains(&id) && !passed.contains(&id)
+            }) else {
+                *self.waiting_for.lock() = trickle_states::IDLE;
+                return false;
+            };
+            let id = held_id(&job.owner, &job.key);
+            if seen.contains(&id) || (seams.held)(vec![job.clone()]).await.is_empty() {
+                break job;
+            }
+            self.queue
+                .put_back(&job.owner, &job.key, WAITING_FOR_ANSWER, true);
+            passed.insert(id);
         };
         *self.current.lock() = Some((job.owner.clone(), job.key.clone()));
         let worker = self.clone();
@@ -459,12 +487,12 @@ impl TrickleWorker {
         true
     }
 
-    /// The queued songs that wait for MusicBrainz to answer, by owner and key, as the seam names
-    /// them by place. Each says so, a
+    /// The queued songs that wait for MusicBrainz to answer, and every queued song seen, by owner
+    /// and key, as the seam names them by place. Each says so, a
     /// song no longer held loses the words, and everyone with one held is told, so their ISRCs
     /// are asked about. A held song is not taken, so nothing here asks MusicBrainz; its next
     /// answer to anyone ends the hold.
-    async fn hold_for_music_database(&self, seams: &TrickleSeams) -> HashSet<String> {
+    async fn hold_for_music_database(&self, seams: &TrickleSeams) -> (HashSet<String>, HashSet<String>) {
         let queued: Vec<TrickleJob> = self
             .queue
             .snapshot(None)
@@ -477,6 +505,7 @@ impl TrickleWorker {
             (seams.held)(queued.clone()).await
         };
         let mut held = HashSet::new();
+        let seen: HashSet<String> = queued.iter().map(|job| held_id(&job.owner, &job.key)).collect();
         let mut owners: Vec<String> = Vec::new();
         let mut words: Vec<(String, String, Option<String>)> = Vec::new();
         for (at, job) in queued.iter().enumerate() {
@@ -505,7 +534,7 @@ impl TrickleWorker {
                 listener(owner);
             }
         }
-        held
+        (held, seen)
     }
 
     /// Waits for the song started last. Only tests need it.

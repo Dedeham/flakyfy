@@ -755,3 +755,47 @@ async fn a_song_put_back_while_a_tick_works_out_the_hold_is_not_taken_again_in_t
         import_track_states::QUEUED
     );
 }
+
+#[tokio::test]
+async fn a_song_queued_while_the_hold_is_worked_out_is_checked_before_it_starts() {
+    let rig = rig();
+    rig.held.lock().insert("x".into());
+    rig.held.lock().insert("late".into());
+    rig.add(&["x"]);
+    let (queue, added) = (rig.queue.clone(), Arc::new(AtomicBool::new(false)));
+    let keys = rig.held.clone();
+    rig.worker.configure(move |seams| {
+        seams.held = Arc::new(move |jobs: Vec<TrickleJob>| {
+            // The first look at the queue: a song arrives right after it.
+            if !added.swap(true, Ordering::SeqCst) {
+                queue.add("alice", &[song("late")]);
+            }
+            let keys = keys.lock().clone();
+            let places: HashSet<usize> = jobs
+                .iter()
+                .enumerate()
+                .filter(|(_, job)| keys.contains(&job.key))
+                .map(|(at, _)| at)
+                .collect();
+            Box::pin(async move { places })
+        });
+    });
+    assert!(!rig.tick().await, "nothing starts");
+    assert!(rig.started.lock().is_empty());
+    let late = rig.queue.get("alice", "late").expect("late");
+    assert_eq!(late.state, import_track_states::QUEUED);
+    assert_eq!(late.detail.as_deref(), Some(WAITING_FOR_ANSWER));
+}
+
+#[test]
+fn every_state_has_words_and_an_unknown_one_reads_as_work() {
+    use trickle_states::*;
+    assert_eq!(label(IDLE, false), "Nothing to fetch");
+    assert_eq!(label(RUNNING, true), "Fetching");
+    assert_eq!(label(RUNNING, false), "Waiting for the next turn");
+    assert_eq!(
+        label(WAITING_FOR_MUSIC_DATABASE, false),
+        "Waiting for MusicBrainz"
+    );
+    assert_eq!(label("somethingNew", false), "Working on it");
+}

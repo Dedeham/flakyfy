@@ -416,6 +416,11 @@ impl ImportService {
             .collect();
         TrickleView {
             state: status.state.to_string(),
+            label: super::trickle_worker::trickle_states::label(
+                status.state,
+                count(import_track_states::DOWNLOADING) > 0,
+            )
+            .to_string(),
             next_utc: status.next_utc,
             per_hour: status.per_hour,
             queued: count(import_track_states::QUEUED),

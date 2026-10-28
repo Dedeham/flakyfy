@@ -1267,3 +1267,30 @@ async fn a_forget_keeps_an_answer_that_came_in_for_an_isrc_that_had_failed() {
         "a later look sees it and nothing holds it"
     );
 }
+
+#[tokio::test]
+async fn learning_reads_an_unreadable_library_again_only_after_an_answer() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = reads.clone();
+    let matcher = ImportMatcher::with_pages(Arc::new(move |_start, _count| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { None::<(Vec<LibrarySongRow>, usize)> })
+    }))
+    .with_isrc_recordings(answering(Vec::new()));
+    let a = with_isrc(track("Portishead", "Roads", Some(305), None), "GBAAA9400010");
+    let b = with_isrc(track("Portishead", "Glory Box", Some(301), None), "GBAAA9400011");
+    matcher.learn_isrcs(std::slice::from_ref(&a)).await;
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        1,
+        "the first round reads the library"
+    );
+    matcher.learn_isrcs(std::slice::from_ref(&b)).await;
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        2,
+        "a round that learned something reads again, once"
+    );
+    matcher.learn_isrcs(std::slice::from_ref(&b)).await;
+    assert_eq!(reads.load(Ordering::SeqCst), 2, "nothing learned, no read");
+}

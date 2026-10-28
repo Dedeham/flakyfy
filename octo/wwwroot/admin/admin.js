@@ -7414,7 +7414,7 @@ document.getElementById('share-rescan')?.addEventListener('click', async event =
 const imp = { view: null, user: null, open: null, detail: null, picked: new Set(), timer: null, services: null, choice: null, busy: false, people: null, forUser: null };
 const impEl = id => document.getElementById(id);
 const impStateWords = {
-  have: 'In your library', missing: 'Missing', queued: 'Queued', downloading: 'Fetching',
+  have: 'In your library', missing: 'Missing', queued: 'Waiting', downloading: 'Fetching',
   done: 'Fetched', notFound: 'Not found', skipped: 'Skipped',
 };
 const impStateTone = { have: 'good', done: 'good', missing: 'state', queued: 'state', downloading: 'state', notFound: 'warn', skipped: 'warn' };
@@ -7976,14 +7976,14 @@ function renderTrickle() {
     waitingForSoulseek: 'Waiting for Soulseek',
     waitingForMusicDatabase: 'Waiting for MusicBrainz',
   };
-  impEl('imp-trickle-title').textContent = words[t.state] ?? t.state;
+  impEl('imp-trickle-title').textContent = t.label || words[t.state] || t.state;
   const parts = [];
-  if (t.state === 'off') parts.push('Songs an hour is 0, so nothing starts. Change it above.');
-  else parts.push(`Up to ${t.perHour} ${t.perHour === 1 ? 'song' : 'songs'} an hour.`);
-  if (t.state === 'running' && t.nextUtc && !t.downloading) parts.push(`Next song at ${impWhen(t.nextUtc)}.`);
   if (t.state === 'yielding') parts.push('Someone\'s own downloads come first; it goes on once they finish.');
   if (t.state === 'waitingForSoulseek') parts.push('slskd is not logged in to Soulseek; it goes on once it is back.');
   if (t.state === 'waitingForMusicDatabase') parts.push('MusicBrainz is not answering; songs it has to check go on once it is back.');
+  if (t.state === 'off') parts.push('Songs an hour is 0, so nothing starts. Change it above.');
+  else parts.push(`Up to ${t.perHour} ${t.perHour === 1 ? 'song' : 'songs'} an hour.`);
+  if (t.state === 'running' && t.nextUtc && !t.downloading) parts.push(`Next song at ${impWhen(t.nextUtc)}.`);
   const tally = [[t.queued, 'waiting'], [t.downloading, 'fetching'], [t.done, 'fetched'], [t.notFound, 'not found'], [t.skipped, 'skipped']]
     .filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`);
   if (tally.length) parts.push(`${tally.join(', ')}.`);

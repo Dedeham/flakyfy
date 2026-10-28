@@ -309,9 +309,8 @@ async fn a_busy_search_leaves_that_pin_unstamped_and_ends_the_pass() {
 
 #[tokio::test]
 async fn an_unreachable_shim_ends_the_pass_after_the_first_pin() {
-    let gone = MockServer::start().await;
-    let uri = gone.uri();
-    drop(gone);
+    // Nothing listens on port 1, so every connection is refused.
+    let uri = "http://127.0.0.1:1".to_string();
     let registry = Arc::new(ExternalIdRegistry::in_memory());
     let first = stale(&registry, "Daft Punk", "Emotion", "vid-a");
     let second = stale(&registry, "Adele", "Hello", "vid-c");

@@ -5468,6 +5468,9 @@ let chartPeopleSaving = Promise.resolve();
 // Saves sent and not answered yet. The row is drawn again from an answer only when no later
 // save is waiting, so a quick second change is never undone on screen by the first answer.
 let chartPeoplePending = 0;
+// Per person, how many times a save was refused because their row had changed. A save queued
+// before a refusal is dropped, not sent on top of the newer row.
+const chartPeopleEpoch = {};
 
 async function loadChartPeople() {
   const row = document.getElementById('charts-people');
@@ -5553,24 +5556,37 @@ function saveChartPeople() {
   const pinned = Array.from(document.querySelectorAll('#charts-people .charts-pin'))
     .map(select => select.value)
     .filter(Boolean);
+  const epoch = chartPeopleEpoch[user] || 0;
   chartPeoplePending += 1;
   chartPeopleSaving = chartPeopleSaving.then(async () => {
     try {
+      // A conflict since this save was queued means it was based on a row that is gone.
+      if ((chartPeopleEpoch[user] || 0) !== epoch) return;
+      // The row as the last answer left it, so a quick second save builds on the first.
+      const current = (chartPeople?.people || []).find(p => p.user.toLowerCase() === user.toLowerCase());
+      const revision = current?.revision || 0;
       const r = await api('/api/admin/charts/listeners', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user, country, pinned }),
+        body: JSON.stringify({ user, country, pinned, revision }),
       });
       const body = await r.json().catch(() => ({}));
+      if (r.status === 409 && body.people) {
+        chartPeopleEpoch[user] = epoch + 1;
+        chartPeople = body;
+        chartPeopleNote(body.error || 'Changed elsewhere just now; showing the latest.', 'error');
+        return;
+      }
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
       chartPeople = body;
       chartPeopleNote('Saved.');
       refreshChartCountries();
     } catch (error) {
       chartPeopleNote(`Could not save: ${error.message}`, 'error');
+    } finally {
+      chartPeoplePending -= 1;
+      if (!chartPeoplePending && chartPeopleUser === user) renderChartPeople();
     }
-    chartPeoplePending -= 1;
-    if (!chartPeoplePending && chartPeopleUser === user) renderChartPeople();
   });
 }
 

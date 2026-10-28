@@ -174,6 +174,7 @@ impl Lists {
             ListenerCharts {
                 country: country.to_string(),
                 pinned: pinned.iter().map(|c| (*c).to_string()).collect(),
+                ..Default::default()
             },
         );
     }

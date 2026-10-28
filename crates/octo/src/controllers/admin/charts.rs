@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::info;
 
-use super::plumbing::{error_json, ok};
+use super::plumbing::{error_json, object_result, ok};
 use crate::app::AppState;
 use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
 use crate::services::admin::{AdminCaller, AdminCallerKind};
@@ -129,7 +129,7 @@ async fn chart_people(state: &AppState) -> Vec<String> {
     names
 }
 
-async fn listeners_answer(state: &AppState) -> Response {
+async fn listeners_value(state: &AppState) -> Value {
     let top_songs = &state.top_songs;
     let people: Vec<Value> = chart_people(state)
         .await
@@ -144,11 +144,16 @@ async fn listeners_answer(state: &AppState) -> Response {
                 "user": user,
                 "country": if mine.country.is_empty() { "auto" } else { mine.country.as_str() },
                 "pinned": mine.pinned,
+                "revision": mine.revision,
                 "notOnAppleMusic": unavailable,
             })
         })
         .collect();
-    ok(&json!({ "people": people, "maxPinned": MAX_PINNED }))
+    json!({ "people": people, "maxPinned": MAX_PINNED })
+}
+
+async fn listeners_answer(state: &AppState) -> Response {
+    ok(&listeners_value(state).await)
 }
 
 /// `GET /api/admin/charts/listeners`: each person's own chart country (`auto` while they follow
@@ -168,11 +173,15 @@ struct ListenerChoice {
     country: String,
     #[serde(default)]
     pinned: Vec<String>,
+    /// The revision of the person's row the page was showing; 0 when the page had none.
+    #[serde(default)]
+    revision: u64,
 }
 
-/// `PUT /api/admin/charts/listeners` with `{"user", "country", "pinned"}`: saves that person's
-/// own chart country (`auto` follows the server's) and up to three pinned countries, each one
-/// Apple Music has (or one they already chose). Answers as the GET does.
+/// `PUT /api/admin/charts/listeners` with `{"user", "country", "pinned", "revision"}`: saves that
+/// person's own chart country (`auto` follows the server's) and up to three pinned countries,
+/// each one Apple Music has (or one they already chose). Answers as the GET does. If the person's
+/// row has changed since `revision`, nothing is saved and the answer is a 409 with the latest.
 pub async fn put_listeners(State(state): State<AppState>, caller: Caller, body: Bytes) -> Response {
     if !may_choose_anyones(caller_of(&caller)) {
         return error_json(StatusCode::FORBIDDEN, SIGN_IN_FOR_CHART_PEOPLE);
@@ -229,7 +238,11 @@ pub async fn put_listeners(State(state): State<AppState>, caller: Caller, body: 
             &format!("Apple Music has no charts for {missing}."),
         );
     }
-    let saved = ListenerCharts { country, pinned };
+    let saved = ListenerCharts {
+        country,
+        pinned,
+        revision: 0,
+    };
     info!(
         "Charts for {user} set on the dashboard: {}, pinned {}",
         if saved.country.is_empty() {
@@ -243,7 +256,18 @@ pub async fn put_listeners(State(state): State<AppState>, caller: Caller, body: 
             saved.pinned.join(", ")
         }
     );
-    top_songs.listeners().set(&user, saved);
+    let refused = top_songs
+        .listeners()
+        .update_if(&user, choice.revision, |mine| {
+            mine.country = saved.country;
+            mine.pinned = saved.pinned;
+        })
+        .is_err();
+    if refused {
+        let mut latest = listeners_value(&state).await;
+        latest["error"] = json!("Changed elsewhere just now; showing the latest.");
+        return object_result(StatusCode::CONFLICT, &latest);
+    }
     listeners_answer(&state).await
 }
 

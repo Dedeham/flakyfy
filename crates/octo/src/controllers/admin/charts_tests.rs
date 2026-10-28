@@ -169,6 +169,7 @@ async fn listeners_lists_people_from_plays_and_the_store() {
         crate::services::charts::ListenerCharts {
             country: "br".into(),
             pinned: vec!["jp".into(), "xk".into()],
+            ..Default::default()
         },
     );
 
@@ -207,13 +208,48 @@ async fn listeners_put_saves_a_persons_charts() {
 
     let back = put_people(
         &app,
-        serde_json::json!({"user": "anna", "country": "auto", "pinned": []}),
+        serde_json::json!({"user": "anna", "country": "auto", "pinned": [], "revision": people[0]["revision"]}),
     )
     .await;
-    assert_eq!(back.status, StatusCode::OK);
+    assert_eq!(back.status, StatusCode::OK, "{}", back.text());
     assert!(
         state.top_songs.listeners().all().is_empty(),
         "nothing chosen, nothing kept"
+    );
+}
+
+#[tokio::test]
+async fn a_put_with_an_old_revision_is_refused_with_the_latest_row() {
+    let apple = apple().await;
+    let state = state(&apple, None);
+    let app = app(state.clone());
+    let first = put_people(&app, serde_json::json!({"user": "anna", "country": "br"})).await;
+    let seen = first.json()["people"][0]["revision"].as_u64().unwrap();
+    assert!(seen > 0);
+    let second = put_people(
+        &app,
+        serde_json::json!({"user": "anna", "country": "jp", "revision": seen}),
+    )
+    .await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.text());
+
+    let stale = put_people(
+        &app,
+        serde_json::json!({"user": "anna", "country": "kr", "revision": seen}),
+    )
+    .await;
+
+    assert_eq!(stale.status, StatusCode::CONFLICT, "{}", stale.text());
+    let body = stale.json();
+    assert_eq!(body["error"], "Changed elsewhere just now; showing the latest.");
+    assert_eq!(body["people"][0]["country"], "jp");
+    assert!(body["people"][0]["revision"].as_u64().unwrap() > seen);
+    assert_eq!(state.top_songs.listeners().get("anna").country, "jp");
+    let missing = put_people(&app, serde_json::json!({"user": "anna", "country": "kr"})).await;
+    assert_eq!(
+        missing.status,
+        StatusCode::CONFLICT,
+        "a missing revision reads as 0"
     );
 }
 
@@ -283,6 +319,7 @@ async fn charts_say_the_countries_people_chose() {
         crate::services::charts::ListenerCharts {
             country: "br".into(),
             pinned: vec!["us".into(), "jp".into()],
+            ..Default::default()
         },
     );
 

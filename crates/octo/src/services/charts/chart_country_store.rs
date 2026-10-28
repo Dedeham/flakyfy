@@ -18,6 +18,47 @@ pub struct ListenerCharts {
     /// Countries whose charts they get as well, at most `MAX_PINNED`.
     #[serde(default)]
     pub pinned: Vec<String>,
+    /// Which change last touched this row; a saved choice carries the one it was based on.
+    #[serde(default)]
+    pub revision: u64,
+}
+
+impl ListenerCharts {
+    /// Whether the choices are the same, whatever their revisions.
+    fn same_choices(&self, other: &ListenerCharts) -> bool {
+        self.country == other.country && self.pinned == other.pinned
+    }
+
+    fn is_empty(&self) -> bool {
+        self.country.is_empty() && self.pinned.is_empty()
+    }
+}
+
+/// A save based on a row that has changed since: the row as it is now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conflict {
+    pub current: ListenerCharts,
+}
+
+/// The file's current shape: the choices and the last revision handed out.
+#[derive(Serialize)]
+struct FileOut<'a> {
+    stamp: u64,
+    people: &'a BTreeMap<String, ListenerCharts>,
+}
+
+/// Reads either shape of the file: the choices alone, or `{"stamp", "people"}`.
+fn parse_file(bytes: &[u8]) -> serde_json::Result<(u64, BTreeMap<String, ListenerCharts>)> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let current = value.as_object().and_then(|o| {
+        let stamp = o.get("stamp")?.as_u64()?;
+        let people = o.get("people")?.is_object().then(|| o.get("people").cloned())??;
+        Some((stamp, people))
+    });
+    match current {
+        Some((stamp, people)) => Ok((stamp, serde_json::from_value(people)?)),
+        None => Ok((0, serde_json::from_value(value)?)),
+    }
 }
 
 /// Every listener's chart choices, in `chart-countries.json`.
@@ -29,20 +70,25 @@ pub struct ChartCountryStore {
     written: Mutex<u64>,
 }
 
-/// The choices, and how many changes they have had.
+/// The choices, how many changes they have had, and the last revision handed to a row.
 #[derive(Default)]
 struct Users {
     by_name: BTreeMap<String, ListenerCharts>,
     generation: u64,
+    stamp: u64,
 }
 
 impl ChartCountryStore {
     /// `path`: the file, or none to keep the choices in memory only. A file that cannot be read
     /// is moved aside to `chart-countries.json.broken-<unix time>` and the store starts empty.
-    /// Names and countries are read in lowercase, whatever case the file holds.
+    /// Names and countries are read in lowercase, whatever case the file holds; names that differ
+    /// only by case keep the row with the higher revision.
     pub fn new(path: Option<PathBuf>) -> Self {
-        let read: BTreeMap<String, ListenerCharts> = match path.as_ref().map(std::fs::read) {
-            Some(Ok(bytes)) => match serde_json::from_slice(&bytes) {
+        let (saved_stamp, read): (u64, BTreeMap<String, ListenerCharts>) = match path
+            .as_ref()
+            .map(std::fs::read)
+        {
+            Some(Ok(bytes)) => match parse_file(&bytes) {
                 Ok(read) => read,
                 Err(e) => {
                     let path = path.as_ref().expect("read from a path");
@@ -56,21 +102,34 @@ impl ChartCountryStore {
                             "Could not read the chart countries, starting without them: {e} (and could not move the file aside: {moved})"
                         ),
                     }
-                    BTreeMap::new()
+                    (0, BTreeMap::new())
                 }
             },
-            _ => BTreeMap::new(),
+            _ => (0, BTreeMap::new()),
         };
+        let mut stamp = saved_stamp;
         let mut by_name: BTreeMap<String, ListenerCharts> = BTreeMap::new();
         for (user, charts) in read {
-            let entry = by_name.entry(key(&user)).or_default();
-            if entry.country.is_empty() {
-                entry.country = charts.country.trim().to_ascii_lowercase();
-            }
+            stamp = stamp.max(charts.revision);
+            let mut row = ListenerCharts {
+                country: charts.country.trim().to_ascii_lowercase(),
+                pinned: Vec::new(),
+                revision: charts.revision,
+            };
             for pin in charts.pinned {
                 let pin = pin.trim().to_ascii_lowercase();
-                if !pin.is_empty() && !entry.pinned.contains(&pin) {
-                    entry.pinned.push(pin);
+                if !pin.is_empty() && !row.pinned.contains(&pin) {
+                    row.pinned.push(pin);
+                }
+            }
+            match by_name.entry(key(&user)) {
+                std::collections::btree_map::Entry::Occupied(mut kept) => {
+                    if row.revision > kept.get().revision {
+                        kept.insert(row);
+                    }
+                }
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(row);
                 }
             }
         }
@@ -79,6 +138,7 @@ impl ChartCountryStore {
             users: Mutex::new(Users {
                 by_name,
                 generation: 0,
+                stamp,
             }),
             written: Mutex::new(0),
         }
@@ -111,24 +171,56 @@ impl ChartCountryStore {
     ) -> Result<ListenerCharts, E> {
         let (mine, json, generation) = {
             let mut users = self.users.lock();
-            let mut mine = users.by_name.get(&key(user)).cloned().unwrap_or_default();
+            let before = users.by_name.get(&key(user)).cloned().unwrap_or_default();
+            let mut mine = before.clone();
             change(&mut mine)?;
-            if mine == ListenerCharts::default() {
+            mine.revision = before.revision;
+            if !mine.same_choices(&before) {
+                users.stamp += 1;
+                mine.revision = users.stamp;
+            }
+            if mine.is_empty() {
                 users.by_name.remove(&key(user));
+                mine.revision = 0;
             } else {
                 users.by_name.insert(key(user), mine.clone());
             }
             users.generation += 1;
-            let json = self
-                .path
-                .is_some()
-                .then(|| serde_json::to_vec_pretty(&users.by_name));
+            let json = self.path.is_some().then(|| {
+                serde_json::to_vec_pretty(&FileOut {
+                    stamp: users.stamp,
+                    people: &users.by_name,
+                })
+            });
             (mine, json, users.generation)
         };
         if let Some(json) = json {
             self.save(json, generation);
         }
         Ok(mine)
+    }
+
+    /// Changes a listener's choices only if their row is still at revision `expected` (0 for a
+    /// row that does not exist). The check and the write are one step. A row that has changed
+    /// since is answered as it is now and left alone.
+    pub fn update_if(
+        &self,
+        user: &str,
+        expected: u64,
+        change: impl FnOnce(&mut ListenerCharts),
+    ) -> Result<ListenerCharts, Conflict> {
+        let mut current = None;
+        let saved = self.update(user, |mine| {
+            if mine.revision != expected {
+                current = Some(mine.clone());
+                return Err(());
+            }
+            change(mine);
+            Ok(())
+        });
+        saved.map_err(|()| Conflict {
+            current: current.unwrap_or_default(),
+        })
     }
 
     /// Writes one generation of the choices, unless a newer one was written already. The file is

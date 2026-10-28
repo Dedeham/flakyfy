@@ -64,6 +64,13 @@ impl<T> Lookup<T> {
     }
 }
 
+/// A lookup that never finished (its task panicked) could not answer, so it is never read as "there is none".
+impl<T> Default for Lookup<T> {
+    fn default() -> Self {
+        Lookup::Failed { busy: false }
+    }
+}
+
 /// Whether a refusal's body is the shim's `{"error":"busy"}`.
 fn is_busy_body(body: &str) -> bool {
     serde_json::from_str::<Value>(body)
@@ -827,6 +834,11 @@ mod tests {
             store.set_raw("YouTube:ShimUrl", Some(url));
         }
         YouTubeResolver::new(&store)
+    }
+
+    #[test]
+    fn a_lookup_that_never_finished_reads_as_one_that_could_not_answer() {
+        assert_eq!(Lookup::<i32>::default(), Lookup::Failed { busy: false });
     }
 
     #[test]

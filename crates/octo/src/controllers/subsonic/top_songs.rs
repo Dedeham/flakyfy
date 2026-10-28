@@ -17,7 +17,7 @@ use octo_subsonic::subsonic_response_builder::{
 use serde_json::Value;
 use tracing::{debug, info};
 
-use super::caller_checks::{SubsonicCall, refuse_unless_signed_in, signed_in_user};
+use super::caller_checks::{SubsonicCall, listener_name, refuse_unless_signed_in, signed_in_user};
 use super::native::has_external_id;
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
@@ -472,7 +472,7 @@ pub async fn get_top_songs(State(state): State<AppState>, req: Request) -> AppRe
         .await
     };
 
-    let username = call.param_opt("u").unwrap_or("").to_string();
+    let username = listener_name(&state, &call).await;
     let mut rows: Vec<TopSongRow> = Vec::new();
     for (i, top) in candidates.iter().enumerate() {
         if rows.len() >= count {

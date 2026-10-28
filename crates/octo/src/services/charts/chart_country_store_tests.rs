@@ -262,3 +262,92 @@ fn duplicate_case_keys_keep_the_newer_row() {
     store.set("bob", charts("kr", &[]));
     assert_eq!(store.get("bob").revision, 6, "the stamp starts past every row");
 }
+
+fn people(list: &[(&str, &str)]) -> Vec<(String, String)> {
+    list.iter()
+        .map(|(id, name)| ((*id).to_string(), (*name).to_string()))
+        .collect()
+}
+
+#[test]
+fn rows_of_people_navidrome_dropped_are_removed_and_not_warmed() {
+    let store = ChartCountryStore::new(None);
+    store.set("anna", charts("br", &["jp"]));
+    store.set("bob", charts("kr", &[]));
+    let seen = store.revisions();
+
+    let done = store.reconcile(&people(&[("u1", "Anna")]), &seen);
+
+    assert_eq!(done.dropped, vec!["bob".to_string()]);
+    assert_eq!(store.get("bob"), ListenerCharts::default());
+    assert_eq!(store.get("anna").navidrome_id, "u1");
+    assert_eq!(store.countries(), vec!["br".to_string(), "jp".to_string()]);
+}
+
+#[test]
+fn a_non_ascii_name_is_kept() {
+    let store = ChartCountryStore::new(None);
+    store.set("Élise", charts("fr", &[]));
+    let seen = store.revisions();
+
+    let done = store.reconcile(&people(&[("u9", "Élise"), ("u1", "anna")]), &seen);
+
+    assert_eq!(done, Reconciled::default());
+    assert_eq!(store.get("élise").country, "fr");
+    assert_eq!(store.get("Élise").navidrome_id, "u9");
+}
+
+#[test]
+fn a_row_saved_after_the_list_was_read_is_kept() {
+    let store = ChartCountryStore::new(None);
+    store.set("bob", charts("kr", &[]));
+    let seen = store.revisions();
+    store.set("bob", charts("de", &[]));
+    store.set("carl", charts("it", &[]));
+
+    let done = store.reconcile(&people(&[("u1", "anna")]), &seen);
+
+    assert_eq!(done, Reconciled::default());
+    assert_eq!(store.get("bob").country, "de", "changed since it was read");
+    assert_eq!(store.get("carl").country, "it", "added since it was read");
+}
+
+#[test]
+fn a_renamed_person_keeps_their_row() {
+    let (_dir, path, store) = saved_store();
+    store.set("anna", charts("br", &["jp"]));
+    store.reconcile(&people(&[("u1", "Anna")]), &store.revisions());
+    let before = store.get("anna");
+
+    let done = store.reconcile(&people(&[("u1", "Annie")]), &store.revisions());
+
+    assert_eq!(done.renamed, vec![("anna".to_string(), "annie".to_string())]);
+    assert!(done.dropped.is_empty());
+    assert_eq!(store.get("annie"), before);
+    assert_eq!(store.get("anna"), ListenerCharts::default());
+    let again = ChartCountryStore::new(Some(path));
+    assert_eq!(again.get("annie").navidrome_id, "u1");
+    assert_eq!(again.all().len(), 1);
+}
+
+#[test]
+fn a_save_never_loses_the_recorded_navidrome_id() {
+    let store = ChartCountryStore::new(None);
+    store.set("anna", charts("br", &[]));
+    store.reconcile(&people(&[("u1", "anna")]), &store.revisions());
+
+    store.set("anna", charts("jp", &[]));
+
+    assert_eq!(store.get("anna").navidrome_id, "u1");
+}
+
+#[test]
+fn the_people_are_known_only_after_a_check() {
+    let store = ChartCountryStore::new(None);
+    assert!(store.is_known("anyone"));
+
+    store.reconcile(&people(&[("u1", "Anna")]), &store.revisions());
+
+    assert!(store.is_known("ANNA"));
+    assert!(!store.is_known("bob"));
+}

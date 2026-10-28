@@ -1,7 +1,7 @@
 //! Each listener's chart country and pinned countries, in `chart-countries.json`. A listener with
 //! neither has no entry and follows the server's chart country.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use parking_lot::Mutex;
@@ -21,6 +21,10 @@ pub struct ListenerCharts {
     /// Which change last touched this row; a saved choice carries the one it was based on.
     #[serde(default)]
     pub revision: u64,
+    /// The person's Navidrome id, once a check of Navidrome's people matched the row by name; it
+    /// finds the row again after Navidrome renames the person. Never part of the choices.
+    #[serde(default)]
+    pub navidrome_id: String,
 }
 
 impl ListenerCharts {
@@ -32,6 +36,15 @@ impl ListenerCharts {
     fn is_empty(&self) -> bool {
         self.country.is_empty() && self.pinned.is_empty()
     }
+}
+
+/// What a check of Navidrome's people changed in the store.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Reconciled {
+    /// The keys of rows dropped because Navidrome no longer has the person.
+    pub dropped: Vec<String>,
+    /// Rows moved to the name Navidrome now gives the person: old key, new key.
+    pub renamed: Vec<(String, String)>,
 }
 
 /// A save based on a row that has changed since: the row as it is now.
@@ -68,6 +81,8 @@ pub struct ChartCountryStore {
     /// The generation last written to the file, held while writing, so a save never writes over
     /// a newer one.
     written: Mutex<u64>,
+    /// The keys of the people the last complete check found in Navidrome; none before one.
+    last_verified: Mutex<Option<HashSet<String>>>,
 }
 
 /// The choices, how many changes they have had, and the last revision handed to a row.
@@ -115,6 +130,7 @@ impl ChartCountryStore {
                 country: charts.country.trim().to_ascii_lowercase(),
                 pinned: Vec::new(),
                 revision: charts.revision,
+                navidrome_id: charts.navidrome_id.clone(),
             };
             for pin in charts.pinned {
                 let pin = pin.trim().to_ascii_lowercase();
@@ -122,7 +138,7 @@ impl ChartCountryStore {
                     row.pinned.push(pin);
                 }
             }
-            match by_name.entry(key(&user)) {
+            match by_name.entry(user_key(&user)) {
                 std::collections::btree_map::Entry::Occupied(mut kept) => {
                     if row.revision > kept.get().revision {
                         kept.insert(row);
@@ -141,6 +157,7 @@ impl ChartCountryStore {
                 stamp,
             }),
             written: Mutex::new(0),
+            last_verified: Mutex::new(None),
         }
     }
 
@@ -149,7 +166,7 @@ impl ChartCountryStore {
         self.users
             .lock()
             .by_name
-            .get(&key(user))
+            .get(&user_key(user))
             .cloned()
             .unwrap_or_default()
     }
@@ -171,19 +188,20 @@ impl ChartCountryStore {
     ) -> Result<ListenerCharts, E> {
         let (mine, json, generation) = {
             let mut users = self.users.lock();
-            let before = users.by_name.get(&key(user)).cloned().unwrap_or_default();
+            let before = users.by_name.get(&user_key(user)).cloned().unwrap_or_default();
             let mut mine = before.clone();
             change(&mut mine)?;
             mine.revision = before.revision;
+            mine.navidrome_id = before.navidrome_id.clone();
             if !mine.same_choices(&before) {
                 users.stamp += 1;
                 mine.revision = users.stamp;
             }
             if mine.is_empty() {
-                users.by_name.remove(&key(user));
+                users.by_name.remove(&user_key(user));
                 mine.revision = 0;
             } else {
-                users.by_name.insert(key(user), mine.clone());
+                users.by_name.insert(user_key(user), mine.clone());
             }
             users.generation += 1;
             let json = self.path.is_some().then(|| {
@@ -245,6 +263,94 @@ impl ChartCountryStore {
         }
     }
 
+    /// The key and revision of every row now, to hand to [`Self::reconcile`] later.
+    pub fn revisions(&self) -> BTreeMap<String, u64> {
+        self.users
+            .lock()
+            .by_name
+            .iter()
+            .map(|(user, charts)| (user.clone(), charts.revision))
+            .collect()
+    }
+
+    /// Brings the rows in line with Navidrome's people, given as (id, user name). A row whose
+    /// name is a person's records their id. A row whose name is nobody's but whose recorded id
+    /// is a person's moves to that person's new name. Any other row is dropped. A row that has
+    /// changed since `seen` (from [`Self::revisions`]) is left alone, and a row not in `seen`
+    /// was saved since and is kept. Also remembers who Navidrome has, for [`Self::is_known`].
+    pub fn reconcile(&self, people: &[(String, String)], seen: &BTreeMap<String, u64>) -> Reconciled {
+        let by_key: BTreeMap<String, &str> = people
+            .iter()
+            .map(|(id, name)| (user_key(name), id.as_str()))
+            .collect();
+        let by_id: BTreeMap<&str, &str> = people
+            .iter()
+            .filter(|(id, _)| !id.is_empty())
+            .map(|(id, name)| (id.as_str(), name.as_str()))
+            .collect();
+        let mut done = Reconciled::default();
+        let (json, generation) = {
+            let mut users = self.users.lock();
+            let mut changed = false;
+            let keys: Vec<String> = users.by_name.keys().cloned().collect();
+            for old in keys {
+                let Some(row) = users.by_name.get(&old).cloned() else {
+                    continue;
+                };
+                if let Some(id) = by_key.get(&old) {
+                    if !id.is_empty() && row.navidrome_id != *id {
+                        if let Some(mine) = users.by_name.get_mut(&old) {
+                            mine.navidrome_id = (*id).to_string();
+                        }
+                        changed = true;
+                    }
+                    continue;
+                }
+                if seen.get(&old) != Some(&row.revision) {
+                    continue;
+                }
+                let moved_to = by_id
+                    .get(row.navidrome_id.as_str())
+                    .filter(|_| !row.navidrome_id.is_empty())
+                    .map(|name| user_key(name));
+                users.by_name.remove(&old);
+                changed = true;
+                match moved_to {
+                    Some(new) if !users.by_name.contains_key(&new) => {
+                        users.by_name.insert(new.clone(), row);
+                        done.renamed.push((old, new));
+                    }
+                    Some(_) => {}
+                    None => done.dropped.push(old),
+                }
+            }
+            if changed {
+                users.generation += 1;
+            }
+            let json = (changed && self.path.is_some()).then(|| {
+                serde_json::to_vec_pretty(&FileOut {
+                    stamp: users.stamp,
+                    people: &users.by_name,
+                })
+            });
+            (json, users.generation)
+        };
+        *self.last_verified.lock() = Some(by_key.keys().cloned().collect());
+        if let Some(json) = json {
+            self.save(json, generation);
+        }
+        done
+    }
+
+    /// Whether Navidrome has the person, as far as the last complete check knows; everyone
+    /// before one.
+    pub fn is_known(&self, user: &str) -> bool {
+        self.last_verified
+            .lock()
+            .as_ref()
+            .is_none_or(|people: &HashSet<String>| people.contains(&user_key(user)))
+    }
+
     /// Every listener with choices, by key.
     pub fn all(&self) -> Vec<(String, ListenerCharts)> {
         self.users
@@ -271,7 +377,8 @@ impl ChartCountryStore {
     }
 }
 
-fn key(user: &str) -> String {
+/// How a person's name is compared and stored: trimmed and lowercase.
+pub(crate) fn user_key(user: &str) -> String {
     user.trim().to_lowercase()
 }
 

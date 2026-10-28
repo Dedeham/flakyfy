@@ -161,6 +161,17 @@ impl ChartPlaylistService {
         self
     }
 
+    /// Lets go of everything kept for a listener: their made lists, the times their lists
+    /// failed, and what their library was asked.
+    pub fn forget_person(&self, username: &str) {
+        let user = user_key(username);
+        self.inner.made.lock().remove(&user);
+        self.inner.failed_at.lock().retain(|(who, _), _| *who != user);
+        if let Some(cache) = &self.inner.library_matches {
+            cache.forget(username);
+        }
+    }
+
     /// The explicit filter for one listener's lists: the server's, or clean only for a kid
     /// profile.
     fn explicit_filter_for(&self, username: &str) -> ExplicitFilter {

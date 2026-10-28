@@ -188,6 +188,41 @@ async fn listeners_lists_people_from_plays_and_the_store() {
 }
 
 #[tokio::test]
+async fn the_dashboard_lists_no_one_navidrome_dropped() {
+    let apple = apple().await;
+    let state = state(&apple, None);
+    assert!(state.listening.record("Anna", played("a")));
+    assert!(state.listening.record("Gone", played("b")));
+    state.top_songs.listeners().set(
+        "gone",
+        crate::services::charts::ListenerCharts {
+            country: "br".into(),
+            ..Default::default()
+        },
+    );
+    let listeners = state.top_songs.listeners();
+    listeners.reconcile(&[("u1".to_string(), "Anna".to_string())], &listeners.revisions());
+    let app = app(state);
+
+    let reply = get(&app, "/api/admin/charts/listeners").await;
+
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+    let body = reply.json();
+    let names: Vec<&str> = body["people"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["user"].as_str())
+        .collect();
+    assert_eq!(names, vec!["Anna"]);
+    let refused = put_people(&app, serde_json::json!({"user": "Gone", "country": "br"})).await;
+    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text());
+    assert!(refused.text().contains("Navidrome has no such person."));
+    let kept = put_people(&app, serde_json::json!({"user": "anna", "country": "br"})).await;
+    assert_eq!(kept.status, StatusCode::OK, "{}", kept.text());
+}
+
+#[tokio::test]
 async fn listeners_put_saves_a_persons_charts() {
     let apple = apple().await;
     let state = state(&apple, None);

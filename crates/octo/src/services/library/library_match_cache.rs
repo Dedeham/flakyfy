@@ -117,6 +117,11 @@ impl LibraryMatchCache {
         f(&mut mine.decided, self.cap)
     }
 
+    /// Drops everything remembered for a listener.
+    pub fn forget(&self, username: &str) {
+        self.by_user.lock().remove(&username.trim().to_lowercase());
+    }
+
     /// How many decisions are kept for a listener.
     pub fn kept_for(&self, username: &str) -> usize {
         self.by_user

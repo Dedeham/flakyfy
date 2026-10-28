@@ -36,6 +36,7 @@ struct Lists {
     _apple: MockServer,
     now: Arc<Mutex<DateTime<Utc>>>,
     listeners: Arc<ChartCountryStore>,
+    matches: Arc<LibraryMatchCache>,
 }
 
 fn settings_for(navidrome: &str, charts: &str, discovery: bool, filter: ExplicitFilter) -> AppSettings {
@@ -127,8 +128,9 @@ impl Lists {
             Arc::clone(&settings),
             Clock::new(move || *clock_now.lock()),
         );
+        let matches = Arc::new(LibraryMatchCache::new());
         let service = if remembers {
-            service.with_library_matches(Arc::new(LibraryMatchCache::new()))
+            service.with_library_matches(Arc::clone(&matches))
         } else {
             service
         };
@@ -140,6 +142,7 @@ impl Lists {
             _apple: apple,
             now,
             listeners,
+            matches,
         }
     }
 
@@ -735,6 +738,122 @@ async fn the_warm_worker_does_nothing_with_every_list_off() {
             .unwrap_or_default()
             .is_empty()
     );
+}
+
+/// A warm worker that also checks Navidrome's people, which answers `/api/user` with `users`.
+async fn worker_with_people(
+    lists: &Lists,
+    users: ResponseTemplate,
+) -> crate::services::charts::ChartsWarmWorker {
+    Mock::given(method("POST"))
+        .and(path("/auth/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "token": "jwt-1", "isAdmin": true, "username": "admin",
+            "subsonicToken": "tok", "subsonicSalt": "salt"
+        })))
+        .mount(&lists.navidrome)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/user"))
+        .respond_with(users)
+        .mount(&lists.navidrome)
+        .await;
+    let (admin, _, _) = crate::services::family::navidrome_admin::tests::admin_for(&lists.navidrome.uri());
+    crate::services::charts::ChartsWarmWorker::new(
+        lists.top_songs.clone(),
+        lists.service.clone(),
+        Clock::system(),
+    )
+    .with_people(admin)
+}
+
+fn only_the_admin() -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!([
+        {"id": "u1", "userName": "admin", "isAdmin": true}
+    ]))
+}
+
+#[tokio::test]
+async fn an_unreadable_user_list_drops_nothing() {
+    let lists = Lists::new("new").await;
+    lists.choose("bob", "br", &[]);
+    let worker = worker_with_people(&lists, ResponseTemplate::new(503)).await;
+
+    worker.warm_once().await;
+
+    assert_eq!(lists.listeners.get("bob").country, "br");
+    assert!(lists.listeners.is_known("someone-else"), "nothing was verified");
+}
+
+#[tokio::test]
+async fn an_ok_answer_that_is_no_list_drops_nothing() {
+    let lists = Lists::new("new").await;
+    lists.choose("bob", "br", &[]);
+    let worker = worker_with_people(&lists, ResponseTemplate::new(200).set_body_json(json!([]))).await;
+
+    worker.warm_once().await;
+
+    assert_eq!(lists.listeners.get("bob").country, "br");
+}
+
+#[tokio::test]
+async fn a_list_without_the_admin_drops_nothing() {
+    let lists = Lists::new("new").await;
+    lists.choose("bob", "br", &[]);
+    let others = ResponseTemplate::new(200).set_body_json(json!([{"id": "u2", "userName": "carl"}]));
+    let worker = worker_with_people(&lists, others).await;
+
+    worker.warm_once().await;
+
+    assert_eq!(lists.listeners.get("bob").country, "br");
+}
+
+#[tokio::test]
+async fn pruning_runs_with_every_list_off() {
+    let lists = Lists::new("").await;
+    let mut off = (*lists.settings.current()).clone();
+    off.generated_playlists.popular_now = false;
+    lists.settings.set(off);
+    lists.choose("bob", "br", &[]);
+    lists.choose("admin", "jp", &[]);
+    let worker = worker_with_people(&lists, only_the_admin()).await;
+
+    assert_eq!(worker.warm_once().await, 0);
+
+    assert_eq!(lists.listeners.get("bob"), ListenerCharts::default());
+    assert_eq!(lists.listeners.get("admin").country, "jp");
+    assert_eq!(lists.listeners.get("admin").navidrome_id, "u1");
+}
+
+#[tokio::test]
+async fn a_dropped_person_is_forgotten_by_playlists_and_the_match_cache() {
+    let lists = Lists::remembering("new").await;
+    lists.library(Vec::new()).await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getScanStatus"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "subsonic-response": {"status": "ok", "scanStatus": {"lastScan": "2026-10-01T00:00:00Z"}}
+        })))
+        .mount(&lists.navidrome)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getMusicFolders"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "subsonic-response": {"status": "ok", "musicFolders": {"musicFolder": [{"id": 1, "name": "Music"}]}}
+        })))
+        .mount(&lists.navidrome)
+        .await;
+    lists.choose("alice", "", &["jp"]);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    assert!(lists.service.current("alice", OVERALL).is_some());
+    assert!(lists.matches.kept_for("alice") > 0);
+    let worker = worker_with_people(&lists, only_the_admin()).await;
+
+    worker.warm_once().await;
+
+    assert_eq!(lists.listeners.get("alice"), ListenerCharts::default());
+    assert!(lists.service.current("alice", OVERALL).is_none());
+    assert_eq!(lists.matches.kept_for("alice"), 0);
 }
 
 #[tokio::test]

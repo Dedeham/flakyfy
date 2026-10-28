@@ -2363,11 +2363,10 @@ impl Charts {
         )
         .with_family(stores.family_store.clone())
         .with_library_matches(Arc::clone(&library_matches));
-        let warm = Arc::new(ChartsWarmWorker::new(
-            top_songs.clone(),
-            playlists.clone(),
-            Clock::system(),
-        ));
+        let warm = Arc::new(
+            ChartsWarmWorker::new(top_songs.clone(), playlists.clone(), Clock::system())
+                .with_people((*navidrome.navidrome_admin).clone()),
+        );
         Charts {
             top_songs,
             playlists: Arc::new(playlists),

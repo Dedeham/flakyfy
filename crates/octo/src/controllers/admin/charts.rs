@@ -124,6 +124,7 @@ async fn chart_people(state: &AppState) -> Vec<String> {
             names.push(user);
         }
     }
+    names.retain(|name| state.top_songs.listeners().is_known(name));
     names.sort_by_key(|name| name.to_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
     names
@@ -194,6 +195,9 @@ pub async fn put_listeners(State(state): State<AppState>, caller: Caller, body: 
         return error_json(StatusCode::BAD_REQUEST, "Name the person.");
     }
     let top_songs = &state.top_songs;
+    if !top_songs.listeners().is_known(&user) {
+        return error_json(StatusCode::NOT_FOUND, "Navidrome has no such person.");
+    }
     let before = top_songs.listeners().get(&user);
     let asked = choice.country.trim().to_ascii_lowercase();
     let country = if asked.is_empty() || asked == "auto" {
@@ -241,7 +245,7 @@ pub async fn put_listeners(State(state): State<AppState>, caller: Caller, body: 
     let saved = ListenerCharts {
         country,
         pinned,
-        revision: 0,
+        ..Default::default()
     };
     info!(
         "Charts for {user} set on the dashboard: {}, pinned {}",

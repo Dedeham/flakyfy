@@ -712,15 +712,21 @@ function renderRestartPending() {
 // ── Unsaved changes ─────────────────────────────────────────────────────────
 // A form's fingerprint is what its visible controls hold. Heart rows carry their source name,
 // because reordering them changes no value, only the order.
+// A row marked data-own-save saves itself the moment it changes, so it never makes its card
+// unsaved and Undo changes leaves it alone.
+function formControls(form, selector) {
+  return Array.from(form.querySelectorAll(selector)).filter(el => !el.closest('[data-own-save]'));
+}
+
 function formFingerprint(form) {
-  return JSON.stringify(Array.from(form.querySelectorAll('input:not([type="hidden"]), select, textarea'))
+  return JSON.stringify(formControls(form, 'input:not([type="hidden"]), select, textarea')
     .map(el => `${el.closest('.source-priority-row')?.querySelector('.source-title')?.textContent ?? ''}|${el.name || el.id}|${el.type === 'checkbox' ? el.checked : el.value}`));
 }
 
 function markClean(form) {
   form.dataset.saved = formFingerprint(form);
   // What every control held when saved, for Undo changes.
-  form._snapshot = Array.from(form.querySelectorAll('input, select, textarea'))
+  form._snapshot = formControls(form, 'input, select, textarea')
     .map(el => ({ el, value: el.value, checked: el.checked }));
   updateDirty(form);
 }
@@ -5363,6 +5369,7 @@ async function loadCharts() {
   renderChartStatus();
   const form = document.querySelector('form[data-section="generated-playlists-charts"]');
   if (form) markClean(form);
+  loadChartPeople();
 }
 
 function regionName(code) {
@@ -5440,11 +5447,187 @@ function renderChartStatus() {
     }
     return line;
   });
+  const chosen = (chartsInfo.listenerCountries || []).map(code => regionName(code));
+  if (chosen.length) {
+    const line = document.createElement('div');
+    line.textContent = `Also read for ${chosen.join(', ')}, which people chose.`;
+    lines.push(line);
+  }
   const note = document.createElement('div');
   note.className = 'chart-status-note';
   note.textContent = "Read from Apple Music's public web pages.";
   box.replaceChildren(...lines, note);
 }
+
+// Each person's charts: their own chart country and up to three pinned countries, from
+// /api/admin/charts/listeners. Saved on every change with their own PUT, one at a time, outside
+// the settings form.
+let chartPeople = null;
+let chartPeopleUser = null;
+let chartPeopleSaving = Promise.resolve();
+// Saves sent and not answered yet. The row is drawn again from an answer only when no later
+// save is waiting, so a quick second change is never undone on screen by the first answer.
+let chartPeoplePending = 0;
+// Per person, how many times a save was refused because their row had changed. A save queued
+// before a refusal is dropped, not sent on top of the newer row.
+const chartPeopleEpoch = {};
+
+async function loadChartPeople() {
+  const row = document.getElementById('charts-people');
+  if (!row) return;
+  // What is saving goes first, so the rows read back hold it.
+  await chartPeopleSaving;
+  let r;
+  try {
+    r = await api('/api/admin/charts/listeners', { cache: 'no-store' });
+  } catch {
+    row.hidden = true;
+    return;
+  }
+  if (!r.ok) {
+    row.hidden = true;
+    return;
+  }
+  const body = await r.json();
+  if (chartPeoplePending) return;
+  chartPeople = body;
+  row.hidden = false;
+  renderChartPeople();
+}
+
+// Options for a country select: `first` leads, then Apple Music's countries by name. A saved
+// country Apple no longer has stays listed, marked, so it can be seen and changed.
+function fillChartCountries(select, first, saved, missing) {
+  const codes = (chartsInfo?.countries || [])
+    .map(code => [code, regionName(code)])
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  const options = [first].concat(codes);
+  if (saved && !options.some(([value]) => value === saved)) {
+    options.push([saved, `${regionName(saved)} (not on Apple Music)`]);
+  } else if (saved && missing.includes(saved)) {
+    const at = options.findIndex(([value]) => value === saved);
+    options[at] = [saved, `${regionName(saved)} (not on Apple Music)`];
+  }
+  select.replaceChildren(...options.map(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    return option;
+  }));
+  select.value = saved || first[0];
+}
+
+function renderChartPeople() {
+  const people = chartPeople?.people || [];
+  const person = document.getElementById('charts-person');
+  const country = document.getElementById('charts-person-country');
+  const pinsBox = document.querySelector('#charts-people .charts-pins');
+  const pins = Array.from(document.querySelectorAll('#charts-people .charts-pin'));
+  const empty = document.getElementById('charts-people-note');
+  const labels = document.querySelectorAll('#charts-people .charts-people-label');
+  if (!person || !country || !pinsBox || !empty) return;
+  if (!people.length) {
+    [person, country, pinsBox, ...labels].forEach(el => { el.hidden = true; });
+    chartPeopleNote('People show up here once someone has played something.', 'info');
+    return;
+  }
+  [country, pinsBox, ...labels].forEach(el => { el.hidden = false; });
+  if (!people.some(p => p.user === chartPeopleUser)) chartPeopleUser = people[0].user;
+  person.replaceChildren(...people.map(p => {
+    const option = document.createElement('option');
+    option.value = p.user;
+    option.textContent = p.user;
+    return option;
+  }));
+  person.value = chartPeopleUser;
+  person.hidden = people.length < 2;
+  document.getElementById('charts-person-label').hidden = person.hidden;
+  const mine = people.find(p => p.user === chartPeopleUser);
+  const missing = mine.notOnAppleMusic || [];
+  const used = chartsInfo?.country?.used;
+  const server = used ? `Same as the server (${regionName(used)})` : 'Same as the server';
+  fillChartCountries(country, ['auto', server], mine.country === 'auto' ? '' : mine.country, missing);
+  pins.forEach((select, i) => fillChartCountries(select, ['', 'None'], mine.pinned?.[i] || '', missing));
+}
+
+function saveChartPeople() {
+  const user = chartPeopleUser;
+  const country = document.getElementById('charts-person-country')?.value || 'auto';
+  const pinned = Array.from(document.querySelectorAll('#charts-people .charts-pin'))
+    .map(select => select.value)
+    .filter(Boolean);
+  const epoch = chartPeopleEpoch[user] || 0;
+  chartPeoplePending += 1;
+  chartPeopleSaving = chartPeopleSaving.then(async () => {
+    try {
+      // A conflict since this save was queued means it was based on a row that is gone.
+      if ((chartPeopleEpoch[user] || 0) !== epoch) return;
+      // The row as the last answer left it, so a quick second save builds on the first.
+      const current = (chartPeople?.people || []).find(p => p.user.toLowerCase() === user.toLowerCase());
+      const revision = current?.revision || 0;
+      const r = await api('/api/admin/charts/listeners', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user, country, pinned, revision }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (r.status === 409 && body.people) {
+        chartPeopleEpoch[user] = epoch + 1;
+        chartPeople = body;
+        chartPeopleNote(body.error || 'Changed elsewhere just now; showing the latest.', 'error');
+        return;
+      }
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      chartPeople = body;
+      chartPeopleNote('Saved.');
+      refreshChartCountries();
+    } catch (error) {
+      chartPeopleNote(`Could not save: ${error.message}`, 'error');
+    } finally {
+      chartPeoplePending -= 1;
+      if (!chartPeoplePending && chartPeopleUser === user) renderChartPeople();
+    }
+  });
+}
+
+// What a save did, on the row's own line, which keeps its height whether it says something or
+// not. Good news fades after a while, as `note` does; a problem stays.
+let chartPeopleNoteTimer = 0;
+function chartPeopleNote(message, kind = 'ok') {
+  const holder = document.getElementById('charts-people-note');
+  if (!holder) return;
+  clearTimeout(chartPeopleNoteTimer);
+  const glyph = { ok: 'i-check-circle-fill', error: 'i-x-circle-fill', info: 'i-info-fill' }[kind] ?? 'i-info-fill';
+  holder.className = `charts-people-note inline-note ${kind}`;
+  holder.innerHTML = `${icon(glyph)}<span>${esc(message)}</span>`;
+  if (kind === 'error' && srAlert) {
+    srAlert.textContent = '';
+    setTimeout(() => { srAlert.textContent = message; }, 50);
+  }
+  if (kind === 'ok') chartPeopleNoteTimer = setTimeout(() => { holder.replaceChildren(); }, 8000);
+}
+
+// The countries people chose, read again after a save so the status line under the card is
+// current, without drawing the rest of the card again.
+async function refreshChartCountries() {
+  try {
+    const r = await api('/api/admin/charts', { cache: 'no-store' });
+    if (!r.ok || !chartsInfo) return;
+    chartsInfo.listenerCountries = (await r.json()).listenerCountries || [];
+    renderChartStatus();
+  } catch {
+    // The status line stays as it was until the card loads again.
+  }
+}
+
+document.getElementById('charts-person')?.addEventListener('change', event => {
+  chartPeopleUser = event.currentTarget.value;
+  renderChartPeople();
+});
+document.getElementById('charts-person-country')?.addEventListener('change', saveChartPeople);
+document.querySelectorAll('#charts-people .charts-pin').forEach(select => {
+  select.addEventListener('change', saveChartPeople);
+});
 
 function relativeTime(iso) {
   const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);

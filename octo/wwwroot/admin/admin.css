@@ -2743,6 +2743,19 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .chart-choice { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
 .chart-status { padding: 8px 16px 12px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
 .chart-status-note { margin-top: 4px; color: var(--text-faint); }
+/* Each person's charts: a label beside each control, every control the same width, and one line
+   kept for "Saved." so nothing below moves when it shows. */
+.charts-people-ctrl { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: var(--s-m) var(--s-l); }
+.charts-people-label { color: var(--text-muted); font-size: 13px; }
+.charts-people-ctrl > .set-input, .charts-pins, .charts-pins .set-input { width: 100%; min-width: 0; }
+.charts-pins { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-m); }
+.charts-people-note { grid-column: 1 / -1; min-height: 20px; }
+.charts-people-note.inline-note { margin: 0; }
+@media (max-width: 640px) {
+  .charts-people-ctrl, .charts-pins { grid-template-columns: minmax(0, 1fr); }
+  .charts-people-ctrl { row-gap: var(--s-s); }
+  .charts-people-ctrl > .set-input, .charts-pins { margin-bottom: var(--s-s); }
+}
 
 /* ── Animated art card ── */
 .art-card { margin-top: var(--s-l); }

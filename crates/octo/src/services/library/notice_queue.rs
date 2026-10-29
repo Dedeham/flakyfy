@@ -404,7 +404,11 @@ impl NoticeQueue {
         origin: NoticeOrigin,
     ) -> bool {
         let reason = match verdict.reason {
-            InconclusiveReason::NoEntry => "AcoustID has never heard this recording".to_string(),
+            // What else was learnt about it, such as the YouTube upload it is the same audio as.
+            InconclusiveReason::NoEntry => match verdict.evidence.as_deref().filter(|e| !e.is_empty()) {
+                Some(evidence) => format!("AcoustID has never heard this recording, and {evidence}"),
+                None => "AcoustID has never heard this recording".to_string(),
+            },
             InconclusiveReason::BelowThreshold => "AcoustID was not sure what this is".to_string(),
             InconclusiveReason::SourceDisagreed => {
                 format!("AcoustID thinks this is {}", verdict.describe())

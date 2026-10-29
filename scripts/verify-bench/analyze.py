@@ -170,12 +170,15 @@ def truth_of(res, case, labels):
     lab = labels.get(res["id"])
     if lab in ("right", "wrong", "version"):
         return lab, lab, False, False
-    if lab == "preview_wrong":
-        return "right", lab, False, True
-    if lab in ("cant_tell", "skip"):
-        return None, lab, False, False
     expect = res.get("expect") or case.get("expect")
     t = {"match": "right", "same": "right", "not_match": "wrong", "refused": "wrong"}.get(expect)
+    # A file built to be wrong (another song under this one's name) stays wrong when the label only
+    # says the preview is wrong too, or that the listener could not tell.
+    constructed_wrong = t == "wrong" and res.get("group") != "right"
+    if lab == "preview_wrong":
+        return ("wrong" if constructed_wrong else "right"), lab, False, True
+    if lab in ("cant_tell", "skip"):
+        return (t if constructed_wrong else None), lab, False, False
     presumed = res["kind"] == "preview" and res.get("group") == "right" and t == "right"
     return t, None, presumed, False
 

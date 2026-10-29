@@ -214,11 +214,11 @@ impl Gate {
                 behind_wait = None;
                 now_wait = Some(self.join_now());
             }
-            if let Some(behind) = &behind_wait {
-                if !self.behind_may_go(behind.ticket) {
-                    note.await;
-                    continue;
-                }
+            if let Some(behind) = &behind_wait
+                && !self.behind_may_go(behind.ticket)
+            {
+                note.await;
+                continue;
             }
             let mut next = if behind_wait.is_some() {
                 // A background read queued here looks again when a read turns urgent.

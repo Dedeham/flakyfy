@@ -288,7 +288,8 @@ def classify(res, case, labels):
                 info["unavailable_whys"].append(str(r.get("why") or "unknown"))
                 if r.get("sweep") == "replace":
                     info["anomalies"].append("unavailable run carries sweep=replace (not counted as T1)")
-        info["cov_runs"] = sum(1 for r in runs if r.get("outcome") == "match" and r.get("trusted"))
+        # What the person is spared: the sweep settles the song as fine and asks nothing.
+        info["cov_runs"] = sum(1 for r in runs if r.get("sweep") == "fine")
         if truth == "right":
             rep = [r for r in avail if r.get("sweep") == "replace"]
             info["t1"] = bool(rep)
@@ -297,7 +298,9 @@ def classify(res, case, labels):
                     info["t3"].append(o)
             focus = (rep or [r for o in ("mismatch", "unclear", "unavailable") for r in runs if r.get("outcome") == o] or runs or [None])[0]
         elif truth == "wrong":
-            mat = [r for r in avail if r.get("outcome") == "match"]
+            # Silent harm is a wrong file the sweep settles as fine; a match it does not believe
+            # (another channel, a search hit) is still asked about.
+            mat = [r for r in avail if r.get("sweep") == "fine"]
             info["t2"] = bool(mat)
             focus = (mat or runs or [None])[0]
         elif truth == "version":
@@ -402,7 +405,7 @@ def slo_rows(block):
     fl = p["flaky"]
     rows.append(("Flaky, any change (reported, target <= 2%)", None if fl["n"] == 0 else fl["rate"] <= SLO["flaky_max"], pct(fl)))
     cv = p["coverage"]
-    rows.append(("Coverage >= 90%", None if cv["n"] == 0 else cv["rate"] >= SLO["coverage_min"], pct(cv)))
+    rows.append(("Coverage (settled as fine) >= 90%", None if cv["n"] == 0 else cv["rate"] >= SLO["coverage_min"], pct(cv)))
     return rows
 
 

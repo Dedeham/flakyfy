@@ -619,6 +619,15 @@ impl NoticeQueue {
         true
     }
 
+    /// The open Review question filed under `key`, for answering it from the dashboard.
+    pub fn open_review(&self, key: &str) -> Option<NoticeEntry> {
+        self.entries
+            .lock()
+            .values()
+            .find(|entry| entry.key == key && entry.kind == NoticeKind::Review && entry.is_open())
+            .cloned()
+    }
+
     /// Every file a Review question was ever about, open or answered, for anyone.
     pub fn reviewed_paths(&self) -> HashSet<String> {
         self.entries

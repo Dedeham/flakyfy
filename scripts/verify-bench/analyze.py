@@ -269,7 +269,7 @@ def classify(res, case, labels):
     info = {"id": res["id"], "kind": res["kind"], "group": res.get("group") or "?", "truth": truth,
             "label": label, "presumed": presumed, "wrong_pick": wrong_pick, "grade": res.get("grade"),
             "t1": False, "t2": False, "t3": [], "version_match": False, "flaky": False,
-            "flaky_recorded": bool(res.get("flaky")), "flaky_computed": False,
+            "flaky_recorded": bool(res.get("flaky")), "flaky_computed": False, "replace_flip": False,
             "n_runs": 0, "cov_runs": 0, "unavailable_whys": [], "anomalies": []}
     focus = None
     if res["kind"] == "preview":
@@ -278,6 +278,10 @@ def classify(res, case, labels):
         sig = {(r.get("outcome"), r.get("sweep"), (r.get("preview") or {}).get("video_id")) for r in runs}
         info["flaky_computed"] = len(runs) > 1 and len(sig) > 1
         info["flaky"] = info["flaky_computed"] or info["flaky_recorded"]
+        # The one change between collections that costs a song: a right file the sweep replaces in
+        # one collection and not in another.
+        sweeps = {r.get("sweep") for r in runs if r.get("outcome") != "unavailable"}
+        info["replace_flip"] = truth == "right" and "replace" in sweeps and len(sweeps) > 1
         avail = [r for r in runs if r.get("outcome") != "unavailable"]
         for r in runs:
             if r.get("outcome") == "unavailable":
@@ -337,6 +341,7 @@ def preview_metrics(infos):
         "flaky_recorded": rate(sum(i["flaky_recorded"] for i in infos), len(infos)),
         "flaky_computed": rate(sum(i["flaky_computed"] for i in infos), len(infos)),
         "flaky": rate(sum(i["flaky"] for i in infos), len(infos)),
+        "replace_flip_on_right": rate(sum(i["replace_flip"] for i in right), len(right)),
     }
     return m
 
@@ -389,8 +394,13 @@ def slo_rows(block):
         rows.append(("T2 silent harm <= 1% (upper <= 2%)", ok, pct(t2)))
     t3 = p["t3_mismatch_on_right"]
     rows.append(("T3 mismatch on right <= 5%", None if t3["n"] == 0 else t3["rate"] <= SLO["t3_mismatch_max"], pct(t3)))
+    # Gated: a right file must never be replaced in one collection and kept in another. Any other
+    # change between collections (fine, ask, unclear, another video) only changes what is asked,
+    # so it is reported, not gated.
+    ok, txt = t1(p["replace_flip_on_right"])
+    rows.append(("Stability: no flip into replace on a right file == 0", ok, txt))
     fl = p["flaky"]
-    rows.append(("Stability: flaky <= 2%", None if fl["n"] == 0 else fl["rate"] <= SLO["flaky_max"], pct(fl)))
+    rows.append(("Flaky, any change (reported, target <= 2%)", None if fl["n"] == 0 else fl["rate"] <= SLO["flaky_max"], pct(fl)))
     cv = p["coverage"]
     rows.append(("Coverage >= 90%", None if cv["n"] == 0 else cv["rate"] >= SLO["coverage_min"], pct(cv)))
     return rows

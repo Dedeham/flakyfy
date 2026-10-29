@@ -1777,12 +1777,6 @@ impl LibraryReviewSweepWorker {
         !key.is_empty() && key == SongIdentity::key(file_album)
     }
 
-    /// Whether anyone starred or rated `song_id`, read as the sweep reads it before replacing.
-    /// None when the marks cannot be read, or there is nothing to read them with.
-    pub async fn song_marked(&self, song_id: &str) -> Option<bool> {
-        self.replacer.as_ref()?.marked(song_id).await
-    }
-
     /// The same song by title: the loose keys once guest credits are taken off, or the cores
     /// once version tails ("Live", "Remastered 2011") are taken off too. A title with no key is
     /// taken as the same, so it stays a question.
@@ -1797,6 +1791,12 @@ impl LibraryReviewSweepWorker {
     /// Artist - Title, 97% sure (needs 85%)".
     pub fn replaced_note(question: &VerificationResult, needs: i32) -> String {
         NoticeQueue::replaced_reason(question, needs)
+    }
+
+    /// Whether anyone starred or rated `song_id`, read as the sweep reads it before replacing.
+    /// None when the marks cannot be read, or there is nothing to read them with.
+    pub async fn song_marked(&self, song_id: &str) -> Option<bool> {
+        self.replacer.as_ref()?.marked(song_id).await
     }
 
     /// Octo's own downloads inside the music folder, library-relative with `/`, in ordinal

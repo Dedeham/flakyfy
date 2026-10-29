@@ -37,38 +37,43 @@ Each case is graded:
 The bench exits with 1 on any hard case. Preview cases run `--repeat` times (default 3). A case
 whose runs differ in verdict, sweep decision or picked video is reported as **flaky**.
 
-`report.json` holds every run: the bit error, the offset, whether the preview was believed, the
-picked video's title, channel, album and length, and the similarity of every same-recording verdict.
+`runs/<time>-<commit>/signals.json` holds every run: the bit error, the offset, whether the preview
+was believed (and whether the length or the artist was why not), the picked video's title, channel,
+album, length and lane, and every same-recording window's similarity.
 
 ## Leaks
 
 - `fetch_corpus.py` talks only to Navidrome. It accepts only a private IP address, never a name, so
   no DNS lookup is made, and it ignores proxy settings.
-- `make_cases.py` and the `--offline` run need no network.
-- The preview run asks a throwaway shim that runs in the network namespace of a Gluetun container,
-  next to the bench itself. Both leave only through the VPN and resolve through Gluetun.
-  `run-bench-vm.sh` checks the following before and after the run, and stops if any of them fails:
-  - the egress IP is not the host's;
-  - DNS goes to Gluetun;
-  - there is no IPv6.
+- `make_cases.py`, `triage.py`, `analyze.py` and `verify_bench replay` need no network. Run replay
+  under `unshare -rn` to make sure of it. `label_server.py` listens on 127.0.0.1 only.
+- `collect-previews.sh` is the only step that goes out, and only to YouTube through a throwaway
+  shim. Nothing here ever uses Soulseek.
+  - By default the shim runs on this machine.
+  - With `VPN_CONTAINER=<gluetun container>`, the shim and the bench run in that container's
+    network namespace instead. The script then stops, before and after the run, unless:
+    - the egress IP is not the host's;
+    - DNS goes to Gluetun;
+    - there is no IPv6.
 
 ## Running it
 
-1. Make a bench folder with `.env` (chmod 600) holding `NAVIDROME_URL=http://<LAN IP>:4533`,
+From the checkout, with the bench folder at `bench-data/`:
+
+1. Write `bench-data/.env` (chmod 600) with `NAVIDROME_URL=http://<LAN IP>:4533`,
    `NAVIDROME_USER` and `NAVIDROME_PASSWORD` for a read-only user.
-2. Run `python3 -I fetch_corpus.py --bench <folder>`. It copies about 60 songs, plus a sibling, a
-   namesake and another version of each where the library has one.
-3. Run `python3 -I make_cases.py --bench <folder>` to write `cases.json` and copy `run-bench-vm.sh`
-   into the folder.
-4. Put the bench binary into the folder as `verify_bench` (chmod +x). The `Verify bench` workflow
-   builds it on Debian bookworm, the Octo image's base:
-   `gh run download <run id> --repo <fork> -n verify_bench -D <folder>`.
-5. Copy the folder to the Docker host without `.env`, and on the host run
-   `VPN_CONTAINER=<gluetun container> ./run-bench-vm.sh`. Add `--repeat 1` for a quicker pass.
-   `./run-bench-vm.sh --offline --only same_recording` runs the same-recording cases with no
-   network at all.
-6. Read the table it prints and look at every hard case in `report.json`. A right file the check
-   refuses may itself be the wrong song.
+2. Run `python3 -I scripts/verify-bench/fetch_corpus.py --songs 300` to copy the songs plus a
+   sibling, a namesake and another version of each, where the library has them.
+3. Run `python3 -I scripts/verify-bench/make_cases.py` to write `cases.json` and `requests.json`.
+4. Download the bench binary from the `Verify bench` workflow:
+   `gh run download <run id> --repo <fork> -n verify_bench -D bench-data`, then `chmod +x`.
+5. Run `scripts/verify-bench/collect-previews.sh` three times, hours apart, to measure whether
+   YouTube's pick drifts.
+6. Run `unshare -rn bench-data/verify_bench replay --bench bench-data`.
+7. Run `python3 -I scripts/verify-bench/triage.py`, then `python3 -I scripts/verify-bench/label_server.py`
+   and label the queue at http://127.0.0.1:8765/.
+8. Run `python3 -I scripts/verify-bench/analyze.py` and read `analysis.html` and `summary.md` in the run
+   folder. After a code change, replay again and compare with `--baseline <old run>`.
 
 ## Data contracts
 

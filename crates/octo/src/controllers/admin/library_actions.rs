@@ -249,7 +249,7 @@ async fn replace_now(State(state): State<AppState>, request: Request) -> Respons
     if !entry.is_for(&user) {
         return error(
             StatusCode::FORBIDDEN,
-            &format!(
+            format!(
                 "That question is for {}; only they can answer it, from their Review playlist.",
                 entry.username
             ),

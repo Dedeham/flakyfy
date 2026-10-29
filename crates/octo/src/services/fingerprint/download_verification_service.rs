@@ -26,6 +26,7 @@ use super::acoust_id_client::AcoustIdClient;
 use super::acoust_id_rate_limiter::AcoustIdRateLimiter;
 use super::music_brainz_client::{MusicBrainzClient, MusicBrainzError};
 use super::preview_check::{self, PreviewOutcome, PreviewRequest, PreviewSource};
+use super::same_recording::{SameRecording, same_recording};
 
 /// The ISRCs MusicBrainz listed per recording id, with ids compared ignoring case.
 pub type RecordingIsrcs = HashMap<String, Vec<String>>;
@@ -155,6 +156,14 @@ impl DownloadVerificationService {
             .soulseek
             .effective_fingerprint_timeout_seconds();
         preview_check::check(source, &self.fingerprinter, Path::new(path), request, timeout).await
+    }
+
+    /// Whether `candidate` is the same recording as the library file `original` it would replace, by
+    /// its fingerprint over up to three stretches ([`same_recording`]). Needs neither AcoustID nor the
+    /// verification setting: both files are local.
+    pub async fn same_recording_as(&self, candidate: &Path, original: &Path) -> SameRecording {
+        let settings = self.settings.current().soulseek.clone();
+        same_recording(&self.fingerprinter, candidate, original, &settings).await
     }
 
     /// AcoustID can answer at all.

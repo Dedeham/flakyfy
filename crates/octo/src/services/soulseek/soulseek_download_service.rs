@@ -63,6 +63,7 @@ use crate::services::fingerprint::download_verification_service::trustworthy;
 use crate::services::fingerprint::preview_check::{
     self, Heard, PreviewFacts, PreviewOutcome, PreviewRequest,
 };
+use crate::services::fingerprint::same_recording::SameRecording;
 use crate::services::i_download_service::DirectStreamInfo;
 use crate::services::library::library_review_sweep_worker::LibraryReviewSweepWorker;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
@@ -1763,6 +1764,40 @@ impl SoulseekDownloadService {
                             "peer delivered a {actual_secs}s file for a {expected}s track"
                         ));
                         continue;
+                    }
+
+                    // Better quality swaps this file in for one the person has, so it has to sound like
+                    // it, whoever sent it: a length within eight seconds and a lossless extension
+                    // are no proof (another artist's song with a similar title passes both). The
+                    // next peer is tried; the swap checks it again, which also covers Lidarr.
+                    if download.upgrade_search
+                        && let Some(original) = download.replacing_path.as_deref()
+                    {
+                        let same = self
+                            .verification
+                            .same_recording_as(Path::new(&local_path), Path::new(original))
+                            .await;
+                        if !same.allows_replacing() {
+                            let why = same.refusal();
+                            warn!(
+                                "Soulseek attempt {attempt_idx} for the upgrade of '{artist} - {title}' {why}; \
+                                 discarding and advancing"
+                            );
+                            discard_rejected_download(&local_path, attempt_started_utc);
+                            // Only a file that is clearly another sound is remembered as wrong; another
+                            // version of the song is not wrong for everything else.
+                            if matches!(same, SameRecording::Differs(_)) {
+                                self.deny_candidate(hit, routing, &format!("{why}"));
+                            }
+                            base.log_step(
+                                &track_key,
+                                acquisition_event_kinds::CHECK,
+                                "Did not sound like the file it would replace",
+                                Some("Thrown away; the original stays"),
+                            );
+                            last_error = Some(format!("the file {why}"));
+                            continue;
+                        }
                     }
 
                     // Same job as the duration check, one layer deeper: that one proves the file

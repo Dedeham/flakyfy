@@ -1,0 +1,41 @@
+name: Verify bench
+
+# Builds crates/octo/examples/verify_bench, which runs the wrong-song checks against a labelled
+# set of files kept outside the repository (scripts/verify-bench/). It is built on Debian
+# bookworm, the Octo image's base, so it runs inside that image, which brings ffmpeg and fpcalc.
+# Built on a push to the bench branch (a dispatch needs the workflow on main); nothing here gates
+# a merge.
+on:
+  push:
+    branches: [test/verify-bench]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: rust:1.99-bookworm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # rustup in the image installs what rust-toolchain.toml names.
+      - name: Rust toolchain
+        run: rustup toolchain install
+
+      - name: Cache cargo and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: verify-bench
+          save-if: true
+
+      - name: Build
+        run: cargo build --release --locked --example verify_bench -p octo
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: verify_bench
+          path: target/release/examples/verify_bench
+          if-no-files-found: error
+          retention-days: 30

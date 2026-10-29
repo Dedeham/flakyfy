@@ -7,7 +7,7 @@ name: Verify bench
 # a merge.
 on:
   push:
-    branches: [test/verify-bench]
+    branches: [test/verify-bench, test/verify-bench-*]
   workflow_dispatch:
 
 jobs:

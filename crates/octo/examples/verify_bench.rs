@@ -426,10 +426,12 @@ fn preview_run(
         };
     };
     let album_agrees = LibraryReviewSweepWorker::preview_album_agrees(preview.album.as_deref(), album);
-    // The sweep's own rules: a believed match from the file's album settles the song, and only a
-    // clear mismatch against a row from that album is replaced (when the setting is on).
+    // The sweep's own rules: a believed match settles the song unless the row or the file is live,
+    // and only a clear mismatch against a row from the file's album is replaced (when the setting
+    // is on).
+    let settles = LibraryReviewSweepWorker::preview_album_settles(preview.album.as_deref(), album);
     let sweep = match heard {
-        Heard::Match if *trusted && album_agrees => "fine",
+        Heard::Match if *trusted && settles => "fine",
         Heard::Mismatch
             if comparison.bit_error >= LibraryReviewSweepWorker::PREVIEW_REPLACE_FROM && album_agrees =>
         {

@@ -2873,7 +2873,7 @@ function showNotices() {
             <span class="key">${esc(entry.artist)} - ${esc(entry.title)}</span>
             <span class="value">${esc(noticeKinds[entry.kind] || entry.kind)}: ${esc(entry.reason)}${esc(noticeScore(entry))}${entry.origin === 'LibrarySweep' ? ' (from the library)' : ''}</span>
             <span class="value">${esc(entry.username)}</span>
-            <span class="value">${esc(noticeStates[entry.state] || entry.state)}${entry.submitted ? ', sent to AcoustID' : ''}${entry.kind === 'Review' && entry.open && entry.navidromeId
+            <span class="value">${esc(noticeStates[entry.state] || entry.state)}${entry.submitted ? ', sent to AcoustID' : ''}${entry.kind === 'Review' && entry.open && entry.mine && entry.navidromeId
               ? ` <button type="button" class="btn btn-ghost btn-sm" data-replace-now="${esc(entry.key)}">Replace now</button>`
               : ''}</span>`,
     body => {

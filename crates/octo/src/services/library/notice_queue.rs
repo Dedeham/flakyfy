@@ -267,6 +267,11 @@ impl NoticeEntry {
     pub fn is_open(&self) -> bool {
         matches!(self.state, NoticeState::Waiting | NoticeState::Queued)
     }
+
+    /// Whether the question was put to `username`, the one person who may answer it.
+    pub fn is_for(&self, username: &str) -> bool {
+        same_user(&self.username, username)
+    }
 }
 
 /// The same user, ignoring case and the asker's surrounding spaces.

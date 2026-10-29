@@ -1587,6 +1587,12 @@ impl LibraryReviewSweepWorker {
         }
     }
 
+    /// Whether anyone starred or rated `song_id`, read as the sweep reads it before replacing.
+    /// None when the marks cannot be read, or there is nothing to read them with.
+    pub async fn song_marked(&self, song_id: &str) -> Option<bool> {
+        self.replacer.as_ref()?.marked(song_id).await
+    }
+
     /// Counts one replacement, or one that failed, and writes it at once: the day's cap and
     /// breaker must hold across a restart right after.
     fn count_today(&self, now: DateTime<Utc>, replaced: bool) {

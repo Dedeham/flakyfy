@@ -205,9 +205,11 @@ impl FromBody for ReplaceNowRequest {
 
 /// Replace now on an open Review question: Wrong song for its file, as the signed-in Navidrome
 /// admin, the same action as adding the song to the Wrong song playlist and held to the same
-/// gates (library actions on, on the allowed list, Wrong song on, no dry run). The original is
-/// kept as the action's settings say. A replacement is a download, so it runs on after the answer
-/// and shows in Downloads; the question is answered once it is in.
+/// gates (library actions on, on the allowed list, Wrong song on, no dry run). Only a question put
+/// to the person signed in, as the playlist only answers one's own, and never a song anyone starred
+/// or rated, as the automatic replacing never touches one. The original is kept as the action's
+/// settings say. A replacement is a download, so it runs on after the answer and shows in
+/// Downloads; the question is answered once it is in.
 async fn replace_now(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = split(request).await;
     let request: ReplaceNowRequest = match bind_body(&parts, &body) {
@@ -244,12 +246,36 @@ async fn replace_now(State(state): State<AppState>, request: Request) -> Respons
     else {
         return error(StatusCode::BAD_REQUEST, "That question is not open in Review.");
     };
+    if !entry.is_for(&user) {
+        return error(
+            StatusCode::FORBIDDEN,
+            &format!(
+                "That question is for {}; only they can answer it, from their Review playlist.",
+                entry.username
+            ),
+        );
+    }
     let Some(id) = entry.navidrome_id.clone().filter(|id| !id.is_empty()) else {
         return error(
             StatusCode::CONFLICT,
             "Navidrome does not show this song yet. Try again after its next scan.",
         );
     };
+    match state.library_review_sweep_worker.song_marked(&id).await {
+        Some(false) => {}
+        Some(true) => {
+            return error(
+                StatusCode::CONFLICT,
+                "Someone starred or rated this song, so it stays a question. Take the star or rating off first to replace it.",
+            );
+        }
+        None => {
+            return error(
+                StatusCode::CONFLICT,
+                "The stars and ratings on this song could not be read, so it stays a question.",
+            );
+        }
+    }
     let executor = state.library_action_executor.clone();
     let (artist, title) = (entry.artist.clone(), entry.title.clone());
     let asker = user;
@@ -284,6 +310,8 @@ async fn get_notices(State(state): State<AppState>, request: Request) -> Respons
     if !browse.signed_in() {
         return browse.finish(sign_in());
     }
+    // Who is looking: their own open questions may be answered from here (Replace now).
+    let me = navidrome_user_of(&state, &parts);
     let entries: Vec<Value> = state
         .notice_queue
         .recent(200)
@@ -292,6 +320,7 @@ async fn get_notices(State(state): State<AppState>, request: Request) -> Respons
             let mut json = json!({
                 "key": entry.key,
                 "open": entry.is_open(),
+                "mine": me.as_deref().is_some_and(|me| entry.is_for(me)),
                 "kind": entry.kind.name(),
                 "username": entry.username,
                 "artist": entry.artist,

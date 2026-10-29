@@ -111,8 +111,9 @@ struct Inner {
     settings: Arc<SettingsStore>,
     clock: Clock,
     made: Mutex<HashMap<String, HashMap<String, Made>>>,
-    /// When a listener's list last could not be made whole, by listener and list.
-    failed_at: Mutex<HashMap<(String, String), DateTime<Utc>>>,
+    /// When a listener's list last could not be made whole, by listener and list, with the rule
+    /// that build ran under: a new rule makes the list due at once.
+    failed_at: Mutex<HashMap<(String, String), (DateTime<Utc>, String)>>,
     builds: InFlight<bool>,
     /// The family, whose kid profiles get clean lists.
     family: Option<Arc<FamilyStore>>,
@@ -518,15 +519,16 @@ impl ChartPlaylistService {
         // Every list that is on, whatever a country's menu says just now: a menu not known for a
         // moment must not let a made list go.
         let kept = self.lists_for(username);
-        let waiting: Vec<String> = {
+        // A list that could not be made whole waits, but only under the rule it failed under.
+        let waiting: Vec<(String, String)> = {
             let mut failed = self.inner.failed_at.lock();
-            failed.retain(|(who, list), at| {
+            failed.retain(|(who, list), (at, _)| {
                 now - *at < RETRY_AFTER_FAILURE && (*who != user || kept.contains(list))
             });
             failed
-                .keys()
-                .filter(|(who, _)| *who == user)
-                .map(|(_, list)| list.clone())
+                .iter()
+                .filter(|((who, _), _)| *who == user)
+                .map(|((_, list), (_, rule))| (list.clone(), rule.clone()))
                 .collect()
         };
         let (any_made, due) = {
@@ -543,7 +545,6 @@ impl ChartPlaylistService {
             });
             let due: Vec<(String, String, String)> = on
                 .iter()
-                .filter(|(list, _)| !waiting.contains(list))
                 .map(|(list, name)| {
                     (
                         list.clone(),
@@ -551,6 +552,7 @@ impl ChartPlaylistService {
                         self.rule(username, list, home.as_deref()),
                     )
                 })
+                .filter(|(list, _, rule)| !waiting.iter().any(|(l, r)| l == list && r == rule))
                 .filter(|(list, _, rule)| {
                     mine.and_then(|m| m.get(list))
                         .is_none_or(|m| m.period != period || m.rule != *rule || !m.whole)
@@ -597,7 +599,7 @@ impl ChartPlaylistService {
             None => MatchSession::none(),
         };
         let mut any = false;
-        let mut trouble_with: Vec<String> = Vec::new();
+        let mut trouble_with: Vec<(String, String)> = Vec::new();
         let mut whole: Vec<String> = Vec::new();
         for (list_id, name, rule) in lists {
             let chart = split_list(&list_id).0.to_string();
@@ -609,7 +611,7 @@ impl ChartPlaylistService {
             let rows: Vec<TopSong> =
                 TopSongsService::rows_to_match(&list.songs, count, skip_covers_and_instrumentals);
             if rows.is_empty() {
-                trouble_with.push(list_id);
+                trouble_with.push((list_id, rule));
                 info!("{name} for {username}: the chart did not answer, the last list stays");
                 continue;
             }
@@ -669,18 +671,18 @@ impl ChartPlaylistService {
             // A library that answered nothing at all must not turn a list of the listener's own
             // songs into outside ones.
             if unanswered == rows.len() && before.as_ref().is_some_and(|b| !b.entries.is_empty()) {
-                trouble_with.push(list_id);
+                trouble_with.push((list_id, rule));
                 continue;
             }
             let from_apple = list.source == APPLE_SOURCE;
             // A stand-in for Apple's chart keeps the Apple list that was made, and asks Apple
             // again soon.
             if !from_apple && before.as_ref().is_some_and(|b| b.source == APPLE_SOURCE) {
-                trouble_with.push(list_id);
+                trouble_with.push((list_id, rule));
                 continue;
             }
             if unanswered > 0 || !from_apple {
-                trouble_with.push(list_id.clone());
+                trouble_with.push((list_id.clone(), rule.clone()));
             } else {
                 whole.push(list_id.clone());
             }
@@ -732,8 +734,8 @@ impl ChartPlaylistService {
         }
         let now = self.inner.clock.now();
         let mut failed = self.inner.failed_at.lock();
-        for list in trouble_with {
-            failed.insert((user.clone(), list), now);
+        for (list, rule) in trouble_with {
+            failed.insert((user.clone(), list), (now, rule));
         }
         for list in whole {
             failed.remove(&(user.clone(), list));

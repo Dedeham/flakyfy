@@ -625,12 +625,15 @@ async fn replay_case(context: &Bench, case: Case) -> anyhow::Result<Graded> {
                     seconds_taken,
                 ));
             }
-            let grade = runs
+            // Judged by the collections that compared: a shim that was busy once says nothing about
+            // the check, and analyze.py counts those runs on their own.
+            let compared: Vec<&PreviewRun> = runs.iter().filter(|run| run.heard.is_some()).collect();
+            let grade = compared
                 .iter()
                 .map(|run| grade_preview(expect, run))
                 .max()
                 .unwrap_or(Grade::Soft);
-            let flaky = runs
+            let flaky = compared
                 .windows(2)
                 .any(|w| w[0].heard != w[1].heard || w[0].sweep != w[1].sweep || w[0].video != w[1].video);
             Ok(Graded {

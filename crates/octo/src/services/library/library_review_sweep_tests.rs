@@ -3285,3 +3285,91 @@ fn acoust_id_replaces_only_with_the_original_kept() {
         AutoReplace::Ask
     );
 }
+
+// ---- The same audio as an upload that may not be the song ----------------------------------
+
+/// A match `bit_error` off a search hit that may not be the song: posted by `channel` as `title`.
+fn same_as_upload(bit_error: f64, title: Option<&str>, channel: Option<&str>) -> PreviewOutcome {
+    PreviewOutcome::Compared {
+        heard: Heard::Match,
+        comparison: Comparison {
+            bit_error,
+            offset_seconds: 0.0,
+        },
+        trusted: false,
+        preview: PreviewFacts {
+            title: title.map(str::to_string),
+            artist: channel.map(str::to_string),
+            ..PreviewFacts::bare("up-1")
+        },
+    }
+}
+
+#[tokio::test]
+async fn a_never_heard_sound_that_is_an_upload_s_audio_names_the_upload_in_its_question() {
+    let verifier = FakeVerifier::never_heard(Some(same_as_upload(
+        0.02,
+        Some("Roads (Official Video)"),
+        Some("Portishead"),
+    )));
+
+    let (_sweep, worker, queue) = never_heard_song(verifier, settings_of(60)).await;
+
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].cause, InconclusiveReason::NoEntry);
+    assert_eq!(
+        entries[0].reason,
+        "AcoustID has never heard this recording, and it sounds exactly like the YouTube upload \"Roads (Official Video)\" by Portishead (https://www.youtube.com/watch?v=up-1)"
+    );
+    assert_eq!(worker.status().fine, 0);
+}
+
+#[tokio::test]
+async fn an_upload_only_alike_or_with_no_title_adds_nothing_to_the_question() {
+    for preview in [
+        same_as_upload(0.2, Some("Roads (Official Video)"), Some("Portishead")),
+        same_as_upload(0.02, None, Some("Portishead")),
+    ] {
+        let (_sweep, _, queue) =
+            never_heard_song(FakeVerifier::never_heard(Some(preview)), settings_of(60)).await;
+
+        let entries = queue.for_user("bob", NoticeKind::Review);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].reason, "AcoustID has never heard this recording");
+    }
+}
+
+#[tokio::test]
+async fn a_lone_link_that_is_an_upload_s_audio_names_the_upload_too() {
+    let verifier = lone_linked(same_as_upload(0.02, Some("Roads"), None));
+
+    let (_sweep, _, queue) = never_heard_song(verifier, settings_of(60)).await;
+
+    let entries = queue.for_user("bob", NoticeKind::Review);
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0].reason.ends_with(
+            ", and it sounds exactly like the YouTube upload \"Roads\" (https://www.youtube.com/watch?v=up-1)"
+        ),
+        "{}",
+        entries[0].reason
+    );
+}
+
+#[test]
+fn an_upload_is_named_by_its_title_who_posted_it_and_its_link() {
+    let facts = PreviewFacts {
+        title: Some("Roads".into()),
+        artist: Some("  ".into()),
+        ..PreviewFacts::bare("up-1")
+    };
+    assert_eq!(
+        LibraryReviewSweepWorker::heard_upload(&facts).as_deref(),
+        Some("it sounds exactly like the YouTube upload \"Roads\" (https://www.youtube.com/watch?v=up-1)")
+    );
+    assert_eq!(
+        LibraryReviewSweepWorker::heard_upload(&PreviewFacts::bare("up-1")),
+        None
+    );
+}

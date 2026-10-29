@@ -44,7 +44,9 @@ use crate::services::common::IAcquisitionActivity;
 use crate::services::family::family_store::FamilyStore;
 use crate::services::family::{LibraryScope, NavidromeAdmin, ScopeResolver, ScopeView};
 use crate::services::fingerprint::AcoustIdRateLimiter;
-use crate::services::fingerprint::preview_check::{Heard, PreviewOutcome, PreviewRequest, PreviewSource};
+use crate::services::fingerprint::preview_check::{
+    Heard, PreviewFacts, PreviewOutcome, PreviewRequest, PreviewSource,
+};
 use crate::services::framework::DotnetDictionary;
 use crate::services::health::keep_marks::MemberMarks;
 use crate::services::library::library_walk;
@@ -833,6 +835,26 @@ impl LibraryReviewSweepWorker {
     /// 0.11, an official video with re-mastered sound 0.37; another song 0.41 to 0.47 and noise 0.38
     /// to 0.48. Between the preview's own line and this, it stays a question.
     pub const PREVIEW_REPLACE_FROM: f64 = 0.42;
+    /// At most this share of differing bits, a file is the same audio as a YouTube upload, not
+    /// only alike. Labelled on a real library: such a file was the upload itself every time, and
+    /// about one in five carried another song's name, which the upload's title said.
+    pub const SAME_AUDIO_AT_MOST: f64 = 0.10;
+
+    /// What a question says of a YouTube upload the file is the same audio as, though the upload
+    /// cannot be believed to be the song: its title, who posted it and its link. None for an
+    /// upload whose title is not known.
+    pub fn heard_upload(facts: &PreviewFacts) -> Option<String> {
+        let title = facts.title.as_deref().filter(|title| !dotnet::is_blank(title))?;
+        let by = facts
+            .artist
+            .as_deref()
+            .filter(|artist| !dotnet::is_blank(artist))
+            .map_or_else(String::new, |artist| format!(" by {artist}"));
+        Some(format!(
+            "it sounds exactly like the YouTube upload \"{title}\"{by} (https://www.youtube.com/watch?v={})",
+            facts.video_id
+        ))
+    }
 
     const DONE: &'static str = "Every song has been checked. New or changed ones are looked for later.";
     const RECHECKING: &'static str = "Re-checking Octo's downloads.";
@@ -1330,6 +1352,17 @@ impl LibraryReviewSweepWorker {
                         song.artist, song.title
                     );
                     (outcome, question)
+                }
+                // The same audio as an upload that may not be the song settles nothing, but the
+                // question names the upload: its title often says what the file really is.
+                PreviewOutcome::Compared {
+                    heard: Heard::Match,
+                    trusted: false,
+                    comparison,
+                    preview: facts,
+                } if comparison.bit_error <= Self::SAME_AUDIO_AT_MOST => {
+                    let evidence = Self::heard_upload(&facts).or(question.evidence.clone());
+                    (outcome, VerificationResult { evidence, ..question })
                 }
                 _ => (outcome, question),
             }

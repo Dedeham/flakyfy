@@ -99,7 +99,7 @@ async fn a_stale_pin_the_new_pick_agrees_with_is_stamped_and_keeps_its_stream_fa
     music_answers(&shim, &music_row("vid-a", "Daft Punk", "Emotion")).await;
     let registry = Arc::new(ExternalIdRegistry::in_memory());
     let id = stale(&registry, "Daft Punk", "Emotion", "vid-a");
-    assert_eq!(registry.stale_pins(), [id.clone()]);
+    assert_eq!(registry.stale_pins(), std::slice::from_ref(&id));
 
     let report = worker(&registry, &shim).pass(&CancellationToken::new()).await;
 

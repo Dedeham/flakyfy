@@ -491,7 +491,7 @@ impl YouTubeResolver {
         }
         let parsed = root
             .ok_or_else(|| anyhow::anyhow!("not JSON"))
-            .and_then(|root| Ok(parse_hit(&root, true)?));
+            .and_then(|root| parse_hit(&root, true));
         match parsed {
             Ok(Some(hit)) => Lookup::Found(hit),
             Ok(None) => Lookup::None,

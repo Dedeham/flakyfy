@@ -122,7 +122,7 @@ pick. It is the only file the VM needs.
 - `{labels: {<case_id>: {label, note, at}}}`
 - `label` is one of `right|wrong|version|preview_wrong|cant_tell|skip`.
 - For same_recording, `right` means the same recording.
-- Every save is also copied to `~/.local/share/octo-bench/labels-<date>.json`.
+- Every save is also copied to `~/.local/share/octo-bench/labels-<run>-<date>.json`.
 
 **Truth** (analyze):
 - A label wins over everything else.

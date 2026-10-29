@@ -104,8 +104,9 @@ def save_labels(labels):
         os.chmod(d, 0o700)
     except OSError:
         pass
+    # One backup per run and day, so labelling a second queue never overwrites the first.
     day = datetime.now().strftime("%Y-%m-%d")
-    write_atomic(d / ("labels-%s.json" % day), text, mode=0o600)
+    write_atomic(d / ("labels-%s-%s.json" % (Ctx.run.name, day)), text, mode=0o600)
 
 
 def public_item(item, labelled):

@@ -534,6 +534,16 @@ A replacement (Better quality, Wrong version, Wrong song) takes the original's p
 Navidrome: it keeps the original's file name, title, album and album artist tags, so its plays,
 favorites and playlist places stay with it. The action history says whether Navidrome kept it.
 
+A Better quality copy also has to sound like the file it replaces. A name, a length within eight
+seconds and a lossless extension can all fit another artist's song with a similar title, so the
+audio is compared: both files are fingerprinted over up to three stretches (the start, the middle
+and the end) and every stretch has to be at least 85% alike. A copy at another speed, a remaster
+or a live take scores lower and is refused, and so is one more than 20 seconds longer or shorter.
+A refused copy is thrown away, the next Soulseek result is tried, and the original stays. This
+needs neither AcoustID nor `SLSKD_VERIFY_DOWNLOADS`, only fpcalc and ffmpeg, and a copy that cannot
+be compared is refused too: a missed upgrade costs less than the wrong song. Wrong song and Wrong
+version are not compared, since their original is the wrong file.
+
 `LIBRARY_ACTIONS_DRY_RUN` is on by default, so the first run of a newly enabled install is a
 rehearsal you can read before anything is real. Nothing is ever deleted outright: removed files
 move to `LIBRARY_ACTIONS_TRASH_DIR` under the music folder, with a sidecar manifest so a restore

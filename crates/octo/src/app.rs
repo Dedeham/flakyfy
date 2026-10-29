@@ -2268,6 +2268,7 @@ impl LibraryActions {
         acquisition: &Acquisition,
         soulseek_link: Arc<dyn ISoulseekLink>,
         spectrum: Arc<SpectrumAnalyzer>,
+        fingerprinter: Arc<AudioFingerprinter>,
         answers: SongAnswers,
     ) -> Self {
         let notice_queue = stores.notice_queue.clone();
@@ -2284,6 +2285,8 @@ impl LibraryActions {
             notices: Some(notice_queue.clone()),
             // The same spectrum analyzer the downloads use.
             spectrum: Some(spectrum),
+            // The same fingerprinter the downloads use, to compare an upgrade with its original.
+            fingerprinter: Some(fingerprinter),
             stars: Some(acquisition.star_on_arrival.clone()),
             soulseek_link: Some(soulseek_link),
             sources: Some(acquisition.upgrade_sources.clone()),
@@ -2993,6 +2996,7 @@ impl AppState {
             &acquisition,
             soulseek.link.clone(),
             tagging.spectrum_analyzer.clone(),
+            tagging.audio_fingerprinter.clone(),
             lyrics.song_answers(&genre_cover_jobs.cover_upgrade_worker),
         );
         library_actions.register_workers(&workers);
@@ -3492,6 +3496,7 @@ impl AppState {
             &acquisition,
             soulseek.link.clone(),
             tagging.spectrum_analyzer.clone(),
+            tagging.audio_fingerprinter.clone(),
             lyrics.song_answers(&genre_cover_jobs.cover_upgrade_worker),
         );
         // The queues and sweeps keep their files in the test's config directory; no worker is

@@ -267,7 +267,7 @@ pub fn trustworthy(request: &PreviewRequest<'_>, preview: &PreviewFacts) -> bool
 
 /// For each position, whether the `window` items that start there have enough in them to be
 /// compared (see [`MIN_CHANGING_SHARE`]).
-fn informative_windows(items: &[u32], window: usize) -> Vec<bool> {
+pub(crate) fn informative_windows(items: &[u32], window: usize) -> Vec<bool> {
     if window == 0 || items.len() < window {
         return Vec::new();
     }

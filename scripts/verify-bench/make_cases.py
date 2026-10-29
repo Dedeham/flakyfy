@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Builds the right and wrong cases of the verify bench from the files fetch_corpus.py copied,
-and writes <bench>/cases.json (see README.md next to this script).
+and writes <bench>/cases.json and <bench>/requests.json (see README.md next to this script).
 
-    python3 -I make_cases.py [--bench <checkout>/bench-data] [--variant-songs 15] [--same-songs 20]
+    python3 -I make_cases.py [--bench <checkout>/bench-data] [--variant-songs 40] [--same-songs 60]
 
 Needs ffmpeg. Works offline: everything is made from the files already in <bench>/corpus/right.
 The derived files go to <bench>/corpus/derived and <bench>/corpus/synthetic, named by Navidrome
-id and variant only. run-bench-vm.sh is copied next to cases.json, so the folder is all a run needs.
+id and variant only.
 """
 
 import argparse
+import hashlib
 import json
 import random
 import shutil
@@ -21,6 +22,16 @@ HERE = Path(__file__).resolve().parent
 # The bench folder inside the checkout; ignored by git (see .gitignore and the pre-commit hook).
 BENCH_DATA = HERE.parents[1] / "bench-data"
 SYNTHETIC_SECONDS = 200
+
+
+def request_key(song):
+    """The key a song's preview is stored under (see "Data contracts" in README.md)."""
+    text = f"{song['artist']}\0{song['title']}\0{song['seconds']}"
+    return hashlib.sha1(text.encode()).hexdigest()[:16]
+
+
+def artist_name(song):
+    return " ".join(song["artist"].lower().split())
 
 
 def ffmpeg(args, dest):
@@ -70,8 +81,8 @@ SYNTHETIC = {
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--bench", default=str(BENCH_DATA))
-    parser.add_argument("--variant-songs", type=int, default=15, help="songs that also get re-encoded and shifted preview cases")
-    parser.add_argument("--same-songs", type=int, default=20, help="songs that get same-recording cases")
+    parser.add_argument("--variant-songs", type=int, default=40, help="songs that also get re-encoded and shifted preview cases")
+    parser.add_argument("--same-songs", type=int, default=60, help="songs that get same-recording cases")
     parser.add_argument("--synthetic-labels", type=int, default=4, help="songs each synthetic file is labelled as")
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
@@ -106,6 +117,8 @@ def main():
             "id": f"p-{song['id']}-{name}",
             "kind": "preview",
             "group": group,
+            "song_id": song["id"],
+            "request_key": request_key(song),
             "file": str(Path(path).relative_to(bench)),
             "artist": song["artist"],
             "title": song["title"],
@@ -119,6 +132,7 @@ def main():
             "id": f"s-{song['id']}-{name}",
             "kind": "same_recording",
             "group": group,
+            "song_id": song["id"],
             "candidate": str(Path(candidate).relative_to(bench)),
             "original": song["path"],
             "expect": expect,
@@ -135,6 +149,11 @@ def main():
             preview(song, "other_song", "sibling", bench / kin["sibling"]["path"], "not_match")
         if "namesake" in kin:
             preview(song, "namesake", "namesake", bench / kin["namesake"]["path"], "not_match")
+        # Another artist's file under this song's name.
+        others = [p for p in picks if artist_name(p) != artist_name(song)]
+        swap = rng.choice(others) if others else None
+        if swap:
+            preview(song, "swap", "swap", bench / swap["path"], "not_match")
         if n < args.variant_songs:
             for name in ("mp3-128", "opus-96"):
                 if path := variant(song, name):
@@ -144,6 +163,8 @@ def main():
             if path := cut(song, "cut-20s", ["-ss", "20"]):
                 preview(song, "shifted", "cut-20s", path, "match")
         if n < args.same_songs:
+            if swap:
+                same(song, "swap", "swap", bench / swap["path"], "refused")
             for name in ("mp3-320", "opus-160"):
                 if path := variant(song, name):
                     same(song, "reencoded", name, path, "same")
@@ -158,6 +179,7 @@ def main():
                         "id": f"s-{song['id']}-{role}",
                         "kind": "same_recording",
                         "group": "other_version" if role == "version" else "other_song",
+                        "song_id": song["id"],
                         "candidate": kin[role]["path"],
                         "original": song["path"],
                         "expect": "refused",
@@ -175,6 +197,8 @@ def main():
                 "id": f"p-{song['id']}-synthetic-{name}",
                 "kind": "preview",
                 "group": "synthetic",
+                "song_id": song["id"],
+                "request_key": request_key(song),
                 "file": str(dest.relative_to(bench)),
                 "artist": song["artist"],
                 "title": song["title"],
@@ -183,8 +207,12 @@ def main():
                 "expect": "not_match",
             })
 
+    requests = [
+        {"key": request_key(s), "artist": s["artist"], "title": s["title"], "album": s["album"], "seconds": s["seconds"]}
+        for s in picks
+    ]
+    (bench / "requests.json").write_text(json.dumps({"requests": requests}, indent=1, ensure_ascii=False))
     (bench / "cases.json").write_text(json.dumps({"cases": cases}, indent=1, ensure_ascii=False))
-    shutil.copy2(HERE / "run-bench-vm.sh", bench / "run-bench-vm.sh")
     kinds = {}
     for case in cases:
         key = f"{case['kind']}/{case['group']}"

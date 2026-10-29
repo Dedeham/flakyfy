@@ -133,12 +133,15 @@ def entry(song, role, of=None):
     }
 
 
-def pick_songs(api, count, rng):
-    """`count` songs spread over genres and artists, songs with a MusicBrainz id first."""
+def pick_songs(api, count, rng, skip_ids=(), skip_artists=()):
+    """`count` new songs spread over genres and artists, songs with a MusicBrainz id first.
+    Songs and artists in `skip_*` (the picks already made) are left out."""
     pool = {}
-    for _ in range(4):
+    for round_ in range(30):
+        if round_ >= 4 and len(pool) >= 6 * count:
+            break
         for song in api.call("getRandomSongs", size=500).get("randomSongs", {}).get("song", []):
-            if usable(song):
+            if usable(song) and song["id"] not in skip_ids and norm(song["artist"]) not in skip_artists:
                 pool[song["id"]] = song
     by_genre = {}
     for song in pool.values():
@@ -146,7 +149,7 @@ def pick_songs(api, count, rng):
     for songs in by_genre.values():
         rng.shuffle(songs)
         songs.sort(key=lambda s: not s.get("musicBrainzId"))
-    picked, artists = [], set()
+    picked, artists = [], set(skip_artists)
     while len(picked) < count and any(by_genre.values()):
         for songs in by_genre.values():
             while songs:
@@ -170,21 +173,36 @@ def artist_songs(api, song):
     return [s for s in songs if usable(s)]
 
 
+def artist_search(api, song):
+    """Songs by the same artist found by searching its name, when getArtist gave too little."""
+    hits = api.call("search3", query=song["artist"], songCount=50, artistCount=0, albumCount=0)
+    return [
+        s for s in hits.get("searchResult3", {}).get("song", [])
+        if usable(s) and norm(s["artist"]) == norm(song["artist"])
+    ]
+
+
 def relatives(api, song, rng):
     """Another song by the same artist, a namesake by another artist, another version."""
     title = norm(song["title"])
     found = {}
     siblings = []
     versions = []
-    for other in artist_songs(api, song):
-        if other["id"] == song["id"]:
-            continue
-        other_title = norm(other["title"])
-        if other_title == title:
-            if VERSION_WORDS.search(f"{other['title']} {other.get('album', '')}"):
-                versions.append(other)
-        elif title not in other_title and other_title not in title:
-            siblings.append(other)
+
+    def sort(others):
+        for other in others:
+            if other["id"] == song["id"]:
+                continue
+            other_title = norm(other["title"])
+            if other_title == title:
+                if VERSION_WORDS.search(f"{other['title']} {other.get('album', '')}"):
+                    versions.append(other)
+            elif title not in other_title and other_title not in title:
+                siblings.append(other)
+
+    sort(artist_songs(api, song))
+    if not siblings or not versions:
+        sort(artist_search(api, song))
     if siblings:
         found["sibling"] = rng.choice(siblings)
     if versions:
@@ -213,6 +231,12 @@ def main():
     right = bench / "corpus" / "right"
     right.mkdir(parents=True, exist_ok=True)
     entries = {}
+    songs_file = bench / "songs.json"
+    if songs_file.exists():
+        # Earlier picks stay picks: the new ones are added on top.
+        for item in json.loads(songs_file.read_text()):
+            if (bench / item["path"]).exists():
+                entries[item["id"]] = item
 
     def keep(song, role, of=None):
         if song["id"] in entries:
@@ -229,14 +253,26 @@ def main():
         item["path"] = str(path.relative_to(bench))
         entries[song["id"]] = item
 
-    picked = pick_songs(api, args.songs, rng)
-    for n, song in enumerate(picked, 1):
-        print(f"[{n}/{len(picked)}] {song['id']}", file=sys.stderr)
+    old = [item for item in entries.values() if item["role"] == "pick"]
+    picked = pick_songs(
+        api,
+        max(0, args.songs - len(old)),
+        rng,
+        skip_ids={item["id"] for item in entries.values()},
+        skip_artists={norm(item["artist"]) for item in old},
+    )
+    # Old picks come first so a missing sibling or version is looked for again.
+    todo = [api.call("getSong", id=item["id"]).get("song") or item for item in old]
+    todo += picked
+    for n, song in enumerate(todo, 1):
+        print(f"[{n}/{len(todo)}] {song['id']}", file=sys.stderr)
         keep(song, "pick")
         if song["id"] not in entries:
             continue
+        have = {item["role"] for item in entries.values() if item["of"] == song["id"]}
         for role, other in relatives(api, song, rng).items():
-            keep(other, role, song["id"])
+            if role not in have:
+                keep(other, role, song["id"])
 
     (bench / "songs.json").write_text(json.dumps(list(entries.values()), indent=1, ensure_ascii=False))
     roles = {}

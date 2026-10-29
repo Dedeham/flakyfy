@@ -69,3 +69,58 @@ picked video's title, channel, album and length, and the similarity of every sam
    network at all.
 6. Read the table it prints and look at every hard case in `report.json`. A right file the check
    refuses may itself be the wrong song.
+
+## Data contracts
+
+Everything lives in `<checkout>/bench-data/`, which git ignores. A local pre-commit hook also
+refuses it. Never run `git clean -x` in the checkout. Paths inside the files are relative to
+`bench-data/`.
+
+**`songs.json`** (fetch_corpus): `[{id, role: pick|sibling|namesake|version|swap, of, artist,
+title, album, seconds, genre, suffix, musicbrainz, path}]`
+
+**`cases.json`** (make_cases): `{cases: [...]}`, as at the top of `verify_bench.rs`. Every case also
+carries `song_id`, the pick it is about.
+
+**`requests.json`** (make_cases): `{requests: [{key, artist, title, album, seconds}]}`, one per
+pick. It is the only file the VM needs.
+- `key` is the first 16 hex characters of `sha1(artist + "\0" + title + "\0" + seconds)`.
+
+**`previews/<collection>/<key>.json`** (`verify_bench collect`):
+- `{key, request, found: "found"|"none"|"failed", why, facts: {video_id, title, artist, album,
+  seconds, lane: "row"|"search"}, audio, fetch: "ok"|"not_sent"|"busy", seconds_taken, at}`
+- `audio` is a file name beside the JSON, or null.
+- `<collection>` is `c<n>-<UTC date and time>`.
+
+**`runs/<UTC time>-<octo sha>/signals.json`** (`verify_bench replay`):
+```
+{manifest: {octo_commit, bench_sha256, cases_sha256, collections: [..], started, finished},
+ results: [{id, kind, group, expect, song_id, grade: pass|soft|hard, flaky,
+   request: {artist, title, album, seconds}, file | candidate+original,
+   runs: [ // preview: one per collection
+     {collection, outcome: match|unclear|mismatch|unavailable, why, bit_error, offset_seconds,
+      trusted, trusted_if_length_equal, trusted_if_artist_equal, album_agrees,
+      sweep: fine|replace|ask, length_gap, preview: {video_id, title, artist, album, seconds, lane},
+      preview_audio, seconds_taken} ],
+   // same_recording instead:
+   verdict: same|differs|unsure|length_differs|cannot_tell, score,
+   windows: [{start, similarity}], length_gap, seconds_taken }]}
+```
+
+**`label-queue.json`** (triage):
+- `{run, items: [{case_id, kind, reasons: [hard|t1|t2|gray_zone|untrusted|flaky|unavailable|audit],
+  priority, a: {path, offset}, b: {path, offset}, request, preview, hidden: {...signals}}]}`
+- For preview items, `a` is the file and `b` the preview audio. For same_recording items, `a` is
+  the candidate and `b` the original.
+
+**`labels.json`** (label_server):
+- `{labels: {<case_id>: {label, note, at}}}`
+- `label` is one of `right|wrong|version|preview_wrong|cant_tell|skip`.
+- For same_recording, `right` means the same recording.
+- Every save is also copied to `~/.local/share/octo-bench/labels-<date>.json`.
+
+**Truth** (analyze):
+- A label wins over everything else.
+- Otherwise a constructed case's `expect` decides: `match`/`same` count as right,
+  `not_match`/`refused` as wrong.
+- A library file's own case with no label is "presumed right" and is reported separately.

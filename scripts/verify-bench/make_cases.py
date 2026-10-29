@@ -2,7 +2,7 @@
 """Builds the right and wrong cases of the verify bench from the files fetch_corpus.py copied,
 and writes <bench>/cases.json (see README.md next to this script).
 
-    python3 -I make_cases.py [--bench ~/octo-bench] [--variant-songs 15] [--same-songs 20]
+    python3 -I make_cases.py [--bench <checkout>/bench-data] [--variant-songs 15] [--same-songs 20]
 
 Needs ffmpeg. Works offline: everything is made from the files already in <bench>/corpus/right.
 The derived files go to <bench>/corpus/derived and <bench>/corpus/synthetic, named by Navidrome
@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# The bench folder inside the checkout; ignored by git (see .gitignore and the pre-commit hook).
+BENCH_DATA = HERE.parents[1] / "bench-data"
 SYNTHETIC_SECONDS = 200
 
 
@@ -67,7 +69,7 @@ SYNTHETIC = {
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--bench", default=str(Path.home() / "octo-bench"))
+    parser.add_argument("--bench", default=str(BENCH_DATA))
     parser.add_argument("--variant-songs", type=int, default=15, help="songs that also get re-encoded and shifted preview cases")
     parser.add_argument("--same-songs", type=int, default=20, help="songs that get same-recording cases")
     parser.add_argument("--synthetic-labels", type=int, default=4, help="songs each synthetic file is labelled as")

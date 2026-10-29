@@ -107,3 +107,7 @@ parity/
 !README.md
 !docs/family.md
 !scripts/admin-icons/SOURCES.md
+
+# Verify bench: library files, previews, labels and credentials stay local (scripts/verify-bench).
+/bench-data/
+.env

@@ -2,7 +2,7 @@
 """Copies a sample of songs out of Navidrome into a bench folder, as the "right" files the
 verify bench starts from (see README.md next to this script).
 
-    python3 -I fetch_corpus.py [--bench ~/octo-bench] [--songs 60]
+    python3 -I fetch_corpus.py [--bench <checkout>/bench-data] [--songs 60]
 
 Reads <bench>/.env (keep it chmod 600):
 
@@ -33,6 +33,8 @@ import urllib.request
 from pathlib import Path
 
 CLIENT = "octo-bench"
+# The bench folder inside the checkout; ignored by git (see .gitignore and the pre-commit hook).
+BENCH_DATA = Path(__file__).resolve().parents[2] / "bench-data"
 API_VERSION = "1.16.1"
 MAX_FILE_BYTES = 250 * 1024 * 1024
 MIN_SECONDS = 90
@@ -197,7 +199,7 @@ def relatives(api, song, rng):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--bench", default=str(Path.home() / "octo-bench"))
+    parser.add_argument("--bench", default=str(BENCH_DATA))
     parser.add_argument("--songs", type=int, default=60)
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()

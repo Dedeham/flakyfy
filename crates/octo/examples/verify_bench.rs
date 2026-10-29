@@ -257,7 +257,11 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(2);
         }
     };
-    let base = options.cases.parent().map(Path::to_path_buf).unwrap_or_default();
+    // Absolute, since Octo runs fpcalc and ffmpeg from the temp folder.
+    let base = std::path::absolute(&options.cases)?
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     let text = std::fs::read_to_string(&options.cases)
         .with_context(|| format!("reading {}", options.cases.display()))?;
     let file: CaseFile = serde_json::from_str(&text).context("cases.json")?;

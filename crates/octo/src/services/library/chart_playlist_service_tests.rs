@@ -832,6 +832,71 @@ async fn a_stand_in_never_replaces_an_apple_list() {
     assert!(!made.whole, "the next build tries Apple again");
 }
 
+const DEEZER_MARKED_BODY: &str = r#"{"data":[
+  {"id":21,"title":"Pale Signal","duration":201,"explicit_content_lyrics":1,
+   "artist":{"id":41,"name":"Lumen Drift"},"album":{"id":401,"title":"Pale Signal","cover_xl":"https://cdn/a.jpg"}},
+  {"id":22,"title":"Paper Lanterns","duration":190,"explicit_content_lyrics":3,
+   "artist":{"id":42,"name":"Quiet Harbor"},"album":{"id":402,"title":"Paper Lanterns","cover_xl":"https://cdn/b.jpg"}}
+]}"#;
+
+fn set_filter(lists: &Lists, filter: ExplicitFilter) {
+    let mut changed = (*lists.settings.current()).clone();
+    changed.subsonic.explicit_filter = filter;
+    lists.settings.set(changed);
+}
+
+fn titles(songs: &[Value]) -> Vec<String> {
+    songs
+        .iter()
+        .filter_map(|s| s["title"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_changed_explicit_filter_makes_a_stand_in_list_again_at_once() {
+    let lists = Lists::with_deezer("", DEEZER_MARKED_BODY).await;
+    lists.library(Vec::new()).await;
+    // Apple has no pages for this country, so Deezer's chart stands in, and the list is not
+    // whole: it waits a few minutes before it is tried again under the same settings.
+    let mut moved = (*lists.settings.current()).clone();
+    moved.generated_playlists.chart_country = "gb".into();
+    lists.settings.set(moved);
+
+    let all = lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(titles(&all), vec!["Pale Signal", "Paper Lanterns"]);
+
+    set_filter(&lists, ExplicitFilter::CleanOnly);
+    let clean = lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(titles(&clean), vec!["Paper Lanterns"]);
+
+    set_filter(&lists, ExplicitFilter::ExplicitOnly);
+    let explicit = lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(titles(&explicit), vec!["Pale Signal"]);
+
+    set_filter(&lists, ExplicitFilter::All);
+    let again = lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(titles(&again), vec!["Pale Signal", "Paper Lanterns"]);
+
+    // Nothing changed since: the list waits out its retry and is not made again.
+    let searched = lists.searches().await;
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    assert_eq!(lists.searches().await, searched);
+}
+
+#[tokio::test]
+async fn an_unchanged_whole_list_is_not_made_again() {
+    let lists = Lists::new("").await;
+    lists.library(Vec::new()).await;
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    let searched = lists.searches().await;
+
+    lists.service.songs("alice", OVERALL, &auth()).await;
+    lists.advance_minutes(6);
+    lists.service.songs("alice", OVERALL, &auth()).await;
+
+    assert_eq!(lists.searches().await, searched);
+}
+
 /// A warm worker that also checks Navidrome's people, which answers `/api/user` with `users`.
 async fn worker_with_people(
     lists: &Lists,

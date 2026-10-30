@@ -1787,7 +1787,7 @@ impl SoulseekDownloadService {
                             // Only a file that is clearly another sound is remembered as wrong; another
                             // version of the song is not wrong for everything else.
                             if matches!(same, SameRecording::Differs(_)) {
-                                self.deny_candidate(hit, routing, &format!("{why}"));
+                                self.deny_candidate(hit, routing, &why);
                             }
                             base.log_step(
                                 &track_key,

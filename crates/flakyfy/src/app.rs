@@ -2586,7 +2586,9 @@ impl LibraryJobs {
             .with_acoustid(
                 stores.identity_sweep_store.clone(),
                 fingerprint_sweep_verifier.clone(),
-            ),
+            )
+            // Replacing, when switched on, by the sweep's own rule and toward its day's count.
+            .with_replacing(library_review_sweep_worker.clone()),
         );
         LibraryJobs {
             upgrade_worker,

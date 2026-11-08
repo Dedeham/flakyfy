@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+<linearGradient id="linear-pattern-0" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-1" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-2" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-3" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-4" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-5" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, -0.866025, 0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-6" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, -0.866025, 0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-7" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, -0.866025, 0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-8" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, -0.866025, 0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-9" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, -0.866025, 0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-10" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, -0.866025, 0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-11" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, -0.866025, 0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-12" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, -0.866025, 0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-13" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, -0.866025, 0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-14" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, -0.866025, 0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-15" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-1, -0.000000000000000122, 0.000000000000000122, -1, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-16" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-1, -0.000000000000000122, 0.000000000000000122, -1, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-17" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-1, -0.000000000000000122, 0.000000000000000122, -1, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-18" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-1, -0.000000000000000122, 0.000000000000000122, -1, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-19" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-1, -0.000000000000000122, 0.000000000000000122, -1, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-20" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, 0.866025, -0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-21" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, 0.866025, -0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-22" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, 0.866025, -0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-23" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, 0.866025, -0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-24" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(-0.5, 0.866025, -0.866025, -0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-25" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, 0.866025, -0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-26" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, 0.866025, -0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-27" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, 0.866025, -0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-28" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, 0.866025, -0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+<linearGradient id="linear-pattern-29" gradientUnits="userSpaceOnUse" x1="0" y1="-380" x2="0" y2="380" gradientTransform="matrix(0.5, 0.866025, -0.866025, 0.5, 0, 0)">
+<stop offset="0" stop-color="rgb(40%, 82%, 100%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(36%, 25%, 85%)" stop-opacity="1"/>
+</linearGradient>
+</defs>
+<path fill="none" stroke-width="46" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-0)" stroke-miterlimit="10" d="M 0 0 L 0 -380 " transform="matrix(1, 0, 0, 1, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-1)" stroke-miterlimit="10" d="M 0 -171 L -85.5625 -220.398438 " transform="matrix(1, 0, 0, 1, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-2)" stroke-miterlimit="10" d="M 0 -171 L 85.5625 -220.398438 " transform="matrix(1, 0, 0, 1, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-3)" stroke-miterlimit="10" d="M 0 -273.601562 L -55.945312 -305.898438 " transform="matrix(1, 0, 0, 1, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-4)" stroke-miterlimit="10" d="M 0 -273.601562 L 55.945312 -305.898438 " transform="matrix(1, 0, 0, 1, 512, 512)"/>
+<path fill="none" stroke-width="46" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-5)" stroke-miterlimit="10" d="M 0 0 L 0.000095156 -380.000165 " transform="matrix(0.5, 0.866025, -0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-6)" stroke-miterlimit="10" d="M -0.000250149 -170.999567 L -85.564237 -220.399957 " transform="matrix(0.5, 0.866025, -0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-7)" stroke-miterlimit="10" d="M -0.000250149 -170.999567 L 85.561302 -220.399647 " transform="matrix(0.5, 0.866025, -0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-8)" stroke-miterlimit="10" d="M -0.00029557 -273.601051 L -55.943507 -305.899879 " transform="matrix(0.5, 0.866025, -0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-9)" stroke-miterlimit="10" d="M -0.00029557 -273.601051 L 55.945658 -305.900722 " transform="matrix(0.5, 0.866025, -0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="46" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-10)" stroke-miterlimit="10" d="M 0 0 L -0.000095156 -380.000165 " transform="matrix(-0.5, 0.866025, -0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-11)" stroke-miterlimit="10" d="M 0.000250149 -170.999567 L -85.561302 -220.399647 " transform="matrix(-0.5, 0.866025, -0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-12)" stroke-miterlimit="10" d="M 0.000250149 -170.999567 L 85.564237 -220.399957 " transform="matrix(-0.5, 0.866025, -0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-13)" stroke-miterlimit="10" d="M 0.00029557 -273.601051 L -55.945658 -305.900722 " transform="matrix(-0.5, 0.866025, -0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-14)" stroke-miterlimit="10" d="M 0.00029557 -273.601051 L 55.943507 -305.899879 " transform="matrix(-0.5, 0.866025, -0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="46" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-15)" stroke-miterlimit="10" d="M 0 0 L 0.000000000000056843 -380 " transform="matrix(-1, 0.000000000000000122, -0.000000000000000122, -1, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-16)" stroke-miterlimit="10" d="M 0 -171 L -85.5625 -220.398438 " transform="matrix(-1, 0.000000000000000122, -0.000000000000000122, -1, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-17)" stroke-miterlimit="10" d="M 0 -171 L 85.5625 -220.398437 " transform="matrix(-1, 0.000000000000000122, -0.000000000000000122, -1, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-18)" stroke-miterlimit="10" d="M 0.000000000000056843 -273.601562 L -55.945312 -305.898438 " transform="matrix(-1, 0.000000000000000122, -0.000000000000000122, -1, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-19)" stroke-miterlimit="10" d="M 0.000000000000056843 -273.601562 L 55.945313 -305.898437 " transform="matrix(-1, 0.000000000000000122, -0.000000000000000122, -1, 512, 512)"/>
+<path fill="none" stroke-width="46" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-20)" stroke-miterlimit="10" d="M 0 0 L 0.000095156 -380.000165 " transform="matrix(-0.5, -0.866025, 0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-21)" stroke-miterlimit="10" d="M -0.000250149 -170.999567 L -85.564237 -220.399957 " transform="matrix(-0.5, -0.866025, 0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-22)" stroke-miterlimit="10" d="M -0.000250149 -170.999567 L 85.561302 -220.399647 " transform="matrix(-0.5, -0.866025, 0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-23)" stroke-miterlimit="10" d="M -0.00029557 -273.601051 L -55.943507 -305.899879 " transform="matrix(-0.5, -0.866025, 0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-24)" stroke-miterlimit="10" d="M -0.00029557 -273.601051 L 55.945658 -305.900722 " transform="matrix(-0.5, -0.866025, 0.866025, -0.5, 512, 512)"/>
+<path fill="none" stroke-width="46" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-25)" stroke-miterlimit="10" d="M 0 0 L -0.000095156 -380.000165 " transform="matrix(0.5, -0.866025, 0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-26)" stroke-miterlimit="10" d="M 0.000250149 -170.999567 L -85.561302 -220.399647 " transform="matrix(0.5, -0.866025, 0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-27)" stroke-miterlimit="10" d="M 0.000250149 -170.999567 L 85.564237 -220.399957 " transform="matrix(0.5, -0.866025, 0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-28)" stroke-miterlimit="10" d="M 0.00029557 -273.601051 L -55.945658 -305.900722 " transform="matrix(0.5, -0.866025, 0.866025, 0.5, 512, 512)"/>
+<path fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" stroke="url(#linear-pattern-29)" stroke-miterlimit="10" d="M 0.00029557 -273.601051 L 55.943507 -305.899879 " transform="matrix(0.5, -0.866025, 0.866025, 0.5, 512, 512)"/>
+</svg>

@@ -1,11 +1,13 @@
 <div align="center">
 
-<img src="app/Assets/flakyfy_logo.png" alt="Flakyfy" width="280" />
+<img src="app/Assets/flakyfy_logo.svg" alt="Flakyfy snowflake logo" width="160" />
 
 # Flakyfy
 
 **A self-hosted music service.**
 Search any song and play it right away. Keep the ones you love as files on your own server.
+
+<sub>Credits: forked from [**Octo** by winters27](https://github.com/winters27/octo), the project that made this possible.</sub>
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Rust](https://img.shields.io/badge/Rust-1.99-B7410E)](https://www.rust-lang.org/)
@@ -15,8 +17,6 @@ Search any song and play it right away. Keep the ones you love as files on your 
 </div>
 
 ---
-
-> Flakyfy is a fork of [Octo](https://github.com/winters27/octo) by winters27, renamed and developed on its own since release 2026.10.15.
 
 Flakyfy gives a home server what a streaming app has: search that reaches past your own library, songs that play the moment you pick them, and radio that learns what you like. When a song is worth keeping, Flakyfy downloads the best copy it can find, tags it and files it in your library, where it stays with no subscription.
 

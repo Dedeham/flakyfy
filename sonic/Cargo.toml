@@ -1,10 +1,10 @@
 [package]
-name = "octo-sonic"
+name = "flakyfy-sonic"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "GPL-3.0-only"
-description = "Reads a song and says how it sounds, for Octo's Sounds alike radio"
+description = "Reads a song and says how it sounds, for Flakyfy's Sounds alike radio"
 
 [dependencies]
 axum = "0.8"

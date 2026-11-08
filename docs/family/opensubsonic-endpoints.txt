@@ -1,8 +1,8 @@
 # Every Subsonic and OpenSubsonic endpoint, from the OpenSubsonic endpoint index
-# (https://opensubsonic.netlify.app/docs/endpoints/, read 2026-10-08), then Octo's own /rest
-# extension endpoints (crates/octo/src/controllers/subsonic routes) and the octoFamily ones.
+# (https://opensubsonic.netlify.app/docs/endpoints/, read 2026-10-08), then Flakyfy's own /rest
+# extension endpoints (crates/flakyfy/src/controllers/subsonic routes) and the flakyfyFamily ones.
 # The test every_opensubsonic_endpoint_is_classified
-# (crates/octo-core/src/family/endpoints.rs) fails on any name here without an endpoint class.
+# (crates/flakyfy-core/src/family/endpoints.rs) fails on any name here without an endpoint class.
 # Add a name when the index grows; one name per line, lines starting with # are notes.
 
 # OpenSubsonic index
@@ -94,7 +94,7 @@ updatePlaylist
 updateShare
 updateUser
 
-# Octo extensions
+# Flakyfy extensions
 clearAcquisitions
 findSongs
 getAcquisition
@@ -118,7 +118,7 @@ setChartCountry
 setLyricsChoice
 testPing
 
-# octoFamily
+# flakyfyFamily
 getFamily
 setFamilyQuality
 setFamilyDeviceQuality

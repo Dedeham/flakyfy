@@ -2,7 +2,7 @@
 # .github/workflows/rust.yml; locally, `cargo install cargo-deny --locked` and run the same.
 
 [graph]
-# Octo ships only as a Linux image, for amd64 and arm64. Leaving the other platforms out keeps
+# Flakyfy ships only as a Linux image, for amd64 and arm64. Leaving the other platforms out keeps
 # their crates (windows-sys and friends) from adding licences and duplicates nobody builds.
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 all-features = true
@@ -30,14 +30,14 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.93
-# Octo's own crates are publish = false and covered by the repository's LICENSE, not checked here.
+# Flakyfy's own crates are publish = false and covered by the repository's LICENSE, not checked here.
 private = { ignore = true }
 
 [bans]
 # Several versions of one crate come in through different dependents (windows-sys, hashbrown,
 # getrandom and the like); worth knowing, not worth failing a build over.
 multiple-versions = "warn"
-# Octo's own crates depend on each other by path, which cargo-deny counts as a wildcard.
+# Flakyfy's own crates depend on each other by path, which cargo-deny counts as a wildcard.
 wildcards = "deny"
 allow-wildcard-paths = true
 

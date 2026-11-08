@@ -1,4 +1,4 @@
-"""YouTube Music search and radio for Octo's radio: the row shape Octo reads, the endpoints, the
+"""YouTube Music search and radio for Flakyfy's radio: the row shape Flakyfy reads, the endpoints, the
 cache, and what a failure answers."""
 import sys
 import threading

@@ -1,4 +1,4 @@
-"""Writes crates/octo-core/src/charts/apple_genre_names.rs from Apple's US genre list.
+"""Writes crates/flakyfy-core/src/charts/apple_genre_names.rs from Apple's US genre list.
 
 Every genre id under Music (all depths) with its English name. Fails when a name has a letter
 outside Latin script.
@@ -14,7 +14,7 @@ import urllib.request
 URL = "https://itunes.apple.com/WebObjects/MZStoreServices.woa/ws/genres?id=34&cc=us"
 OUT = (
     pathlib.Path(__file__).resolve().parents[2]
-    / "crates/octo-core/src/charts/apple_genre_names.rs"
+    / "crates/flakyfy-core/src/charts/apple_genre_names.rs"
 )
 
 

@@ -1,7 +1,7 @@
 """Global cap on concurrent yt-dlp processes, with a slice reserved for
 interactive work.
 
-Octo prewarms upcoming tracks in the background. Those resolves are
+Flakyfy prewarms upcoming tracks in the background. Those resolves are
 fire-and-forget, but they used to compete on equal terms with a user pressing
 play, so a burst could leave an interactive resolve queued behind eight
 background ones.

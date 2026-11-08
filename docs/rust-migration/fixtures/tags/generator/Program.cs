@@ -1,20 +1,20 @@
 // Reference generator for the Rust tag port (task 3-D): writes tags onto the tiny ffmpeg files in
 // ../input with the real C# code (TagLibSharp 2.3.0, TagWriterExtras, KeptIdentityTags, and a copy
 // of the tag-writing body of BaseDownloadService.WriteMetadataAsync), then dumps every frame,
-// field and atom of each result as TagLib reads it, plus what Octo's own readers make of it.
-// The Rust test (crates/octo-media/src/tags/fixture_tests.rs) runs the same scenarios with the
+// field and atom of each result as TagLib reads it, plus what Flakyfy's own readers make of it.
+// The Rust test (crates/flakyfy-media/src/tags/fixture_tests.rs) runs the same scenarios with the
 // Rust writer and compares its dump of its own files, and of these files, with these dumps.
 //
-// Since the cutover, restore octo/ from csharp-final first (state-files.md, "Regenerating").
-// Run ../generate.sh from anywhere; it builds this against octo/octo.csproj as octo.Tests (for
+// Since the cutover, restore flakyfy/ from csharp-final first (state-files.md, "Regenerating").
+// Run ../generate.sh from anywhere; it builds this against flakyfy/flakyfy.csproj as flakyfy.Tests (for
 // the internal types) in the .NET 9 SDK image, with no LANG set, as the shipped image runs (the
 // current culture is the invariant one, so a new USLT frame's language is "ivl").
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using Octo.Models.Domain;
-using Octo.Services.Common;
-using Octo.Services.Library;
+using Flakyfy.Models.Domain;
+using Flakyfy.Services.Common;
+using Flakyfy.Services.Library;
 
 var root = args.Length > 0 ? args[0] : "/repo/docs/rust-migration/fixtures/tags";
 var input = Path.Combine(root, "input");
@@ -54,7 +54,7 @@ foreach (var format in formats)
     Scenarios.WriteSong(minimal, new Song { Title = "Song", Artist = "Artist", Genre = "Pop" },
         Scenarios.Genres.FeatureOff, null, null);
 
-    // peer: a file that arrived tagged (version 3 on an MP3), then Octo's extras on top.
+    // peer: a file that arrived tagged (version 3 on an MP3), then Flakyfy's extras on top.
     var peer = Copy(format, "peer");
     Scenarios.Peer(peer, cover);
 
@@ -90,7 +90,7 @@ File.WriteAllText(Path.Combine(output, "genres.txt"), string.Join("\n", TagLib.G
     new UTF8Encoding(false));
 Console.WriteLine($"culture '{CultureInfo.CurrentCulture.Name}' ({CultureInfo.CurrentCulture.ThreeLetterISOLanguageName}); {written.Count} files");
 
-static string LyricsMark() => Octo.Services.Lyrics.LyricsSidecarWriter.OctoMark;
+static string LyricsMark() => Flakyfy.Services.Lyrics.LyricsSidecarWriter.FlakyfyMark;
 
 static class Scenarios
 {
@@ -181,7 +181,7 @@ static class Scenarios
         if (!string.IsNullOrEmpty(song.MusicBrainzRecordingId))
             TagWriterExtras.SetRecordingId(tagFile, song.MusicBrainzRecordingId);
         var albumIsRelease = !string.IsNullOrEmpty(song.MusicBrainzReleaseGroupId)
-            && Octo.Services.Fingerprint.VerificationResult.AlbumIsFromRelease(song);
+            && Flakyfy.Services.Fingerprint.VerificationResult.AlbumIsFromRelease(song);
         if (albumIsRelease) tagFile.Tag.MusicBrainzReleaseGroupId = song.MusicBrainzReleaseGroupId;
         if (song.MusicBrainzArtistIds.Count > 0) TagWriterExtras.SetMulti(tagFile, TagFields.ArtistId, song.MusicBrainzArtistIds);
         if (song.IsCompilation) TagWriterExtras.SetCompilation(tagFile, true);
@@ -209,7 +209,7 @@ static class Scenarios
                 new TagLib.Picture
                 {
                     Type = TagLib.PictureType.FrontCover,
-                    MimeType = Octo.Services.CoverArt.CoverImage.MimeType(embed),
+                    MimeType = Flakyfy.Services.CoverArt.CoverImage.MimeType(embed),
                     Description = "Cover",
                     Data = new TagLib.ByteVector(embed),
                 },
@@ -220,7 +220,7 @@ static class Scenarios
     }
 
     /// <summary>A peer's file: on an MP3 a version 3 tag with a slash in the album artist and a
-    /// non-Latin title; then the extras Octo adds to a file it keeps.</summary>
+    /// non-Latin title; then the extras Flakyfy adds to a file it keeps.</summary>
     public static void Peer(string path, byte[] cover)
     {
         using (var file = TagLib.File.Create(path))
@@ -320,7 +320,7 @@ static class Scenarios
     }
 }
 
-/// <summary>Every frame, field and atom as TagLib reads them back, then Octo's readers' views.
+/// <summary>Every frame, field and atom as TagLib reads them back, then Flakyfy's readers' views.
 /// One line each; strings are quoted with only '\\', '"' and control characters escaped.</summary>
 static class Dumper
 {

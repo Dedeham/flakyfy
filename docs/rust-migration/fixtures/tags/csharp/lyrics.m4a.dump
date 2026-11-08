@@ -1,6 +1,6 @@
 duration 0 rate 44100
 apple
-  "©lyr" [data(1) "[re:Octo]\u000a[00:01.00]Ça va — 東京\u000a[00:02.50]second line"]
+  "©lyr" [data(1) "[re:Flakyfy]\u000a[00:01.00]Ça va — 東京\u000a[00:02.50]second line"]
 tag
   title null
   performers []
@@ -10,7 +10,7 @@ tag
   genres []
   year 0 track 0/0 disc 0/0 bpm 0
   copyright null
-  lyrics "[re:Octo]\u000a[00:01.00]Ça va — 東京\u000a[00:02.50]second line"
+  lyrics "[re:Flakyfy]\u000a[00:01.00]Ça va — 東京\u000a[00:02.50]second line"
   isrc null publisher null
   releaseid null releasegroupid null
 extras

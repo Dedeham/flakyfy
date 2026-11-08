@@ -1020,10 +1020,10 @@
    }
   },
   {
-   "name": "cover-octo-radio",
+   "name": "cover-flakyfy-radio",
    "request": {
     "method": "GET",
-    "target": "/rest/getCoverArt?id=octo-radio",
+    "target": "/rest/getCoverArt?id=flakyfy-radio",
     "headers": {},
     "body": null
    },
@@ -1090,10 +1090,10 @@
    }
   },
   {
-   "name": "cover-external-song-octo-client",
+   "name": "cover-external-song-flakyfy-client",
    "request": {
     "method": "GET",
-    "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=Octo&id=CwoXcVhGn95tWIOvqaFKt6",
+    "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=Flakyfy&id=CwoXcVhGn95tWIOvqaFKt6",
     "headers": {},
     "body": null
    },
@@ -1230,10 +1230,10 @@
    }
   },
   {
-   "name": "cover-legacy-ext-album-octo-client",
+   "name": "cover-legacy-ext-album-flakyfy-client",
    "request": {
     "method": "GET",
-    "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=Octo&id=ext-album-unknown",
+    "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=Flakyfy&id=ext-album-unknown",
     "headers": {},
     "body": null
    },
@@ -1335,7 +1335,7 @@
    }
   },
   {
-   "name": "cover-octo-station-unknown",
+   "name": "cover-flakyfy-station-unknown",
    "request": {
     "method": "GET",
     "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=parity&id=or00000000000000000000",

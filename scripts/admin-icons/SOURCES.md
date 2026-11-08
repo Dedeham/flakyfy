@@ -1,11 +1,11 @@
 # Dashboard icons
 
-`make_sprite.py` builds `octo/wwwroot/admin/icons.svg` from two sources.
+`make_sprite.py` builds `app/wwwroot/admin/icons.svg` from two sources.
 
 ## Phosphor
 
 UI glyphs are [Phosphor Icons](https://phosphoricons.com) 2.1.1, the `@phosphor-icons/core`
-package on npm, the version the Octo apps use. MIT licence, copied to `Phosphor-MIT.txt`.
+package on npm, the version the Flakyfy apps use. MIT licence, copied to `Phosphor-MIT.txt`.
 Regular weight everywhere; Fill only for a state that is on or settled (a finished check, an
 error). `icons.json` lists every glyph the dashboard uses.
 
@@ -47,5 +47,5 @@ colored.
 | `svc-pandora.svg` | Simple Icons `pandora` | `#224099`, white mark |
 | `svc-youtube.svg` | Simple Icons `youtube` | white, red mark with the white play triangle |
 
-Octo's own logo is not in the sprite. It marks what came through Octo, so the dashboard shows it
+Flakyfy's own logo is not in the sprite. It marks what came through Flakyfy, so the dashboard shows it
 once, beside the name.

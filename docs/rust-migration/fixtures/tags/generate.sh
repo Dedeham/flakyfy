@@ -8,7 +8,7 @@
 #
 # The C# side runs in the .NET 9 SDK image with no LANG, like the shipped image. Set
 # NUGET_PACKAGES to a host package cache to skip the download. The Rust side is
-# crates/octo-media/src/tags/fixture_tests.rs.
+# crates/flakyfy-media/src/tags/fixture_tests.rs.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../../.." && pwd)"

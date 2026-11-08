@@ -1624,7 +1624,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "octo"
+name = "flakyfy"
 version = "2026.10.5"
 dependencies = [
  "anyhow",
@@ -1650,9 +1650,9 @@ dependencies = [
  "lofty",
  "md-5",
  "mime_guess",
- "octo-core",
- "octo-media",
- "octo-subsonic",
+ "flakyfy-core",
+ "flakyfy-media",
+ "flakyfy-subsonic",
  "parking_lot",
  "percent-encoding",
  "rand",
@@ -1679,7 +1679,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "octo-core"
+name = "flakyfy-core"
 version = "2026.10.5"
 dependencies = [
  "any_ascii",
@@ -1719,7 +1719,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "octo-media"
+name = "flakyfy-media"
 version = "2026.10.5"
 dependencies = [
  "anyhow",
@@ -1728,7 +1728,7 @@ dependencies = [
  "image",
  "indexmap",
  "lofty",
- "octo-core",
+ "flakyfy-core",
  "parking_lot",
  "regex",
  "serde",
@@ -1747,7 +1747,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "octo-subsonic"
+name = "flakyfy-subsonic"
 version = "2026.10.5"
 dependencies = [
  "anyhow",
@@ -1757,7 +1757,7 @@ dependencies = [
  "indexmap",
  "insta",
  "md-5",
- "octo-core",
+ "flakyfy-core",
  "percent-encoding",
  "quick-xml",
  "rand",

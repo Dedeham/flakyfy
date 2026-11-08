@@ -1,6 +1,6 @@
 .git
 slskd-state
-octo-config
+flakyfy-config
 downloads
 # Rust build output and agent worktrees: no image reads them, and they run to gigabytes.
 target

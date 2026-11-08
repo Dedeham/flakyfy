@@ -818,7 +818,7 @@
    }
   },
   {
-   "name": "native-playlist-octo-id-get",
+   "name": "native-playlist-flakyfy-id-get",
    "request": {
     "method": "GET",
     "target": "/api/playlist/or00000000000000000000",
@@ -855,7 +855,7 @@
    }
   },
   {
-   "name": "native-playlist-octo-id-delete",
+   "name": "native-playlist-flakyfy-id-delete",
    "request": {
     "method": "DELETE",
     "target": "/api/playlist/og00000000000000000000",
@@ -888,7 +888,7 @@
     "kind": "json",
     "size": 52,
     "sha256": "306b5ae3b0707cdfe7d224c804c6e6df188328dd8d40c4363063eee0b28c2378",
-    "text": "{\"error\":\"Octo's generated playlists are read-only\"}"
+    "text": "{\"error\":\"Flakyfy's generated playlists are read-only\"}"
    }
   },
   {

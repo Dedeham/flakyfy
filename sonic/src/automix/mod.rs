@@ -1,6 +1,6 @@
-//! The transition analysis of the Octo apps' audio engine, copied in by
+//! The transition analysis of the Flakyfy apps' audio engine, copied in by
 //! `sync-automix.sh` so a profile made here is the one a player would make.
-//! Only this file and `parity_tests.rs` belong to octo-sonic; the others are
+//! Only this file and `parity_tests.rs` belong to flakyfy-sonic; the others are
 //! the engine's own and are changed there, then copied again.
 //!
 //! The copy carries what the players use as well, so unused parts are

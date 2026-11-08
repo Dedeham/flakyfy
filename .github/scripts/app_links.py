@@ -1,4 +1,4 @@
-"""Keeps a short "The Octo apps" block at the end of the Latest release's notes.
+"""Keeps a short "The Flakyfy apps" block at the end of the Latest release's notes.
 
 The Android and desktop apps publish their releases here too, but never as
 Latest (the server keeps that badge), so on the repository's front page and
@@ -8,7 +8,7 @@ every run and taken out of any other release, so it is only ever in one
 place and never goes stale.
 
 Run by .github/workflows/release-links.yml whenever a release is published;
-by hand: `GH_REPO=winters27/octo python .github/scripts/app_links.py [--dry-run]`
+by hand: `GH_REPO=dedeham/flakyfy python .github/scripts/app_links.py [--dry-run]`
 (needs `gh`, signed in with write access for a real run).
 """
 
@@ -18,12 +18,12 @@ import re
 import subprocess
 import sys
 
-REPO = os.environ.get("GH_REPO", "winters27/octo")
-START = "<!-- octo-apps: kept up to date by .github/workflows/release-links.yml -->"
-END = "<!-- /octo-apps -->"
+REPO = os.environ.get("GH_REPO", "dedeham/flakyfy")
+START = "<!-- flakyfy-apps: kept up to date by .github/workflows/release-links.yml -->"
+END = "<!-- /flakyfy-apps -->"
 BLOCK = re.compile(r"\s*" + re.escape(START) + r".*?" + re.escape(END) + r"\s*", re.S)
 FDROID = "https://winters27.github.io/octo/fdroid/"
-APPS = [("android-v", "Octo for Android"), ("desktop-v", "Octo for Windows and Linux")]
+APPS = [("android-v", "Flakyfy for Android"), ("desktop-v", "Flakyfy for Windows and Linux")]
 
 
 def gh(*args, body=None):
@@ -48,8 +48,8 @@ def block(releases):
             links.append(f"[{newest['name'] or fallback}]({newest['html_url']})")
     if not links:
         return None
-    links.append(f"[Octo's F-Droid repository]({FDROID})")
-    return f"{START}\n\n---\n\n**The Octo apps:** " + " · ".join(links) + f"\n\n{END}"
+    links.append(f"[Flakyfy's F-Droid repository]({FDROID})")
+    return f"{START}\n\n---\n\n**The Flakyfy apps:** " + " · ".join(links) + f"\n\n{END}"
 
 
 def main():

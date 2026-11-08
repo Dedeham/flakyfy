@@ -795,7 +795,7 @@
    "name": "assets-logo",
    "request": {
     "method": "GET",
-    "target": "/Assets/octo_logo.png",
+    "target": "/Assets/flakyfy_logo.png",
     "headers": {},
     "body": null
    },
@@ -850,7 +850,7 @@
    "name": "assets-social",
    "request": {
     "method": "GET",
-    "target": "/Assets/octo_social.png",
+    "target": "/Assets/flakyfy_social.png",
     "headers": {
      "Range": "bytes=0-15"
     },
@@ -908,10 +908,10 @@
    }
   },
   {
-   "name": "admin-octo-logo",
+   "name": "admin-flakyfy-logo",
    "request": {
     "method": "GET",
-    "target": "/admin/octo_logo.png",
+    "target": "/admin/flakyfy_logo.png",
     "headers": {},
     "body": null
    },
@@ -1253,7 +1253,7 @@
     "kind": "json",
     "size": 111,
     "sha256": "99d80610964aa60ad899f6a54cdca95b1f48c7d254f3bdbd1d9eaea3ca7603b8",
-    "text": "{\"error\":\"Admin changes must come from Octo's dashboard. A script can send the X-Octo-Admin header to opt in.\"}"
+    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Flakyfy-Admin header to opt in.\"}"
    }
   },
   {

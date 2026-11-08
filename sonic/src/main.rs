@@ -1,7 +1,7 @@
-//! octo-sonic: reads one song and answers with bliss's numbers for how it sounds, and with
-//! its transition profile (where it can blend into the next song). Octo keeps the numbers
+//! flakyfy-sonic: reads one song and answers with bliss's numbers for how it sounds, and with
+//! its transition profile (where it can blend into the next song). Flakyfy keeps the numbers
 //! and finds songs that sound alike, and hands the profiles to the apps; this only reads
-//! files, and only under MUSIC_ROOT. Each file is read by a child process (`octo-sonic read
+//! files, and only under MUSIC_ROOT. Each file is read by a child process (`flakyfy-sonic read
 //! <path> [parts] [bpm]`): FFmpeg can crash on a damaged file, and a crash there must cost that
 //! file, not the server.
 
@@ -35,7 +35,7 @@ struct App {
 struct Analyse {
     path: String,
     /// What to read: "sound" (bliss's numbers) and "transition" (the profile). Only the
-    /// sound when left out, as an Octo that knows nothing of profiles asks.
+    /// sound when left out, as an Flakyfy that knows nothing of profiles asks.
     #[serde(default)]
     parts: Option<Vec<String>>,
     /// The song's published tempo (a catalog's BPM or its BPM tag), when it has one. It only
@@ -258,7 +258,7 @@ enum Refused {
 }
 
 /// The file, resolved, when it really is under the music folder (no "..", no symlink out). A
-/// path that names a place under it but is not there is missing, not refused, so Octo can tell
+/// path that names a place under it but is not there is missing, not refused, so Flakyfy can tell
 /// a song it should look for again from a request it should never have made.
 fn inside(root: &Path, path: &Path) -> Result<PathBuf, Refused> {
     match std::fs::canonicalize(path) {
@@ -278,14 +278,14 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    /// The test binary is not octo-sonic, so the child reader is exercised by the Docker smoke
+    /// The test binary is not flakyfy-sonic, so the child reader is exercised by the Docker smoke
     /// test (Step 8.4); these cover the server's own checks.
     fn app(root: &Path) -> Router {
         app_with(root, true)
     }
 
     fn app_with(root: &Path, sounds_alike: bool) -> Router {
-        app_running(root, sounds_alike, PathBuf::from("/nonexistent/octo-sonic"))
+        app_running(root, sounds_alike, PathBuf::from("/nonexistent/flakyfy-sonic"))
     }
 
     fn app_running(root: &Path, sounds_alike: bool, program: PathBuf) -> Router {
@@ -338,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_says_the_feature_version() {
-        let root = std::env::temp_dir().join("octo-sonic-health");
+        let root = std::env::temp_dir().join("flakyfy-sonic-health");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("song.flac"), b"x").unwrap();
         let (status, value) = health(app(&root)).await;
@@ -375,7 +375,7 @@ mod tests {
 
     #[tokio::test]
     async fn with_sounds_alike_off_it_is_healthy_and_says_so() {
-        let root = std::env::temp_dir().join("octo-sonic-off");
+        let root = std::env::temp_dir().join("flakyfy-sonic-off");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("song.flac"), b"x").unwrap();
         let (status, value) = health(app_with(&root, false)).await;
@@ -388,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn with_sounds_alike_off_the_sound_alone_is_refused() {
-        let root = std::env::temp_dir().join("octo-sonic-off-sound");
+        let root = std::env::temp_dir().join("flakyfy-sonic-off-sound");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("song.flac"), b"x").unwrap();
         let song = root.join("song.flac");
@@ -401,10 +401,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn with_sounds_alike_off_only_the_profile_is_read() {
-        let root = std::env::temp_dir().join("octo-sonic-off-profile");
+        let root = std::env::temp_dir().join("flakyfy-sonic-off-profile");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("song.flac"), b"x").unwrap();
-        let reader = echoing_reader(&std::env::temp_dir().join("octo-sonic-off-profile-reader"));
+        let reader = echoing_reader(&std::env::temp_dir().join("flakyfy-sonic-off-profile-reader"));
         let song = root.join("song.flac");
         let (status, value) =
             post_parts(app_running(&root, false, reader.clone()), &song, Some(&["sound", "transition"])).await;
@@ -418,10 +418,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn a_published_tempo_goes_to_the_reader_only_with_a_profile() {
-        let root = std::env::temp_dir().join("octo-sonic-bpm");
+        let root = std::env::temp_dir().join("flakyfy-sonic-bpm");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("song.flac"), b"x").unwrap();
-        let reader = echoing_reader(&std::env::temp_dir().join("octo-sonic-bpm-reader"));
+        let reader = echoing_reader(&std::env::temp_dir().join("flakyfy-sonic-bpm-reader"));
         let song = root.join("song.flac").to_string_lossy().to_string();
         let ask = |parts: &[&str], bpm: serde_json::Value| {
             let app = app_running(&root, true, reader.clone());
@@ -445,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_empty_music_folder_is_not_healthy() {
-        let root = std::env::temp_dir().join("octo-sonic-empty");
+        let root = std::env::temp_dir().join("flakyfy-sonic-empty");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let (status, value) = health(app(&root)).await;
@@ -455,9 +455,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_path_outside_the_music_folder_is_refused() {
-        let root = std::env::temp_dir().join("octo-sonic-root");
+        let root = std::env::temp_dir().join("flakyfy-sonic-root");
         std::fs::create_dir_all(&root).unwrap();
-        let outside = std::env::temp_dir().join("octo-sonic-outside.txt");
+        let outside = std::env::temp_dir().join("flakyfy-sonic-outside.txt");
         std::fs::write(&outside, b"x").unwrap();
         assert_eq!(post(app(&root), &outside).await, StatusCode::FORBIDDEN);
     }
@@ -465,7 +465,7 @@ mod tests {
     #[tokio::test]
     async fn a_missing_file_is_missing_not_refused() {
         let root = std::fs::canonicalize({
-            let root = std::env::temp_dir().join("octo-sonic-root3");
+            let root = std::env::temp_dir().join("flakyfy-sonic-root3");
             std::fs::create_dir_all(&root).unwrap();
             root
         }).unwrap();
@@ -475,7 +475,7 @@ mod tests {
     #[tokio::test]
     async fn a_missing_path_that_climbs_out_is_refused() {
         let root = std::fs::canonicalize({
-            let root = std::env::temp_dir().join("octo-sonic-root4");
+            let root = std::env::temp_dir().join("flakyfy-sonic-root4");
             std::fs::create_dir_all(&root).unwrap();
             root
         }).unwrap();
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn a_file_that_is_not_music_is_an_error_not_a_crash() {
-        let junk = std::env::temp_dir().join("octo-sonic-junk.flac");
+        let junk = std::env::temp_dir().join("flakyfy-sonic-junk.flac");
         std::fs::write(&junk, b"not audio").unwrap();
         assert_eq!(read_one(&junk, Parts::of(["sound", "transition"]), Some(120.0)), 2);
     }

@@ -1,10 +1,10 @@
 """
 yt-dlp shim — a tiny Flask service that wraps yt-dlp behind two endpoints.
 
-Why this is a separate container instead of in-process inside Octo:
+Why this is a separate container instead of in-process inside Flakyfy:
   Spawning yt-dlp from .NET via System.Diagnostics.Process inside an LXC
   produced wedge conditions on client cancellation (the LXC's namespace
-  state would lock up). Isolating yt-dlp here means Octo only ever talks
+  state would lock up). Isolating yt-dlp here means Flakyfy only ever talks
   HTTP to this service, and any process-management quirks stay sandboxed.
 
 Endpoints:
@@ -407,7 +407,7 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
 @app.get("/health")
 def health():
     """Up, plus how busy: /stream bodies being sent now, yt-dlp processes running now, and how
-    many yt-dlp may run at once. Octo's family load view reads these."""
+    many yt-dlp may run at once. Flakyfy's family load view reads these."""
     with _COUNTS_LOCK:
         active, running = _COUNTS["active_streams"], _COUNTS["ytdlp_running"]
     return jsonify(ok=True, active_streams=active, ytdlp_running=running, ytdlp_limit=_GATE.total)
@@ -424,7 +424,7 @@ def _is_bg() -> bool:
     return request.args.get("bg") == "1"
 
 
-# The version of the ranking, sent with every ranked answer so Octo knows which picks to look at again.
+# The version of the ranking, sent with every ranked answer so Flakyfy knows which picks to look at again.
 _RANK = 3
 
 
@@ -1169,11 +1169,11 @@ def _pieced_answer(video_id, url, upstream_headers, first, wanted, total, synthe
     return Response(generator(), headers=headers, status=status)
 
 
-# --- YouTube Music (Octo's radio) -------------------------------------------------
+# --- YouTube Music (Flakyfy's radio) -------------------------------------------------
 # Search and radio through ytmusicapi, no sign-in. These are plain HTTP calls to YouTube
 # Music, not yt-dlp processes, so they have their own small gate instead of TieredGate.
 _YTM_GATE = threading.BoundedSemaphore(int(os.environ.get("YTM_MAX_CONCURRENT", "3")))
-# Octo gives a radio source 8 s; a request still queued past this has no one waiting for it, and
+# Flakyfy gives a radio source 8 s; a request still queued past this has no one waiting for it, and
 # would only hold a gunicorn thread that playback needs.
 _YTM_GATE_WAIT = float(os.environ.get("YTM_GATE_WAIT_SEC", "5"))
 # Background searches share one slot, so they never crowd out a radio someone is waiting on.
@@ -1306,7 +1306,7 @@ def stream():
         abort(400, "missing id")
     t_enter = time.monotonic()
 
-    # Work nobody waits on (bg=1, such as Octo's library check) resolves in the background
+    # Work nobody waits on (bg=1, such as Flakyfy's library check) resolves in the background
     # lane, so a play never queues behind it.
     bg = _is_bg()
     url = _resolve_url(video_id, bg)
@@ -1550,7 +1550,7 @@ def download():
         _sweep_partials()
         return jsonify(error="download_failed", expected=path), 502
 
-    # Overwrite yt-dlp's video-derived title/artist with the clean values Octo
+    # Overwrite yt-dlp's video-derived title/artist with the clean values Flakyfy
     # passed, so Navidrome groups the track correctly. Codec-copy keeps the audio
     # and the embedded cover; list args are quoting-safe for spaces. Best-effort:
     # on failure we keep the original mp3.

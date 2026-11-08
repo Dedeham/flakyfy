@@ -1,4 +1,4 @@
-"""Writes crates/octo/src/services/common/lastfm_country_names.rs from Last.fm's geo charts.
+"""Writes crates/flakyfy/src/services/common/lastfm_country_names.rs from Last.fm's geo charts.
 
 For every Apple Music country code it asks geo.gettoptracks for one track, first with the ISO 3166-1
 short name and then with the common English name. It keeps the first name whose answer names that
@@ -16,9 +16,9 @@ import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-OUT = ROOT / "crates/octo/src/services/common/lastfm_country_names.rs"
-SETTINGS = ROOT / "crates/octo-core/src/charts/chart_settings.rs"
-NAMES = ROOT / "crates/octo-core/src/common/countries.rs"
+OUT = ROOT / "crates/flakyfy/src/services/common/lastfm_country_names.rs"
+SETTINGS = ROOT / "crates/flakyfy-core/src/charts/chart_settings.rs"
+NAMES = ROOT / "crates/flakyfy-core/src/common/countries.rs"
 API = "https://ws.audioscrobbler.com/2.0/"
 
 

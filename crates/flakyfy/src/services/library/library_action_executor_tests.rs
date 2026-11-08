@@ -707,7 +707,7 @@ async fn the_worker_hands_the_replacement_handoff_to_the_download() {
 
 #[test]
 fn only_better_quality_without_a_picked_copy_must_sound_alike() {
-    use octo_core::settings::LibraryAction as A;
+    use flakyfy_core::settings::LibraryAction as A;
     assert!(LibraryActionExecutor::must_sound_alike(A::BetterQuality, false));
     // A copy taken in any quality is the person's own choice.
     assert!(!LibraryActionExecutor::must_sound_alike(A::BetterQuality, true));
@@ -729,7 +729,7 @@ fn alike_tools_present() -> bool {
 }
 
 fn alike_file(name: &str, source: &str, extra: &[&str]) -> String {
-    let target = std::env::temp_dir().join(format!("octo-alike-{}-{name}", std::process::id()));
+    let target = std::env::temp_dir().join(format!("flakyfy-alike-{}-{name}", std::process::id()));
     let status = std::process::Command::new("ffmpeg")
         .args(["-v", "error", "-y", "-f", "lavfi", "-i", source])
         .args(extra)
@@ -744,7 +744,7 @@ fn alike_executor(fingerprinter: bool) -> Arc<LibraryActionExecutor> {
     executor(
         &store(AppSettings::default()),
         Extras {
-            fingerprinter: fingerprinter.then(|| Arc::new(octo_media::audio::AudioFingerprinter::new())),
+            fingerprinter: fingerprinter.then(|| Arc::new(flakyfy_media::audio::AudioFingerprinter::new())),
             ..Default::default()
         },
     )

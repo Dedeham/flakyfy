@@ -5020,7 +5020,7 @@ document.getElementById('fetched-list')?.addEventListener('toggle', fetchedLogTo
 document.getElementById('health-fetched-results')?.addEventListener('toggle', fetchedLogToggle, true);
 
 // Library health: look up one fetched song by name, however old, to see how it was tagged (the
-// release that won and its distance) and its download log. Searches every entry Octo kept.
+// release that won and its distance) and its download log. Searches every entry Flakyfy kept.
 document.getElementById('health-fetched-form')?.addEventListener('submit', async event => {
   event.preventDefault();
   const out = document.getElementById('health-fetched-results');
@@ -5035,7 +5035,7 @@ document.getElementById('health-fetched-form')?.addEventListener('submit', async
     const items = (await r.json()).downloads || [];
     out.innerHTML = items.length
       ? items.map(fetchedRow).join('')
-      : stateBlock('empty', 'No fetched song matches. Only songs Octo downloaded are listed, and only the newest 500 are kept.');
+      : stateBlock('empty', 'No fetched song matches. Only songs Flakyfy downloaded are listed, and only the newest 500 are kept.');
   } catch (e) {
     out.innerHTML = stateBlock('error', `Couldn't search the fetched songs: ${e.message || 'error'}`);
   }

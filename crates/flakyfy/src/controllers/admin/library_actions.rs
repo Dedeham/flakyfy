@@ -14,7 +14,7 @@ use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, post};
-use octo_core::settings::LibraryAction;
+use flakyfy_core::settings::LibraryAction;
 use serde_json::{Value, json};
 use tracing::{info, warn};
 

@@ -265,7 +265,7 @@ async fn a_search_of_the_list_reaches_past_the_newest_200_and_keeps_the_tag_repo
     let now = Utc::now();
     let history = &dash.state.download_history;
     history.record(DownloadHistoryEntry {
-        tagging: Some(octo_core::tagging::TagReport {
+        tagging: Some(flakyfy_core::tagging::TagReport {
             confidence: "Strong".into(),
             distance: Some(0.042),
             release_title: Some("Discovery".into()),

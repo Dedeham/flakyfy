@@ -2816,11 +2816,11 @@ async fn preview_says_wrong(
 }
 
 /// The YouTube check's replacing through the sweep's steps: `settings` and a Wrong song that
-/// applies, for a file tagged Teardrop that AcoustID never heard, one of Octo's own downloads when
-/// `octos`. What came of it, what was asked of Wrong song, and the Review entries.
+/// applies, for a file tagged Teardrop that AcoustID never heard, one of Flakyfy's own downloads when
+/// `flakyfys`. What came of it, what was asked of Wrong song, and the Review entries.
 async fn youtube_check_replaces(
     settings: LibraryActionSettings,
-    octos: bool,
+    flakyfys: bool,
 ) -> (Replacing, Vec<(LibraryAction, String, String)>, Vec<NoticeEntry>) {
     let sweep = Sweep::new();
     let path = sweep.tagged("a.flac", "Massive Attack", "Teardrop", None);
@@ -2832,7 +2832,7 @@ async fn youtube_check_replaces(
             queue: Some(queue.clone()),
             settings: Some(settings),
             replacer: Some(replacer.clone()),
-            octo_downloads: if octos { vec![path.clone()] } else { Vec::new() },
+            flakyfy_downloads: if flakyfys { vec![path.clone()] } else { Vec::new() },
             ..Default::default()
         },
     );
@@ -2892,7 +2892,7 @@ async fn the_youtube_check_replaces_nothing_with_its_switch_off() {
 }
 
 #[tokio::test]
-async fn the_youtube_check_never_replaces_one_of_octo_s_own_downloads() {
+async fn the_youtube_check_never_replaces_one_of_flakyfy_s_own_downloads() {
     let (replacing, requests, _) = youtube_check_replaces(youtube_check_replacing(), true).await;
 
     assert_eq!(replacing, Replacing::Declined);

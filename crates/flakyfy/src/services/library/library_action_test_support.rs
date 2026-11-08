@@ -123,7 +123,7 @@ pub(crate) struct Extras {
     pub ids: Option<Arc<ExternalIdRegistry>>,
     pub notices: Option<Arc<NoticeQueue>>,
     pub stars: Option<Arc<StarOnArrival>>,
-    pub fingerprinter: Option<Arc<octo_media::audio::AudioFingerprinter>>,
+    pub fingerprinter: Option<Arc<flakyfy_media::audio::AudioFingerprinter>>,
     pub soulseek_link: Option<Arc<dyn ISoulseekLink>>,
     pub sources: Option<Arc<UpgradeSources>>,
     pub answers: Option<super::SongAnswers>,

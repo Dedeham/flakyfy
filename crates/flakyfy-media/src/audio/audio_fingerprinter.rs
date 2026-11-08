@@ -272,7 +272,7 @@ impl AudioFingerprinter {
             return None;
         }
         let wav = std::env::temp_dir().join(format!(
-            "octo-window-{}-{}.wav",
+            "flakyfy-window-{}-{}.wav",
             std::process::id(),
             SPEED_RUN.fetch_add(1, Ordering::Relaxed)
         ));

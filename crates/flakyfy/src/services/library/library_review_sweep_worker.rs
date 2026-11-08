@@ -1629,7 +1629,7 @@ impl LibraryReviewSweepWorker {
     /// [`Self::decide_for_youtube_check`] says so, by the sweep's own steps: the ISRC, the stars
     /// and ratings, the source a preview may replace from, the note in Review and the day's count.
     /// `question` is AcoustID's, with the preview's finding as its evidence. A file someone was
-    /// already asked about stays theirs to answer, and one of Octo's own downloads is only ever
+    /// already asked about stays theirs to answer, and one of Flakyfy's own downloads is only ever
     /// asked about, as the sweep's re-check of them does.
     pub async fn replace_for_youtube_check(
         &self,
@@ -1653,13 +1653,13 @@ impl LibraryReviewSweepWorker {
             return Replacing::Declined;
         }
         let full = get_full_path(path);
-        let octos = self
+        let flakyfys = self
             .library
             .get_mappings()
             .await
             .into_iter()
             .any(|mapping| !mapping.local_path.is_empty() && get_full_path(&mapping.local_path) == full);
-        if octos {
+        if flakyfys {
             return Replacing::Declined;
         }
         self.replace(keeper, path, file, question, false).await

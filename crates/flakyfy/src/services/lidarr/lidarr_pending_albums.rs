@@ -7,8 +7,8 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tracing::warn;

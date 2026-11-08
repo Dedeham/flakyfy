@@ -6,11 +6,11 @@ use std::sync::Arc;
 
 use std::collections::HashSet;
 
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet;
 use flakyfy_core::json::element::{ElementResult, enumerate_array, get_int32, get_string, try_get_property};
 use flakyfy_core::models::domain::Song;
 use flakyfy_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+use indexmap::IndexMap;
 use serde_json::Value;
 use tracing::debug;
 
@@ -593,15 +593,14 @@ mod tests {
             metadata.clone(),
         )
         .await;
-        let id =
-            resolver
-                .registry
-                .register(flakyfy_core::soulseek::soulseek_metadata_service::SoulseekRouting {
-                    artist: Some("A".into()),
-                    title: Some("T".into()),
-                    duration: Some(180),
-                    ..Default::default()
-                });
+        let id = resolver.registry.register(
+            flakyfy_core::soulseek::soulseek_metadata_service::SoulseekRouting {
+                artist: Some("A".into()),
+                title: Some("T".into()),
+                duration: Some(180),
+                ..Default::default()
+            },
+        );
         metadata.hits.lock().insert(
             ("A".into(), "T".into()),
             Song {
@@ -731,14 +730,13 @@ mod tests {
                 .is_none()
         );
 
-        let id =
-            matching
-                .registry
-                .register(flakyfy_core::soulseek::soulseek_metadata_service::SoulseekRouting {
-                    artist: Some("A".into()),
-                    title: Some("T".into()),
-                    ..Default::default()
-                });
+        let id = matching.registry.register(
+            flakyfy_core::soulseek::soulseek_metadata_service::SoulseekRouting {
+                artist: Some("A".into()),
+                title: Some("T".into()),
+                ..Default::default()
+            },
+        );
         let song = matching.resolve_scrobble(&id, &IndexMap::new()).await.unwrap();
         assert!(!song.is_local);
         assert_eq!(song.external_provider.as_deref(), Some("soulseek"));

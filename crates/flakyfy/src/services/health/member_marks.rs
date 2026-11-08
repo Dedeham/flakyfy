@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use futures::future::{BoxFuture, join_all};
 use flakyfy_core::settings::SettingsStore;
+use futures::future::{BoxFuture, join_all};
 use serde_json::Value;
 
 use super::keep_marks::MemberMarks;

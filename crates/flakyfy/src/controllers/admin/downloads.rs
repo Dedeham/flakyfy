@@ -119,7 +119,8 @@ struct FindRequest {
 }
 
 impl FromBody for FindRequest {
-    const SHAPE: &'static Shape = text_record!("Flakyfy.Controllers.AdminDownloadsController+FindRequest", "id");
+    const SHAPE: &'static Shape =
+        text_record!("Flakyfy.Controllers.AdminDownloadsController+FindRequest", "id");
 }
 
 /// `PickRequest(string? Copy, bool Anyway)`: `anyway` as the apps' pickFoundSong takes it, left out

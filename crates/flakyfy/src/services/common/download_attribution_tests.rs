@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use futures::FutureExt;
 use flakyfy_core::models::download::DownloadHistoryEntry;
+use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 
 use super::track_acquisition_queue::{AcquisitionRequest, Completion, TrackAcquisitionQueue};

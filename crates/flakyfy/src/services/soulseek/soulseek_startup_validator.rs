@@ -91,7 +91,9 @@ impl IStartupValidator for SoulseekStartupValidator {
                     &slskd_downloads,
                     ConsoleColor::Green,
                 );
-            } else if flakyfy_core::common::dotnet::to_lower_invariant(&normalized).ends_with("/app/downloads") {
+            } else if flakyfy_core::common::dotnet::to_lower_invariant(&normalized)
+                .ends_with("/app/downloads")
+            {
                 BaseStartupValidator::write_status(
                     "slskd downloads dir",
                     &format!("{slskd_downloads} (MISCONFIGURED)"),

@@ -6,14 +6,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::FutureExt;
-use futures::future::BoxFuture;
 use flakyfy_core::common::Clock;
 use flakyfy_core::common::acquisition_tracker::user_safe;
 use flakyfy_core::common::dotnet;
 use flakyfy_core::json::datetime;
 use flakyfy_core::settings::{DownloadSource, LibraryAction, SettingsStore, SoulseekSettings};
 use flakyfy_core::soulseek::soulseek_link::SoulseekLinkState;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
@@ -907,11 +907,12 @@ impl UpgradeWorker {
                 .next()
                 .map(|c| c.to_lowercase().collect::<String>())
                 .unwrap_or_default();
-            let why = if why.starts_with("Flakyfy") || why.starts_with("Soulseek") || why.starts_with("Lidarr") {
-                why.clone()
-            } else {
-                format!("{first}{}", chars.as_str())
-            };
+            let why =
+                if why.starts_with("Flakyfy") || why.starts_with("Soulseek") || why.starts_with("Lidarr") {
+                    why.clone()
+                } else {
+                    format!("{first}{}", chars.as_str())
+                };
             format!("The copy you picked did not replace yours: {why}. Your copy was kept.")
         }
     }

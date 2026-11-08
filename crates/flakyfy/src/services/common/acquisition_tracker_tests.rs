@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::TimeZone;
-use futures::FutureExt;
 use flakyfy_core::settings::{
     AppSettings, HeartDownloadSource, HeartDownloadStep, SettingsStore, SubsonicSettings,
 };
+use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 
 use super::*;

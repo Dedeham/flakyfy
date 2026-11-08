@@ -326,7 +326,10 @@ mod tests {
         let file = w.file("a.flac");
         let address = vec!["|10.0.0.2|flakyfy".to_string()];
         w.plays.choose(&address, "s1", true, Some(&file), Some(200), true);
-        let named = vec!["alice|10.0.0.2|flakyfy".to_string(), "|10.0.0.2|flakyfy".to_string()];
+        let named = vec![
+            "alice|10.0.0.2|flakyfy".to_string(),
+            "|10.0.0.2|flakyfy".to_string(),
+        ];
         assert_eq!(
             w.plays.choose(&named, "s1", false, Some(&file), Some(200), true),
             Source::File(file)

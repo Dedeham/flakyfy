@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use indexmap::IndexMap;
 use flakyfy_core::last_fm::SimilarTrack;
 use flakyfy_core::radio::radio_provider::LAST_FM;
 use flakyfy_core::radio::{RadioAnswer, RadioMatch, RadioSeed};
+use indexmap::IndexMap;
 
 use super::radio_source::IRadioSource;
 use crate::services::last_fm::LastFmService;

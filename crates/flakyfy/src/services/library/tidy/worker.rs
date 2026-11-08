@@ -18,11 +18,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use futures::future::BoxFuture;
 use flakyfy_core::common::PathHelper;
 use flakyfy_core::settings::SettingsStore;
 use flakyfy_media::tags::TagFile;
 use flakyfy_media::tags::tag_writer_extras::{self as extras, TagFields};
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

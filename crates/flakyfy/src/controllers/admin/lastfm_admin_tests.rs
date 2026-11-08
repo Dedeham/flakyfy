@@ -9,10 +9,10 @@ use axum::Router;
 use axum::extract::State;
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use indexmap::IndexMap;
 use flakyfy_core::json::dom::Node;
 use flakyfy_core::last_fm::last_fm_scrobble_service::sign;
 use flakyfy_core::settings::{AppSettings, SettingsFileWriter, SettingsStore};
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 
 use super::plumbing::SECRET_PLACEHOLDER;
@@ -420,8 +420,8 @@ async fn form_save_with_the_slskd_placeholder_keeps_the_stored_password() {
             .map(str::to_string)
     };
 
-    let body =
-        serde_json::json!({ "Soulseek": { "Username": "flakyfy", "Password": SECRET_PLACEHOLDER } }).to_string();
+    let body = serde_json::json!({ "Soulseek": { "Username": "flakyfy", "Password": SECRET_PLACEHOLDER } })
+        .to_string();
     let save = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(&body)).await;
     assert_eq!(save.status, StatusCode::OK, "{}", save.text());
     assert!(!save.text().contains("slskd-secret"));

@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::StreamExt;
 use flakyfy_core::common::{SongIdentity, SongMatchOptions, SongRef};
 use flakyfy_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use flakyfy_media::audio::{AudioFingerprinter, RawFingerprint};
+use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 

@@ -8,9 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{TimeDelta, Utc};
-use futures::FutureExt;
-use futures::future::{BoxFuture, Shared};
-use indexmap::IndexMap;
 use flakyfy_core::common::{Clock, dotnet};
 use flakyfy_core::last_fm::SimilarTrack;
 use flakyfy_core::last_fm::last_fm_radio_recommendation_service::{
@@ -33,6 +30,9 @@ use flakyfy_core::radio::RadioSeed;
 use flakyfy_core::radio::radio_blend;
 use flakyfy_core::radio::radio_provider::LAST_FM;
 use flakyfy_core::settings::SettingsStore;
+use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;

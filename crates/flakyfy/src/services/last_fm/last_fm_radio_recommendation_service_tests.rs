@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{TimeDelta, Utc};
-use flakyfy_core::last_fm::last_fm_radio_recommendation_service::{RadioRandom, Randomizer, seeded_randomizer};
+use flakyfy_core::last_fm::last_fm_radio_recommendation_service::{
+    RadioRandom, Randomizer, seeded_randomizer,
+};
 use flakyfy_core::models::radio::LastFmRadioTrack;
 use flakyfy_core::settings::{AppSettings, DiscoveryStationSettings, LastFmSettings, MetadataSettings};
 use serde_json::{Value, json};

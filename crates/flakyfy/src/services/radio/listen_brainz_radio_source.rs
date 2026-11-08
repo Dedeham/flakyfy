@@ -5,11 +5,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use indexmap::IndexMap;
 use flakyfy_core::last_fm::SimilarTrack;
 use flakyfy_core::radio::radio_provider::LISTEN_BRAINZ;
 use flakyfy_core::radio::{RadioAnswer, RadioMatch, RadioSeed};
 use flakyfy_core::settings::SettingsStore;
+use indexmap::IndexMap;
 
 use super::radio_source::IRadioSource;
 use crate::services::listen_brainz::listen_brainz_radio_client::{

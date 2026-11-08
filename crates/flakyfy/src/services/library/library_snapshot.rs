@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use flakyfy_core::common::clock::Clock;
 use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
-use flakyfy_core::common::clock::Clock;
 use parking_lot::Mutex;
 use tracing::debug;
 

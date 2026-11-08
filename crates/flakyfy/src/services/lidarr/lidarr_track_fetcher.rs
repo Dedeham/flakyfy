@@ -7,8 +7,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use futures::FutureExt;
-use futures::future::{BoxFuture, Shared};
 use flakyfy_core::common::dotnet;
 use flakyfy_core::lidarr::lidarr_track_fetcher::{is_lossless, match_track};
 use flakyfy_core::lidarr::{
@@ -16,6 +14,8 @@ use flakyfy_core::lidarr::{
     LidarrTrackRequest,
 };
 use flakyfy_core::settings::{LidarrSettings, SettingsStore};
+use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};

@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use axum::http::{Method, StatusCode};
+use flakyfy_core::settings::{AppSettings, LibraryActionSettings};
 use futures::FutureExt;
 use indexmap::IndexMap;
-use flakyfy_core::settings::{AppSettings, LibraryActionSettings};
 use serde_json::{Value, json};
 
 use super::test_app::{Reply, app, send};

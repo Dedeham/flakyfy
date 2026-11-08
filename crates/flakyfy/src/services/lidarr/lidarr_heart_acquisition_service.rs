@@ -8,8 +8,6 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use futures::FutureExt;
-use futures::future::{BoxFuture, Shared};
 use flakyfy_core::common::SongIdentity;
 use flakyfy_core::common::dotnet;
 use flakyfy_core::lidarr::lidarr_heart_acquisition_service::match_song;
@@ -19,6 +17,8 @@ use flakyfy_core::models::domain::{Album, Song};
 use flakyfy_core::notifications::{NotificationEvent, NotificationEventType};
 use flakyfy_core::settings::{DownloadSource, LidarrCompletionMode, LidarrSettings, SettingsStore};
 use flakyfy_core::soulseek::{RoutingKind, SoulseekRouting};
+use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use parking_lot::Mutex;
 use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;

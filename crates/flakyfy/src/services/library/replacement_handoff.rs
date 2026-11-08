@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use futures::future::BoxFuture;
 use flakyfy_media::tags::KeptIdentity;
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 
 /// Called once the replacement is tagged and still out of the scanner's sight, with its path.

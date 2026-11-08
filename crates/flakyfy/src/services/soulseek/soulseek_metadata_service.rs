@@ -8,9 +8,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-use futures::FutureExt;
-use futures::StreamExt;
-use futures::future::{BoxFuture, Shared};
 use flakyfy_core::common::{SongIdentity, dotnet};
 use flakyfy_core::metadata::deezer_metadata_service::{
     AlbumAnswer, AlbumHit, ArtistHit, TrackMeta, release_types,
@@ -19,6 +16,9 @@ use flakyfy_core::models::domain::{Album, Artist, Song, explicit_status};
 use flakyfy_core::models::search::SearchResult;
 use flakyfy_core::models::subsonic::ExternalPlaylist;
 use flakyfy_core::soulseek::{LengthSource, RoutingKind, SongLength, SoulseekRouting};
+use futures::FutureExt;
+use futures::StreamExt;
+use futures::future::{BoxFuture, Shared};
 use parking_lot::Mutex;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;

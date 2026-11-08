@@ -8,8 +8,8 @@ use std::time::Duration as StdDuration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use futures::StreamExt;
 use flakyfy_core::common::Clock;
+use futures::StreamExt;
 use parking_lot::Mutex;
 
 use super::preview_copies::{

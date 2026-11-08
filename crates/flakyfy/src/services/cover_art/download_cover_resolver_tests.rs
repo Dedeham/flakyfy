@@ -9,11 +9,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use image::codecs::jpeg::JpegEncoder;
-use image::{Rgb, RgbImage};
 use flakyfy_core::common::Clock;
 use flakyfy_core::settings::{AppSettings, MetadataSettings};
 use flakyfy_media::cover::cover_files;
+use image::codecs::jpeg::JpegEncoder;
+use image::{Rgb, RgbImage};
 use parking_lot::Mutex;
 use url::Url;
 use wiremock::matchers::any;

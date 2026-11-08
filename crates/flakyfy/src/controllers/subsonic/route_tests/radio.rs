@@ -9,14 +9,14 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Method, StatusCode};
 use chrono::{TimeDelta, TimeZone, Utc};
-use futures::StreamExt;
-use http_body_util::BodyExt;
 use flakyfy_core::last_fm::RadioAudioProfile;
 use flakyfy_core::last_fm::last_fm_radio_state_store::station_id;
 use flakyfy_core::last_fm::last_fm_radio_stream_service::READY_POOL_SIZE;
 use flakyfy_core::models::domain::Song;
 use flakyfy_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack};
 use flakyfy_core::settings::{AppSettings, ExplicitFilter, LastFmSettings, SubsonicSettings};
+use futures::StreamExt;
+use http_body_util::BodyExt;
 use parking_lot::Mutex;
 use tempfile::TempDir;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -694,7 +694,10 @@ async fn subsonic_playlist_list_merges_ready_station_after_successful_authentica
                 row(&format!(r#"id="{station_id}""#)).contains(r#"flakyfyGroup="station""#),
                 "{body}"
             );
-            assert!(!row(r#"name="Native Playlist""#).contains("flakyfyGroup"), "{body}");
+            assert!(
+                !row(r#"name="Native Playlist""#).contains("flakyfyGroup"),
+                "{body}"
+            );
         }
     }
 }

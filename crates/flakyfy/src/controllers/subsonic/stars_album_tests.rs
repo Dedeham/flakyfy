@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use http_body_util::BodyExt;
 use flakyfy_core::settings::{DownloadSource, HeartDownloadSource, HeartDownloadStep};
 use flakyfy_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+use http_body_util::BodyExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::path;
 use wiremock::{Mock, MockServer};

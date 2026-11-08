@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::FutureExt;
 use flakyfy_core::common::dotnet;
 use flakyfy_core::common::live_version;
 use flakyfy_core::common::song_identity::ArtistAgreement;
@@ -26,6 +25,7 @@ use flakyfy_core::settings::{
 };
 use flakyfy_media::tags::TagFile;
 use flakyfy_media::tags::tag_writer_extras::{self, TagFields};
+use futures::FutureExt;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;

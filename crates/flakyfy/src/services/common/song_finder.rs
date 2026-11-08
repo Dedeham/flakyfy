@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::FutureExt;
-use futures::future::BoxFuture;
 use flakyfy_core::common::acquisition_tracker::user_safe;
 use flakyfy_core::common::{Clock, dotnet};
 use flakyfy_core::fingerprint::recording_identity::RecordingKind;
@@ -18,6 +16,8 @@ use flakyfy_core::settings::{
 };
 use flakyfy_core::soulseek::soulseek_link::{OFFLINE_TEXT, SoulseekLinkState};
 use flakyfy_core::soulseek::{RoutingKind, SoulseekFileHit};
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};

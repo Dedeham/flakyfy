@@ -11,9 +11,9 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
 use bytes::BytesMut;
+use flakyfy_subsonic::size_flag::{Format, flag_sizes};
 use futures::{StreamExt, stream};
 use http_body_util::BodyExt;
-use flakyfy_subsonic::size_flag::{Format, flag_sizes};
 use tracing::warn;
 
 use crate::app::AppState;

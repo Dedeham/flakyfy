@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
-use futures::FutureExt;
 use flakyfy_core::common::Clock;
 use flakyfy_core::settings::{AppSettings, LibraryAction, SettingsStore, SoulseekSettings};
+use futures::FutureExt;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -360,7 +360,11 @@ fn an_upgrade_says_what_changed_and_what_it_passed() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let new_file = dir.path().join("Song.flac");
     std::fs::write(&new_file, flac_of(200)).expect("written");
-    let kept = dir.path().join(".flakyfy-trash").join("2026-10-03").join("Song.mp3");
+    let kept = dir
+        .path()
+        .join(".flakyfy-trash")
+        .join("2026-10-03")
+        .join("Song.mp3");
     std::fs::create_dir_all(kept.parent().expect("a folder")).expect("created");
     std::fs::write(&kept, mp3()).expect("written");
     let settings = soulseek(SoulseekSettings {

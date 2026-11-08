@@ -3,8 +3,8 @@
 //! tested with `SubsonicCredential` in `flakyfy_subsonic`.)
 
 use super::*;
-use indexmap::IndexMap;
 use flakyfy_core::settings::{AppSettings, SettingsStore, SubsonicSettings};
+use indexmap::IndexMap;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 /// A ping that accepts the token "good" for anyone, optionally slow.

@@ -8,13 +8,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use futures::FutureExt;
 use flakyfy_core::fingerprint::{
     AcoustIdRecording, InconclusiveReason, VerificationResult, VerificationVerdict,
 };
 use flakyfy_core::models::domain::Song;
 use flakyfy_core::settings::{AppSettings, FolderStructure, SubsonicSettings};
 use flakyfy_media::tags::{KeptIdentity, KeptIdentityTags, TagFile, tag_writer_extras};
+use futures::FutureExt;
 use parking_lot::Mutex;
 
 use super::test_support::{Harness, build};

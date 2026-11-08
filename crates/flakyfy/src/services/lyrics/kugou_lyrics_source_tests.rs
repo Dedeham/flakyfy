@@ -5,10 +5,10 @@ use std::io::Write;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use flate2::Compression;
-use flate2::write::ZlibEncoder;
 use flakyfy_core::common::{SongIdentity, SongVerdict};
 use flakyfy_core::lyrics::{ILyricsSource, LyricsCandidate, LyricsQuery, LyricsText, LyricsTiming};
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use tokio_util::sync::CancellationToken;
 use wiremock::ResponseTemplate;
 

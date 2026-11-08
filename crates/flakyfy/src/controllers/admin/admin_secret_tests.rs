@@ -5,9 +5,9 @@
 
 use std::collections::BTreeSet;
 
-use indexmap::IndexMap;
 use flakyfy_core::json::dom::Node;
 use flakyfy_core::settings::{AppSettings, JsonObject, LastFmUserSession};
+use indexmap::IndexMap;
 use serde_json::Value;
 
 use super::plumbing::SECRET_PLACEHOLDER;

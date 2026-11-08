@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Utc};
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet::eq_ignore_case;
 use flakyfy_core::family::abilities::{Abilities, Preset};
 use flakyfy_core::family::codes::constant_time_eq;
 use flakyfy_core::family::device::{Device, NetworkPlace};
 use flakyfy_core::family::quality::{DeviceQualityMode, QualityPreference};
 use flakyfy_core::json::datetime;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
@@ -955,7 +955,14 @@ mod tests {
         let store = FamilyStore::in_memory();
         store.add_device(device("d_2", "alex"));
         let seen = |id: &str, name: Option<&str>| {
-            store.record_device(id, "alex", "Flakyfy 1.6 (Android)", NetworkPlace::Away, name, now())
+            store.record_device(
+                id,
+                "alex",
+                "Flakyfy 1.6 (Android)",
+                NetworkPlace::Away,
+                name,
+                now(),
+            )
         };
         assert!(seen("x_1", Some("Sam\u{2019}s phone")));
         assert!(!seen("x_1", Some("Other")));

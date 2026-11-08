@@ -8,11 +8,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::FutureExt;
-use futures::future::BoxFuture;
 use flakyfy_core::common::Clock;
 use flakyfy_core::settings::SettingsStore;
 use flakyfy_core::soulseek::soulseek_client::delta;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use tracing::{info, warn};
 
 pub use flakyfy_core::soulseek::soulseek_link::{

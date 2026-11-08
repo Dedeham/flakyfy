@@ -4,7 +4,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use indexmap::IndexMap;
 use flakyfy_core::common::skipped_takes;
 use flakyfy_core::last_fm::last_fm_radio_placement::{self, Spacing};
 use flakyfy_core::last_fm::last_fm_radio_recommendation_service::{
@@ -17,6 +16,7 @@ use flakyfy_core::radio::radio_blend::{self, RadioPick};
 use flakyfy_core::radio::radio_provider::{self, LIBRARY};
 use flakyfy_core::radio::{RadioAnswer, RadioMatch, RadioSeed};
 use flakyfy_core::settings::{ExplicitFilter, SettingsStore};
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tokio::sync::Semaphore;
 use tracing::{debug, info};

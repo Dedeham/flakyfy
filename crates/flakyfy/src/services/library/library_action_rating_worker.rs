@@ -320,8 +320,8 @@ impl LibraryActionRatingWorker {
 mod tests {
     use std::time::Duration;
 
-    use md5::{Digest, Md5};
     use flakyfy_core::settings::{AppSettings, FamilySettings, LibraryActionSettings, SubsonicSettings};
+    use md5::{Digest, Md5};
     use parking_lot::Mutex;
     use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate, matchers::any};
 

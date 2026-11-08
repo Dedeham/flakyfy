@@ -1,8 +1,8 @@
 //! The Subsonic relay, with Navidrome stood in for by wiremock.
 
 use super::*;
-use http_body_util::BodyExt;
 use flakyfy_core::settings::{AppSettings, SubsonicSettings};
+use http_body_util::BodyExt;
 use wiremock::matchers::{header as header_is, method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 

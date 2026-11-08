@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
 use chrono::Utc;
-use futures::FutureExt;
 use flakyfy_core::models::download::{
     AcquisitionCandidate, AcquisitionEvent, AcquisitionHeard, DownloadHistoryEntry,
 };
@@ -16,6 +15,7 @@ use flakyfy_core::settings::{
     AppSettings, LibraryAction, LibraryActionDefinition, LibraryActionSettings, SoulseekSettings,
     SubsonicSettings,
 };
+use futures::FutureExt;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 

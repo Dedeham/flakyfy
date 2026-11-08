@@ -2,8 +2,8 @@
 //! `flakyfy_core::radio::radio_types`.
 
 use async_trait::async_trait;
-use indexmap::IndexMap;
 use flakyfy_core::radio::{RadioAnswer, RadioSeed};
+use indexmap::IndexMap;
 
 /// A place radio's suggestions come from.
 #[async_trait]

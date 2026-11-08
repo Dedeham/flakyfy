@@ -21,7 +21,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use futures::FutureExt;
 use flakyfy_core::common::Clock;
 use flakyfy_core::fingerprint::verification::{InconclusiveReason, VerificationResult};
 use flakyfy_core::json::datetime;
@@ -29,6 +28,7 @@ use flakyfy_core::models::domain::Song;
 use flakyfy_core::settings::SettingsStore;
 use flakyfy_media::audio::AudioFingerprinter;
 use flakyfy_media::tags::TagFile;
+use futures::FutureExt;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;

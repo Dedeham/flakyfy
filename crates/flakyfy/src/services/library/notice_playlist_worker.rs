@@ -5,11 +5,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{TimeDelta, Utc};
-use futures::FutureExt;
 use flakyfy_core::common::dotnet;
 use flakyfy_core::fingerprint::acoust_id_client::AcoustIdSubmission;
 use flakyfy_core::fingerprint::verification::InconclusiveReason;
 use flakyfy_core::settings::{LibraryActionSettings, NoticeKind, SettingsStore, SoulseekSettings};
+use futures::FutureExt;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};

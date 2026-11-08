@@ -26,8 +26,8 @@ fn book() -> &'static CoverBook {
 }
 
 static SAMPLES: LazyLock<Value> = LazyLock::new(|| {
-    let text =
-        std::fs::read_to_string(repo("docs/rust-migration/fixtures/covers/samples.json")).expect("samples.json reads");
+    let text = std::fs::read_to_string(repo("docs/rust-migration/fixtures/covers/samples.json"))
+        .expect("samples.json reads");
     serde_json::from_str(&text).expect("samples.json parses")
 });
 

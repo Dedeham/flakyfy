@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use futures::FutureExt;
 use flakyfy_core::models::domain::{Album, Song};
 use flakyfy_core::settings::{
     AppSettings, DownloadSource, LibraryAction, LibraryActionDefinition, LibraryActionSettings,
     SettingsStore, SubsonicSettings,
 };
+use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 
 use super::test_support::{Harness, build};

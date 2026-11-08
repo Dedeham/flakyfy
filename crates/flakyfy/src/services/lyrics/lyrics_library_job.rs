@@ -12,7 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
-use flakyfy_core::common::dotnet::{eq_ignore_case, is_blank, is_null_or_white_space, ordinal_ignore_case_key};
+use flakyfy_core::common::dotnet::{
+    eq_ignore_case, is_blank, is_null_or_white_space, ordinal_ignore_case_key,
+};
 use flakyfy_core::lyrics::lyrics_library_job::{FLAKYFY_DOWNLOADS, WHOLE_LIBRARY};
 use flakyfy_core::lyrics::lyrics_library_steps::{FLAKYFY_RESTARTED, SERVICES_STOPPED_ANSWERING};
 use flakyfy_core::lyrics::{

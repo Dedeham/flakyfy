@@ -12,12 +12,12 @@ use axum::http::{Method, StatusCode};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use http_body_util::BodyExt;
 use flakyfy_core::family::abilities::Preset;
 use flakyfy_core::family::device::{Device, NetworkPlace};
 use flakyfy_core::family::quality::{DeviceQualityMode, QualityPreference, StreamQuality};
 use flakyfy_core::models::domain::Song;
 use flakyfy_core::settings::{AppSettings, FamilySettings, SubsonicSettings};
+use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use wiremock::matchers::{method, path, path_regex, query_param};
@@ -935,7 +935,12 @@ async fn the_newest_device_wins_and_the_other_is_told() {
 async fn offline_purpose_never_counts() {
     let f = family(true, Alex::with(json!({ "devicesAtOnce": 1 })), |_| {}).await;
     let _pixel = open_stream(&f, &format!("{ALEX_SUB}&id=lib-1"), &[]).await;
-    let _copy = open_stream(&f, &format!("{ALEX}&id=lib-2"), &[("X-Flakyfy-Purpose", "offline")]).await;
+    let _copy = open_stream(
+        &f,
+        &format!("{ALEX}&id=lib-2"),
+        &[("X-Flakyfy-Purpose", "offline")],
+    )
+    .await;
     // The Pixel keeps playing next to the Flakyfy app's offline copy.
     let live = f.state.family_audio.tracker().live();
     let devices: Vec<Option<&str>> = live.iter().map(|s| s.device_id.as_deref()).collect();

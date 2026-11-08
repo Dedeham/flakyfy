@@ -60,7 +60,10 @@ async fn the_history_offers_allow_downloading_again_and_it_works_only_when_signe
     let token = state.browse_sessions.create("admin");
     let app = app(state.clone());
     let anonymous = [("X-Flakyfy-Admin", "1")];
-    let signed_in = [("X-Flakyfy-Admin", "1"), ("X-Flakyfy-Browse-Token", token.as_str())];
+    let signed_in = [
+        ("X-Flakyfy-Admin", "1"),
+        ("X-Flakyfy-Browse-Token", token.as_str()),
+    ];
 
     let history = send(&app, Method::GET, "/api/admin/library-actions", &signed_in, None).await;
     let rows = history.json()["entries"].as_array().expect("entries").clone();

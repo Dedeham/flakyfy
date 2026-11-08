@@ -10,11 +10,11 @@ use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::post;
-use indexmap::IndexMap;
 use flakyfy_core::common::SongIdentity;
 use flakyfy_core::common::dotnet::is_blank;
 use flakyfy_core::settings::LibraryAction;
 use flakyfy_core::tagging::version_audit::VersionProblem;
+use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::info;
@@ -509,7 +509,9 @@ async fn replace_cover(State(state): State<AppState>, request: Request) -> Respo
     if !can.edit {
         return error(
             StatusCode::FORBIDDEN,
-            can.why.as_deref().unwrap_or("Flakyfy may not change files for you."),
+            can.why
+                .as_deref()
+                .unwrap_or("Flakyfy may not change files for you."),
         );
     }
     let ids = body.ids.unwrap_or_default();
@@ -578,7 +580,9 @@ async fn replace(State(state): State<AppState>, request: Request) -> Response {
     if !can.edit {
         return error(
             StatusCode::FORBIDDEN,
-            can.why.as_deref().unwrap_or("Flakyfy may not change files for you."),
+            can.why
+                .as_deref()
+                .unwrap_or("Flakyfy may not change files for you."),
         );
     }
     let actions = state.settings.current().library_actions.clone();

@@ -11,12 +11,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
-use http_body_util::BodyExt;
 use flakyfy::app::AppState;
 use flakyfy::http::pipeline::{App, build_with};
 use flakyfy::http::routes::RouteSet;
 use flakyfy::logging::{HOSTING_DIAGNOSTICS, RedactingMakeWriter};
 use flakyfy_core::settings::AppSettings;
+use http_body_util::BodyExt;
 use tower::ServiceExt;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
@@ -182,10 +182,12 @@ async fn an_api_key_sign_in_is_named_without_the_key_reaching_the_log() {
     let app = build_with(state.clone(), RouteSet::new());
     let key = secret();
 
-    let req = Request::get(format!("/rest/getUser.view?apiKey={key}&v=1.16.1&c=Flakyfy&f=json"))
-        .header("Host", "flakyfy.test")
-        .body(Body::empty())
-        .expect("request");
+    let req = Request::get(format!(
+        "/rest/getUser.view?apiKey={key}&v=1.16.1&c=Flakyfy&f=json"
+    ))
+    .header("Host", "flakyfy.test")
+    .body(Body::empty())
+    .expect("request");
     let res = app.oneshot(req).await.expect("infallible");
     assert_eq!(res.status(), StatusCode::OK);
     res.into_body().collect().await.expect("body");

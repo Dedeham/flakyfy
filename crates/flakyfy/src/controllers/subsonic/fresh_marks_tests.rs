@@ -197,7 +197,9 @@ async fn liked_songs_is_listed_first_in_json_and_xml() {
     let id = first["id"].as_str().expect("an id");
     assert_eq!(first["coverArt"], format!("{id}_{version}c2"));
     let first_row = xml.find("<playlist ").expect("a row");
-    assert!(xml[first_row..].starts_with("<playlist ") && xml[first_row..].contains(r#"flakyfyList="liked""#));
+    assert!(
+        xml[first_row..].starts_with("<playlist ") && xml[first_row..].contains(r#"flakyfyList="liked""#)
+    );
     let liked_at = xml.find(r#"flakyfyList="liked""#).expect("liked");
     assert!(
         xml[first_row..liked_at].matches("<playlist ").count() == 1,
@@ -238,10 +240,20 @@ async fn liked_songs_takes_the_name_it_is_given() {
 async fn liked_songs_switched_off_or_with_no_hearts_is_not_listed() {
     let (upstream, app) = setup_with(|settings| settings.generated_playlists.liked_songs = false).await;
     heart(&upstream, "alice", "big1", "2026-10-01T10:00:00.000Z");
-    assert!(!playlists(&app).await.iter().any(|row| row["flakyfyList"] == "liked"));
+    assert!(
+        !playlists(&app)
+            .await
+            .iter()
+            .any(|row| row["flakyfyList"] == "liked")
+    );
 
     let (_upstream, app) = setup().await;
-    assert!(!playlists(&app).await.iter().any(|row| row["flakyfyList"] == "liked"));
+    assert!(
+        !playlists(&app)
+            .await
+            .iter()
+            .any(|row| row["flakyfyList"] == "liked")
+    );
 }
 
 #[tokio::test]

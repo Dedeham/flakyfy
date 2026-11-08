@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use flakyfy_core::common::dotnet::{eq_ignore_case, is_null_or_white_space, to_lower_invariant};
 use flakyfy_core::lyrics::song_lyrics::FLAKYFY_MARK;
-use flakyfy_core::lyrics::{LyricsLookup, LyricsQuery, LyricsResult, LyricsTiming, SongLyrics, SongLyricsPlace};
+use flakyfy_core::lyrics::{
+    LyricsLookup, LyricsQuery, LyricsResult, LyricsTiming, SongLyrics, SongLyricsPlace,
+};
 use flakyfy_core::settings::{LyricsSaveTo, SettingsStore};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

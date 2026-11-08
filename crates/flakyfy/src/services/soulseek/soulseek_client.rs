@@ -6,8 +6,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::FutureExt;
-use futures::future::{BoxFuture, Shared};
 use flakyfy_core::common::{Clock, dotnet};
 use flakyfy_core::settings::SoulseekSettings;
 use flakyfy_core::soulseek::soulseek_client::{
@@ -15,6 +13,8 @@ use flakyfy_core::soulseek::soulseek_client::{
     SoulseekTransferProgress, SoulseekTransferState, TransferWatch, contains_ignore_case,
 };
 use flakyfy_core::soulseek::{SearchProfile, SoulseekServerReading};
+use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use parking_lot::Mutex;
 use reqwest::{Method, StatusCode};
 use serde_json::Value;
@@ -487,7 +487,8 @@ impl SoulseekClient {
             }
             if status == StatusCode::FORBIDDEN {
                 return Ok(Some(
-                    "slskd does not let Flakyfy change its settings (remote configuration is off).".to_string(),
+                    "slskd does not let Flakyfy change its settings (remote configuration is off)."
+                        .to_string(),
                 ));
             }
             let text = resp.text().await?;

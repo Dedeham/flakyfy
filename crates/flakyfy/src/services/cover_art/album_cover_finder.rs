@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::StreamExt;
 use flakyfy_core::common::{SongIdentity, SongMatchOptions, dotnet};
 use flakyfy_core::metadata::deezer_metadata_service::AlbumHit;
 use flakyfy_media::cover::cover_image;
+use futures::StreamExt;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;

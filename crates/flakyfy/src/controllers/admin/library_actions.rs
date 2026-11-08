@@ -200,7 +200,8 @@ struct ReplaceNowRequest {
 }
 
 impl FromBody for ReplaceNowRequest {
-    const SHAPE: &'static Shape = text_record!("Flakyfy.Controllers.AdminController+ReplaceNowRequest", "key");
+    const SHAPE: &'static Shape =
+        text_record!("Flakyfy.Controllers.AdminController+ReplaceNowRequest", "key");
 }
 
 /// Replace now on an open Review question: Wrong song for its file, as the signed-in Navidrome

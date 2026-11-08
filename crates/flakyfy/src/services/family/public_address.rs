@@ -40,7 +40,8 @@ pub fn validate_address(raw: &str) -> Result<String, String> {
         return Ok(String::new());
     }
     let bad = || {
-        "Type the address people use to reach Flakyfy from outside, like https://music.example.com.".to_string()
+        "Type the address people use to reach Flakyfy from outside, like https://music.example.com."
+            .to_string()
     };
     // Another scheme, or a scheme with nothing after it, would otherwise gain an https:// in
     // front of it.

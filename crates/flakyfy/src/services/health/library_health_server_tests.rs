@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-use futures::FutureExt;
-use indexmap::IndexMap;
 use flakyfy_core::common::Clock;
 use flakyfy_core::settings::{AppSettings, LibraryActionSettings, SettingsStore};
+use futures::FutureExt;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde_json::Value;
 use tokio::sync::Notify;

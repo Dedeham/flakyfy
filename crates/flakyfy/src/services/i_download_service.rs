@@ -10,10 +10,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::Stream;
 use flakyfy_core::models::domain::Album;
 use flakyfy_core::models::download::DownloadInfo;
 use flakyfy_core::settings::DownloadSource;
+use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
 use crate::services::common::AcquisitionPlace;

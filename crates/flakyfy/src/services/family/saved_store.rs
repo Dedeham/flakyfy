@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use indexmap::IndexMap;
 use flakyfy_core::json::datetime;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 

@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use futures::StreamExt;
 use flakyfy_media::cover::CoverArtService;
+use futures::StreamExt;
 use parking_lot::Mutex;
 use tracing::debug;
 

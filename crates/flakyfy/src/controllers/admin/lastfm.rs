@@ -39,9 +39,9 @@ pub async fn get_last_fm_radio(
         .get_summaries()
         .into_iter()
         .filter(|summary| {
-            listener
-                .as_deref()
-                .is_none_or(|listener| flakyfy_core::common::dotnet::eq_ignore_case(&summary.username, listener))
+            listener.as_deref().is_none_or(|listener| {
+                flakyfy_core::common::dotnet::eq_ignore_case(&summary.username, listener)
+            })
         })
         .collect();
     let selected = match user.as_deref() {
@@ -370,7 +370,8 @@ pub async fn disconnect_last_fm(State(state): State<AppState>, headers: HeaderMa
             "Stopped for now. This session is set in the environment (LASTFM__USERSESSIONS__{user}__SESSIONKEY), so remove it there as well or it comes back after a restart."
         )
     } else {
-        "Disconnected. To revoke Flakyfy on Last.fm too, remove it from that account's applications.".to_string()
+        "Disconnected. To revoke Flakyfy on Last.fm too, remove it from that account's applications."
+            .to_string()
     };
     ok(&json!({ "ok": true, "user": user, "message": message }))
 }

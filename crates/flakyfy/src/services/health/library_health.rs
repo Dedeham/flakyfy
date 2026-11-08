@@ -8,9 +8,9 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use indexmap::{IndexMap, IndexSet};
 use flakyfy_core::common::dotnet::{is_blank, is_digit, to_lower_invariant};
 use flakyfy_core::common::song_identity::{SongIdentity, SongMatchOptions, SongRef};
+use indexmap::{IndexMap, IndexSet};
 
 use crate::services::library::quality_upgrade_worker::compare_ordinal;
 

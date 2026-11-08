@@ -11,8 +11,6 @@ use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use futures::StreamExt;
-use indexmap::IndexMap;
 use flakyfy_core::charts::chart_settings;
 use flakyfy_core::common::dotnet;
 use flakyfy_core::common::dotnet::eq_ignore_case;
@@ -24,6 +22,8 @@ use flakyfy_subsonic::SubsonicReply;
 use flakyfy_subsonic::subsonic_request_parser::Parameters;
 use flakyfy_subsonic::subsonic_response_builder::chart_playlist_comment;
 use flakyfy_subsonic::xml::XElement;
+use futures::StreamExt;
+use indexmap::IndexMap;
 use serde_json::{Value, json};
 use tracing::warn;
 
@@ -535,7 +535,10 @@ fn family_playlist_fields(
     fields.insert("changed".into(), utc_millis(&changed).into());
     fields.insert("readonly".into(), (!family_playlists::may_edit(viewer)).into());
     fields.insert("flakyfyFamily".into(), true.into());
-    fields.insert("flakyfyFamilyCreatedBy".into(), playlist.created_by.clone().into());
+    fields.insert(
+        "flakyfyFamilyCreatedBy".into(),
+        playlist.created_by.clone().into(),
+    );
     fields.insert(
         "flakyfyFamilyMayRename".into(),
         family_playlists::may_rename(viewer, playlist).into(),

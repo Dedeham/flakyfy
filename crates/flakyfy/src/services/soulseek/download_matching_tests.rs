@@ -14,7 +14,9 @@ use flakyfy_core::common::version_variant;
 use flakyfy_core::fingerprint::recording_identity::Takes;
 use flakyfy_core::fingerprint::{AcoustIdLookup, AcoustIdRecording, AcoustIdResult, VerificationVerdict};
 use flakyfy_core::models::domain::Song;
-use flakyfy_core::settings::{AppSettings, DownloadSource, SettingsStore, SoulseekSettings, SubsonicSettings};
+use flakyfy_core::settings::{
+    AppSettings, DownloadSource, SettingsStore, SoulseekSettings, SubsonicSettings,
+};
 use flakyfy_core::soulseek::search_profile::SONG_FILE_LIMIT;
 use flakyfy_core::soulseek::soulseek_client::hit_limit;
 use flakyfy_core::soulseek::soulseek_download_service::{
@@ -44,9 +46,9 @@ use crate::services::local::test_support::FakeLocalLibrary;
 use crate::services::notifications::NotificationService;
 use crate::services::soulseek::soulseek_client::Timings;
 use crate::services::subsonic::NavidromeIdentityService;
-use futures::FutureExt;
 use flakyfy_media::audio::AudioFingerprinter;
 use flakyfy_media::tags::KeptIdentity;
+use futures::FutureExt;
 
 fn plausible(file: &str, title: &str) -> bool {
     filename_plausibly_matches_title(file, title, false)

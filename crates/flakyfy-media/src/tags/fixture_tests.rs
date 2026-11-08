@@ -129,7 +129,9 @@ fn run_scenarios(dir: &Path) -> Vec<PathBuf> {
 
         let lyrics = fresh("lyrics");
         let mut file = open(&lyrics);
-        file.set_lyrics(Some("[re:Flakyfy]\n[00:01.00]Ça va — 東京\n[00:02.50]second line"));
+        file.set_lyrics(Some(
+            "[re:Flakyfy]\n[00:01.00]Ça va — 東京\n[00:02.50]second line",
+        ));
         save(file);
         let unlyrics = copy(&lyrics, &dir.join(format!("unlyrics.{format}")));
         let mut file = open(&unlyrics);

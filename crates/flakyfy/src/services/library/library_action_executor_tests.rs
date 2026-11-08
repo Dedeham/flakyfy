@@ -4,11 +4,11 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-use indexmap::IndexMap;
 use flakyfy_core::settings::{
     AppSettings, LibraryActionDefinition, LibraryActionSettings, NoticeKind, NotificationSettings,
 };
 use flakyfy_media::audio::spectrum_analyzer::SpectrumVerdict;
+use indexmap::IndexMap;
 use tokio_util::sync::CancellationToken;
 
 use super::*;

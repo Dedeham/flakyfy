@@ -21,7 +21,9 @@ use flakyfy_core::models::domain::{Album, Artist, Song};
 use flakyfy_core::models::search::SearchResult;
 use flakyfy_core::settings::{LibraryActionSettings, SubsonicSettings};
 use flakyfy_subsonic::subsonic_model_mapper::Row;
-use flakyfy_subsonic::subsonic_response_builder::{SUBSONIC_NAMESPACE, SubsonicReply, SubsonicResponseBuilder};
+use flakyfy_subsonic::subsonic_response_builder::{
+    SUBSONIC_NAMESPACE, SubsonicReply, SubsonicResponseBuilder,
+};
 use flakyfy_subsonic::xml::XElement;
 use flakyfy_subsonic::{ReplyKind, SubsonicModelMapper};
 use serde_json::{Map, Value, json};

@@ -479,7 +479,10 @@ mod tests {
         let text = std::fs::read_to_string(FIXTURE).expect("the fixture is in the repo");
         let entries: Vec<Entry> = serde_json::from_str(&text).expect("the fixture reads");
         assert_eq!(entries.len(), 2);
-        assert_eq!(flakyfy_core::json::to_string(&entries), text.trim_end_matches('\n'));
+        assert_eq!(
+            flakyfy_core::json::to_string(&entries),
+            text.trim_end_matches('\n')
+        );
     }
 
     #[test]

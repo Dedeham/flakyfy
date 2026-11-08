@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use indexmap::IndexMap;
 use flakyfy_core::common::SongIdentity;
 use flakyfy_core::soulseek::{LengthSource, RoutingKind, SongLength, SoulseekRouting, StreamFacts};
+use indexmap::IndexMap;
 use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

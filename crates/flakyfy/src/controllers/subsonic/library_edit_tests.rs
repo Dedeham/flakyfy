@@ -959,7 +959,10 @@ async fn the_dashboard_lists_the_trash_and_puts_a_song_back() {
     assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
 
     let token = f.state.browse_sessions.create("alice");
-    let signed = [("X-Flakyfy-Admin", "1"), ("X-Flakyfy-Browse-Token", token.as_str())];
+    let signed = [
+        ("X-Flakyfy-Admin", "1"),
+        ("X-Flakyfy-Browse-Token", token.as_str()),
+    ];
     let listed = send(&app, Method::GET, "/api/admin/trash", &signed, None).await;
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.text());
     let doc = listed.json();

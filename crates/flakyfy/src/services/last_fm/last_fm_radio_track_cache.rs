@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::future::BoxFuture;
 use flakyfy_core::common::{PathHelper, SingleFlight, dotnet};
 use flakyfy_core::last_fm::RadioAudioProfile;
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;

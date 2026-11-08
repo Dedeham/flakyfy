@@ -48,7 +48,10 @@ fn the_fixture_round_trips_byte_for_byte() {
     assert_eq!(album.album.as_deref(), Some("Jazz (Deluxe)"));
     assert_eq!(album.track, 12);
     assert_eq!(entries[2].run_id.as_deref(), Some("run-explicit-1"));
-    assert_eq!(flakyfy_core::json::to_string(&entries), text.trim_end_matches('\n'));
+    assert_eq!(
+        flakyfy_core::json::to_string(&entries),
+        text.trim_end_matches('\n')
+    );
 }
 
 #[test]

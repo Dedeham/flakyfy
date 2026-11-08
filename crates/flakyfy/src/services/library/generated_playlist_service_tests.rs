@@ -466,7 +466,10 @@ mod response {
 
             let reply = builder().create_generated_playlist_response("xml", &row, &settings, &[entry()]);
             let xml = reply.text();
-            assert!(xml.contains(&format!(r#"flakyfyGroup="{group}""#)), "{key}: {xml}");
+            assert!(
+                xml.contains(&format!(r#"flakyfyGroup="{group}""#)),
+                "{key}: {xml}"
+            );
         }
         // An artist mix's row counts the songs stored for it, as a Made for you list does.
         let artist = GeneratedPlaylist {

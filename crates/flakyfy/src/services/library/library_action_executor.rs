@@ -11,9 +11,6 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use chrono::Utc;
-use futures::FutureExt;
-use futures::future::BoxFuture;
-use indexmap::IndexMap;
 use flakyfy_core::library::generated_playlist_service::dotnet_ticks;
 use flakyfy_core::lidarr::lidarr_client::LidarrError;
 use flakyfy_core::lyrics::{LyricsQuery, LyricsResult, LyricsTiming};
@@ -23,6 +20,9 @@ use flakyfy_media::audio::AudioFingerprinter;
 use flakyfy_media::audio::spectrum_analyzer::{SpectrumAnalyzer, SpectrumReport};
 use flakyfy_media::tags::{KeptIdentity, KeptIdentityTags};
 use flakyfy_subsonic::SubsonicCredential;
+use futures::FutureExt;
+use futures::future::BoxFuture;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tracing::{debug, info, warn};
 

@@ -10,7 +10,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use indexmap::IndexMap;
 use flakyfy_core::common::SongIdentity;
 use flakyfy_core::common::dotnet::{self, is_blank};
 use flakyfy_core::fingerprint::TrackMatchComparer;
@@ -23,6 +22,7 @@ use flakyfy_core::tagging::version_audit::{
 };
 use flakyfy_media::audio::{AudioFingerprinter, FingerprintOutcome};
 use flakyfy_media::tags::tag_writer_extras;
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 

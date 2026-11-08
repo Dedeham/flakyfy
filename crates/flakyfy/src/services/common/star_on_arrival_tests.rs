@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{TimeDelta, TimeZone};
+use flakyfy_core::settings::{AppSettings, SubsonicSettings};
 use futures::FutureExt;
 use md5::{Digest, Md5};
-use flakyfy_core::settings::{AppSettings, SubsonicSettings};
 
 use super::*;
 use crate::services::common::test_fakes::until;

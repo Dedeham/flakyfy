@@ -489,7 +489,10 @@ async fn get_open_subsonic_extensions_adds_flakyfy_acquisitions_to_navidromes_li
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["openSubsonic"], true);
     let extensions = extensions_of(&envelope);
-    assert_eq!(extension(&extensions, "flakyfyAcquisitions"), Some(&vec![1, 2, 3]));
+    assert_eq!(
+        extension(&extensions, "flakyfyAcquisitions"),
+        Some(&vec![1, 2, 3])
+    );
     assert!(extension(&extensions, "formPost").is_some());
     assert!(extension(&extensions, "songLyrics").is_some());
 }

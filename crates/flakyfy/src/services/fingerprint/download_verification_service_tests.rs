@@ -679,7 +679,11 @@ fn read_isrcs_reads_every_containers_isrc_tag() {
     {
         let m4a = dir.path().join("tagged.m4a");
         let mut file = TagFile::open(&m4a).expect("ffmpeg's m4a opens");
-        tag_writer_extras::set_text(&mut file, flakyfy_media::tags::TagFields::ISRC, Some("JPU901901234"));
+        tag_writer_extras::set_text(
+            &mut file,
+            flakyfy_media::tags::TagFields::ISRC,
+            Some("JPU901901234"),
+        );
         file.save().expect("saved");
     }
     ffmpeg(&format!("{TONE} -c:a flac untagged.flac"));

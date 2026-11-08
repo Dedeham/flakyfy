@@ -3,8 +3,8 @@
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-use futures::FutureExt;
 use flakyfy_core::notifications::notification_event::{NotificationEvent, NotificationEventType};
+use futures::FutureExt;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};

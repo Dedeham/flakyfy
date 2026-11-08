@@ -4,8 +4,8 @@
 
 use axum::body::Body;
 use axum::http::{Method, Request};
-use http_body_util::BodyExt;
 use flakyfy_core::settings::AppSettings;
+use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 use super::*;

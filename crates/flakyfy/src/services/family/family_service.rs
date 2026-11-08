@@ -1885,8 +1885,8 @@ fn sealed(state: &AppState, password: &str) -> FamilyResult<String> {
 
 /// Saves `Family:Enabled` in settings.json and makes it the running value.
 fn save_enabled(state: &AppState, on: bool) -> FamilyResult<()> {
-    use indexmap::IndexMap;
     use flakyfy_core::json::dom::Node;
+    use indexmap::IndexMap;
     if state.settings.settings_path().is_some() {
         let mut section = IndexMap::new();
         section.insert("Enabled".to_string(), Node::Bool(on));

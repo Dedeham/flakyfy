@@ -8,10 +8,6 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::FutureExt;
-use futures::future::BoxFuture;
-use indexmap::IndexMap;
-use indexmap::map::Entry;
 use flakyfy_core::common::{Clock, dotnet};
 use flakyfy_core::json::dom::Node;
 use flakyfy_core::last_fm::last_fm_scrobble_service::sign;
@@ -21,6 +17,10 @@ use flakyfy_core::last_fm::{
 use flakyfy_core::settings::{
     JsonObject, LastFmSettings, LastFmUserSession, SettingsFileWriter, SettingsStore, SettingsWriteError,
 };
+use futures::FutureExt;
+use futures::future::BoxFuture;
+use indexmap::IndexMap;
+use indexmap::map::Entry;
 use parking_lot::Mutex;
 use reqwest::header::CONTENT_TYPE;
 use serde_json::Value;

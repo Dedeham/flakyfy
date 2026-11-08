@@ -496,7 +496,12 @@ async fn a_navidrome_admin_signs_in_and_the_cookie_opens_the_dashboard() {
         .collect::<Vec<_>>()
         .join(";")
         .to_lowercase();
-    for part in ["flakyfy_browse=", "path=/api/admin", "samesite=strict", "httponly"] {
+    for part in [
+        "flakyfy_browse=",
+        "path=/api/admin",
+        "samesite=strict",
+        "httponly",
+    ] {
         assert!(set_cookie.contains(part), "{part} in {set_cookie}");
     }
     let cookie = cookie_of(&sign_in);

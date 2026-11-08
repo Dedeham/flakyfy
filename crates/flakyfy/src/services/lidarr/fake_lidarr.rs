@@ -126,7 +126,13 @@ impl FakeLidarr {
 
     /// A file for a track, at Lidarr's path, written where Flakyfy sees it. Returns Flakyfy's path.
     pub fn import(&self, track_id: i32, title: &str, quality: &str) -> String {
-        Self::import_into(&self.flakyfy_root, &mut self.state.lock(), track_id, title, quality)
+        Self::import_into(
+            &self.flakyfy_root,
+            &mut self.state.lock(),
+            track_id,
+            title,
+            quality,
+        )
     }
 
     /// Lidarr's own upgrade of a track: the file it had goes, and a new one with a new id takes

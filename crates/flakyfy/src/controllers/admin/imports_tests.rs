@@ -3,8 +3,8 @@
 
 use axum::body::Body;
 use axum::http::{Method, Request};
-use http_body_util::BodyExt;
 use flakyfy_core::settings::{AppSettings, FamilySettings, SubsonicSettings};
+use http_body_util::BodyExt;
 use tower::ServiceExt;
 use wiremock::matchers::{body_string_contains, method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -165,7 +165,10 @@ async fn the_dashboard_and_subsonic_import_actions_toggle_the_same_streaming_sna
         .await
         .json();
     let id = uploaded["listId"].as_str().unwrap();
-    let auth = [("X-Flakyfy-Browse-Token", token.as_str()), ("X-Flakyfy-Admin", "1")];
+    let auth = [
+        ("X-Flakyfy-Browse-Token", token.as_str()),
+        ("X-Flakyfy-Admin", "1"),
+    ];
     let enabled = send(
         &rig.app,
         Method::POST,
@@ -224,7 +227,10 @@ async fn the_dashboard_shows_the_signed_in_persons_lists_and_adds_a_file() {
     assert_eq!(added["message"], "Added Gym, 2 songs.");
     let list_id = added["listId"].as_str().expect("an id").to_string();
 
-    let auth = [("X-Flakyfy-Browse-Token", token.as_str()), ("X-Flakyfy-Admin", "1")];
+    let auth = [
+        ("X-Flakyfy-Browse-Token", token.as_str()),
+        ("X-Flakyfy-Admin", "1"),
+    ];
     let page = send(&rig.app, Method::GET, "/api/admin/imports", &auth, None)
         .await
         .json();
@@ -284,7 +290,10 @@ async fn a_write_without_the_admin_header_is_refused() {
 async fn there_is_no_spotify_sign_in() {
     let rig = rig().await;
     let token = rig.sign_in("alice");
-    let auth = [("X-Flakyfy-Browse-Token", token.as_str()), ("X-Flakyfy-Admin", "1")];
+    let auth = [
+        ("X-Flakyfy-Browse-Token", token.as_str()),
+        ("X-Flakyfy-Admin", "1"),
+    ];
     for uri in [
         "/api/admin/imports/spotify/connect",
         "/api/admin/imports/spotify/finish",
@@ -409,7 +418,10 @@ async fn the_apps_are_told_imports_are_here() {
 async fn a_member_of_the_wrong_type_is_refused_with_the_reference_message() {
     let rig = rig().await;
     let token = rig.sign_in("alice");
-    let auth = [("X-Flakyfy-Browse-Token", token.as_str()), ("X-Flakyfy-Admin", "1")];
+    let auth = [
+        ("X-Flakyfy-Browse-Token", token.as_str()),
+        ("X-Flakyfy-Admin", "1"),
+    ];
     let reply = send(
         &rig.app,
         Method::POST,
@@ -438,7 +450,10 @@ async fn a_member_of_the_wrong_type_is_refused_with_the_reference_message() {
 async fn a_file_sent_as_json_finds_no_action_and_an_empty_one_is_asked_for() {
     let rig = rig().await;
     let token = rig.sign_in("alice");
-    let auth = [("X-Flakyfy-Browse-Token", token.as_str()), ("X-Flakyfy-Admin", "1")];
+    let auth = [
+        ("X-Flakyfy-Browse-Token", token.as_str()),
+        ("X-Flakyfy-Admin", "1"),
+    ];
     let json = send(
         &rig.app,
         Method::POST,
@@ -653,7 +668,10 @@ async fn an_app_uploads_a_file_as_a_multipart_form() {
 async fn the_dashboard_pastes_a_list_and_lists_the_export_services() {
     let rig = rig().await;
     let token = rig.sign_in("alice");
-    let auth = [("X-Flakyfy-Browse-Token", token.as_str()), ("X-Flakyfy-Admin", "1")];
+    let auth = [
+        ("X-Flakyfy-Browse-Token", token.as_str()),
+        ("X-Flakyfy-Admin", "1"),
+    ];
     let pasted = send(
         &rig.app,
         Method::POST,

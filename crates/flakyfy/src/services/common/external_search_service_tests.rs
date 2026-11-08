@@ -4,8 +4,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::FutureExt;
 use flakyfy_core::settings::{AppSettings, LastFmSettings, SubsonicSettings};
+use futures::FutureExt;
 use tokio::sync::watch;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};

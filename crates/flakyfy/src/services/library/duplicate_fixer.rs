@@ -2,9 +2,9 @@
 //! the action playlist), and the words the Duplicates and Fix duplicates playlists carry so a
 //! person who only uses another app knows what to do.
 
-use futures::future::BoxFuture;
 use flakyfy_core::settings::{LibraryAction, LibraryActionSettings, NoticeKind};
 use flakyfy_subsonic::SubsonicCredential;
+use futures::future::BoxFuture;
 
 use super::library_action_journal::LibraryActionState;
 

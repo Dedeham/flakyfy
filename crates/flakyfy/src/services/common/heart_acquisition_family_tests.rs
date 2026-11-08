@@ -4,10 +4,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::FutureExt;
 use flakyfy_core::family::abilities::Preset;
 use flakyfy_core::models::domain::{Album, Song};
 use flakyfy_core::settings::{HeartDownloadSource, HeartDownloadStep};
+use futures::FutureExt;
 use serde_json::json;
 
 use super::*;

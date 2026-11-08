@@ -18,7 +18,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::TryStreamExt;
 use flakyfy_core::common::version_gap::{self, Against};
 use flakyfy_core::common::{dotnet, romanize};
 use flakyfy_core::fingerprint::recording_identity::{RecordingKind, Takes};
@@ -40,6 +39,7 @@ use flakyfy_core::soulseek::{
 };
 use flakyfy_media::audio::SpectrumReport;
 use flakyfy_media::tags::TagFile;
+use futures::TryStreamExt;
 use parking_lot::Mutex;
 use regex::Regex;
 use tokio_util::sync::CancellationToken;

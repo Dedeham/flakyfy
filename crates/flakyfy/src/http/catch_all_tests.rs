@@ -2,8 +2,8 @@
 //! for by wiremock.
 
 use axum::http::{HeaderMap, Method};
-use http_body_util::BodyExt;
 use flakyfy_core::settings::{AppSettings, SubsonicSettings};
+use http_body_util::BodyExt;
 use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};

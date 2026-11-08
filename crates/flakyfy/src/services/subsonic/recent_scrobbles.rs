@@ -1,8 +1,8 @@
 use std::collections::{HashSet, VecDeque};
 
 use chrono::{DateTime, TimeDelta, Utc};
-use indexmap::IndexMap;
 use flakyfy_core::common::{Clock, dotnet};
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 
 /// The completed plays each listener reported in the last few minutes, so a play a client sends

@@ -354,7 +354,8 @@ impl ReleaseCheck {
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|left| left == "0");
         if limited {
-            return "GitHub's hourly limit for this address is used up. Flakyfy tries again later.".to_string();
+            return "GitHub's hourly limit for this address is used up. Flakyfy tries again later."
+                .to_string();
         }
         if status == StatusCode::NOT_FOUND {
             return "GitHub has no such repository. Check Updates:Repo.".to_string();

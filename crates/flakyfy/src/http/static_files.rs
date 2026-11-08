@@ -59,7 +59,8 @@ impl StaticRoots {
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf));
-        let repo = cfg!(debug_assertions).then(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../flakyfy"));
+        let repo =
+            cfg!(debug_assertions).then(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../flakyfy"));
         Self::resolve(
             std::env::var(WWWROOT_ENV).ok(),
             std::env::var(ASSETS_ENV).ok(),

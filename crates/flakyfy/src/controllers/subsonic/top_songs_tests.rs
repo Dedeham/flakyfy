@@ -795,7 +795,8 @@ async fn a_pinned_list_row_names_its_country() {
     let h = harness("18", true).await;
     pages_for(&h, "jp").await;
     choose(&h, "alice", "", &["jp"]);
-    let pinned_id = flakyfy_core::library::generated_playlist_service::playlist_id("alice", "chart:popular@jp");
+    let pinned_id =
+        flakyfy_core::library::generated_playlist_service::playlist_id("alice", "chart:popular@jp");
     let opened = top(&h, &format!("getPlaylist?{ALICE}&f=json&id={pinned_id}")).await;
     assert_eq!(opened["playlist"]["name"], "Popular right now · Japan");
     assert!(!opened["playlist"]["entry"].as_array().unwrap().is_empty());

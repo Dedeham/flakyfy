@@ -1035,7 +1035,11 @@ async fn an_outside_song_takes_its_tempo_and_isrc_from_its_own_tags() {
         if let Some(bpm) = bpm {
             file.set_bpm(bpm);
         }
-        flakyfy_media::tags::tag_writer_extras::set_text(&mut file, flakyfy_media::tags::TagFields::ISRC, isrc);
+        flakyfy_media::tags::tag_writer_extras::set_text(
+            &mut file,
+            flakyfy_media::tags::TagFields::ISRC,
+            isrc,
+        );
         file.save().expect("saved");
         path.to_string_lossy().into_owned()
     };

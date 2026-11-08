@@ -66,7 +66,10 @@ impl Dashboard {
             &self.app,
             method,
             path,
-            &[("X-Flakyfy-Admin", "1"), ("X-Flakyfy-Browse-Token", token.as_str())],
+            &[
+                ("X-Flakyfy-Admin", "1"),
+                ("X-Flakyfy-Browse-Token", token.as_str()),
+            ],
             body,
         )
         .await

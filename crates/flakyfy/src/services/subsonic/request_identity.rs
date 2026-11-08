@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use indexmap::IndexMap;
 use flakyfy_core::common::SingleFlight;
+use indexmap::IndexMap;
 use sha2::{Digest, Sha256};
 use tracing::debug;
 

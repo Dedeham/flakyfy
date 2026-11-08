@@ -1,9 +1,9 @@
 //! A play's genre: the song's own tag, else its album's, else the artist's top tags on Last.fm.
 //! Album and artist answers are kept in the listening log's meta file, so each is asked once.
 
-use indexmap::IndexMap;
 use flakyfy_core::json::element::try_get_property;
 use flakyfy_core::last_fm::last_fm_radio_recommendation_service::canonical_tag;
+use indexmap::IndexMap;
 use serde_json::Value;
 use tracing::debug;
 

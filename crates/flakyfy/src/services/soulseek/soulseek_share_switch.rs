@@ -332,10 +332,11 @@ impl SoulseekShareSwitch {
             return state.files == Some(0);
         }
         let shares = self.slskd.read("shares").await;
-        let folders: Vec<_> = flakyfy_core::soulseek::soulseek_sharing::parse_folders(shares.as_deref(), None)
-            .into_iter()
-            .filter(|folder| !folder.excluded)
-            .collect();
+        let folders: Vec<_> =
+            flakyfy_core::soulseek::soulseek_sharing::parse_folders(shares.as_deref(), None)
+                .into_iter()
+                .filter(|folder| !folder.excluded)
+                .collect();
         !folders.is_empty() && folders.iter().all(|folder| folder.files.is_some())
     }
 

@@ -3,10 +3,10 @@
 //! keeps what is saved; one that types onto the end of it is refused; and a saved credential
 //! never follows a server address it was not typed again for.
 
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet::eq_ignore_case;
 use flakyfy_core::json::dom::Node;
 use flakyfy_core::settings::JsonObject;
+use indexmap::IndexMap;
 
 use super::plumbing::{SECRET_PLACEHOLDER, child, child_mut, key_of, mask_secret, n_obj};
 use super::settings::string_value;

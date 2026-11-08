@@ -178,7 +178,10 @@ async fn the_extension_is_listed_once_profiles_are_made() {
         .iter()
         .find(|e| e["name"] == "flakyfyTransitions")
         .cloned();
-    assert_eq!(entry, Some(json!({ "name": "flakyfyTransitions", "versions": [1] })));
+    assert_eq!(
+        entry,
+        Some(json!({ "name": "flakyfyTransitions", "versions": [1] }))
+    );
 }
 
 #[tokio::test]

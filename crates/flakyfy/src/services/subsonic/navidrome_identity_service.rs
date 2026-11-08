@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
-use indexmap::IndexMap;
 use flakyfy_core::settings::SettingsStore;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;

@@ -285,7 +285,11 @@ fn apps_are_grouped_by_name_and_platform_without_versions() {
     let names: Vec<(&str, usize)> = r.apps.iter().map(|a| (a.name.as_str(), a.plays)).collect();
     assert_eq!(
         names,
-        [("Flakyfy for Android", 2), ("Flakyfy for iPhone", 1), ("Symfonium", 1)]
+        [
+            ("Flakyfy for Android", 2),
+            ("Flakyfy for iPhone", 1),
+            ("Symfonium", 1)
+        ]
     );
     assert_eq!(r.apps[0].share, 0.5);
     assert_eq!(app_name("", "unknown"), UNKNOWN_APP);

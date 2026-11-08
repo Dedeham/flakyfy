@@ -12,8 +12,6 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::future::BoxFuture;
-use indexmap::IndexMap;
 use flakyfy_core::common::Clock;
 use flakyfy_core::json::dom::Node;
 use flakyfy_core::last_fm::LastFmTrack;
@@ -21,6 +19,8 @@ use flakyfy_core::last_fm::last_fm_scrobble_service::sign;
 use flakyfy_core::settings::{
     AppSettings, LastFmSettings, LastFmUserSession, SettingsFileWriter, SettingsStore,
 };
+use futures::future::BoxFuture;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tokio::sync::{oneshot, watch};
 

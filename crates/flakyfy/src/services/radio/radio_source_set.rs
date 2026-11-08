@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use indexmap::IndexMap;
 use flakyfy_core::json::datetime;
 use flakyfy_core::radio::radio_blend::{RadioWeights, SOUNDS_ALIKE_WHEN_UNKNOWN};
 use flakyfy_core::radio::radio_provider::{LAST_FM, LIBRARY, LISTEN_BRAINZ, SOUNDS_ALIKE, YOU_TUBE_MUSIC};
 use flakyfy_core::radio::{RadioAnswer, RadioSeed};
 use flakyfy_core::settings::{RadioSourceSettings, SettingsStore};
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tracing::{info, warn};
 
@@ -291,7 +291,11 @@ mod tests {
                 Behavior::Roads => Ok(RadioAnswer::new(
                     self.provider,
                     RadioMatch::Song,
-                    vec![flakyfy_core::last_fm::SimilarTrack::new("Portishead", "Roads", 1.0)],
+                    vec![flakyfy_core::last_fm::SimilarTrack::new(
+                        "Portishead",
+                        "Roads",
+                        1.0,
+                    )],
                     Vec::new(),
                 )),
             }

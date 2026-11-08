@@ -303,7 +303,8 @@ mod tests {
 
     #[test]
     fn a_missing_path_is_reported_rather_than_throwing() {
-        let missing = std::env::temp_dir().join(format!("flakyfy-not-here-{}", uuid::Uuid::new_v4().simple()));
+        let missing =
+            std::env::temp_dir().join(format!("flakyfy-not-here-{}", uuid::Uuid::new_v4().simple()));
         let result = DirectoryBrowser::new().browse(Some(&s(&missing)));
         assert!(!result.exists);
         assert!(result.entries.is_empty());

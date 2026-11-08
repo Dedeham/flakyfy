@@ -23,8 +23,8 @@
 //!
 //!   Body values override query values; an overridden key keeps its first place.
 
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet;
+use indexmap::IndexMap;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 /// The parameter dictionary: keys compared ordinally, insertion order kept, and an overwrite

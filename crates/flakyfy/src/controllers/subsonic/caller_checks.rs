@@ -306,7 +306,9 @@ pub(crate) fn is_first_byte_request(method: &str, range: Option<&str>) -> bool {
         && match range {
             None => true,
             Some(range) if flakyfy_core::common::dotnet::is_blank(range) => true,
-            Some(range) => flakyfy_core::common::dotnet::starts_with_ignore_case(range.trim_start(), "bytes=0-"),
+            Some(range) => {
+                flakyfy_core::common::dotnet::starts_with_ignore_case(range.trim_start(), "bytes=0-")
+            }
         }
 }
 

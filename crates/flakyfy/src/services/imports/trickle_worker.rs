@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::future::BoxFuture;
 use flakyfy_core::common::Clock;
 use flakyfy_core::common::acquisition_tracker::user_safe;
 use flakyfy_core::common::dotnet::{eq_ignore_case, to_lower_invariant};
 use flakyfy_core::settings::{HeartDownloadSource, SettingsStore};
 use flakyfy_core::soulseek::soulseek_link::SoulseekLinkState;
 use flakyfy_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;

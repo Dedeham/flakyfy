@@ -267,7 +267,10 @@ fn the_fixture_round_trips_byte_for_byte() {
             .as_ref()
             .is_some_and(|r| r.version.as_deref() == Some("clean"))
     }));
-    assert_eq!(flakyfy_core::json::to_string(&entries), text.trim_end_matches('\n'));
+    assert_eq!(
+        flakyfy_core::json::to_string(&entries),
+        text.trim_end_matches('\n')
+    );
 }
 
 #[test]

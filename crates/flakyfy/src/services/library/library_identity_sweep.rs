@@ -12,8 +12,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::FutureExt;
-use indexmap::IndexMap;
 use flakyfy_core::common::Clock;
 use flakyfy_core::common::dotnet::{self, is_blank};
 use flakyfy_core::fingerprint::acoust_id_client::AcoustIdRecording;
@@ -29,6 +27,8 @@ use flakyfy_media::tags::TagFile;
 use flakyfy_media::tags::credit_names::StrayAlbumArtists;
 use flakyfy_media::tags::field_names;
 use flakyfy_media::tags::tag_writer_extras::{self as extras, TagFields};
+use futures::FutureExt;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -1188,7 +1188,8 @@ impl LibraryIdentitySweep {
         let mut found: Vec<SweepSong> = songs
             .into_iter()
             .filter(|song| {
-                let text = flakyfy_core::common::SongIdentity::key(&format!("{} {}", song.title, song.artist));
+                let text =
+                    flakyfy_core::common::SongIdentity::key(&format!("{} {}", song.title, song.artist));
                 words.iter().all(|word| text.contains(word.as_str()))
             })
             .collect();

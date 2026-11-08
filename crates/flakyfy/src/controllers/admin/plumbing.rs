@@ -324,7 +324,10 @@ mod tests {
             header::COOKIE,
             HeaderValue::from_static("a=1; flakyfy_browse=AB%2BC; flakyfy_browse=x"),
         );
-        assert_eq!(request_cookie(&headers, "flakyfy_browse").as_deref(), Some("AB+C"));
+        assert_eq!(
+            request_cookie(&headers, "flakyfy_browse").as_deref(),
+            Some("AB+C")
+        );
         assert_eq!(request_cookie(&headers, "missing"), None);
     }
 

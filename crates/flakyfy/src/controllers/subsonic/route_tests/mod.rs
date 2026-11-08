@@ -14,10 +14,10 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{HeaderMap, Method, StatusCode};
-use http_body_util::BodyExt;
 use flakyfy_core::models::domain::{Album, Artist, Song};
 use flakyfy_core::models::search::SearchResult;
 use flakyfy_core::models::subsonic::ExternalPlaylist;
+use http_body_util::BodyExt;
 use parking_lot::Mutex;
 use tower::ServiceExt;
 

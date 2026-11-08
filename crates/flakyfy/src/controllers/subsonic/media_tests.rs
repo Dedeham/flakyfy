@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Method, StatusCode};
-use indexmap::IndexMap;
 use flakyfy_core::settings::{AppSettings, GeneratedPlaylistSettings, SubsonicSettings};
 use flakyfy_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
 use flakyfy_subsonic::xml::XElement;
+use indexmap::IndexMap;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request as MockRequest, Respond, ResponseTemplate};

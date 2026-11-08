@@ -5,10 +5,10 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::FutureExt;
 use flakyfy_core::notifications::notification_service::{is_enabled, render, render_for_member};
 use flakyfy_core::notifications::{NotificationEvent, NotificationEventType, NotificationTestResult};
 use flakyfy_core::settings::SettingsStore;
+use futures::FutureExt;
 use tracing::warn;
 
 use super::i_notification_sink::INotificationSink;

@@ -4,9 +4,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet::{self, compare_ordinal_ignore_case, eq_ignore_case};
 use flakyfy_core::settings::DownloadSource;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;

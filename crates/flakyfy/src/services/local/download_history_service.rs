@@ -263,7 +263,9 @@ impl DownloadHistoryService {
     fn save_locked(&self, list: &[DownloadHistoryEntry]) {
         // Written without nulls: a saved log's copies are mostly missing figures, and the file
         // has to stay small enough to read whole.
-        if let Err(e) = state_file::save_atomic(&self.path, &flakyfy_core::json::to_string_without_nulls(list)) {
+        if let Err(e) =
+            state_file::save_atomic(&self.path, &flakyfy_core::json::to_string_without_nulls(list))
+        {
             warn!("Download history save failed: {e}");
         }
     }

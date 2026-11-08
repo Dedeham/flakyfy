@@ -48,9 +48,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use bytes::{Bytes, BytesMut};
 use chrono::Utc;
-use futures::StreamExt;
-use http_body_util::BodyExt;
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet::eq_ignore_case;
 use flakyfy_core::family::codes::subsonic_token;
 use flakyfy_core::family::device::{Device, NetworkPlace, client_origin, decode_device_name};
@@ -59,6 +56,9 @@ use flakyfy_subsonic::SubsonicCredential;
 use flakyfy_subsonic::subsonic_request_parser::{
     Parameters, RequestParts, RequestReading, parse_query, read_request, unescape_data_string,
 };
+use futures::StreamExt;
+use http_body_util::BodyExt;
+use indexmap::IndexMap;
 use serde_json::{Value, json};
 use tracing::{info, warn};
 
@@ -106,7 +106,8 @@ const DEFAULT_WEB_SECONDS: i64 = 48 * 3600;
 const WRONG_SIGN_IN: &str = "Wrong username or password";
 const PAUSED: &str = "This account is paused by the family owner.";
 const NEEDS_REPAIR: &str = "This account needs a repair by the family owner.";
-const MULTIPART_SIGN_IN: &str = "Flakyfy cannot read a sign-in inside a multipart form. Send it in the address.";
+const MULTIPART_SIGN_IN: &str =
+    "Flakyfy cannot read a sign-in inside a multipart form. Send it in the address.";
 const UNREADABLE: &str = "Flakyfy could not read this request.";
 const WEB_DEVICE_NAME: &str = "Navidrome in a browser";
 
@@ -717,7 +718,12 @@ async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts, gate_p
             if let Some(member) = subjects.iter().find_map(|user| state.family_store.member(user)) {
                 let keys = try_keys(&state, &request.at, &member.username);
                 state.family_bridge.throttle.failed_by(&keys);
-                log_refusal(&state, &member.username, &request.at, "a token Flakyfy did not sign");
+                log_refusal(
+                    &state,
+                    &member.username,
+                    &request.at,
+                    "a token Flakyfy did not sign",
+                );
                 return subsonic_error(&state, &request.format, 40, WRONG_SIGN_IN);
             }
             if let [user] = subjects.as_slice() {

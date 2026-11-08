@@ -214,15 +214,24 @@ mod tests {
 
     #[test]
     fn owner_devices_are_detected_by_device_header() {
-        let phone = detected_device_id("winters", &sighting(Some("uuid-1"), "Flakyfy", "Flakyfy/1.6 (Android)"));
+        let phone = detected_device_id(
+            "winters",
+            &sighting(Some("uuid-1"), "Flakyfy", "Flakyfy/1.6 (Android)"),
+        );
         // The same install after an update, and whatever it says as c.
         assert_eq!(
             phone,
-            detected_device_id("Winters", &sighting(Some("uuid-1"), "flakyfy", "Flakyfy/1.7 (Android)"))
+            detected_device_id(
+                "Winters",
+                &sighting(Some("uuid-1"), "flakyfy", "Flakyfy/1.7 (Android)")
+            )
         );
         assert_ne!(
             phone,
-            detected_device_id("winters", &sighting(Some("uuid-2"), "Flakyfy", "Flakyfy/1.6 (Android)"))
+            detected_device_id(
+                "winters",
+                &sighting(Some("uuid-2"), "Flakyfy", "Flakyfy/1.6 (Android)")
+            )
         );
         // Without the header: client, app and Navidrome's client id tell devices apart, and a
         // version change does not.

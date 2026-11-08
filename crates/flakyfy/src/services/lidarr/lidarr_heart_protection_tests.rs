@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use futures::FutureExt;
 use flakyfy_core::models::domain::{Album, Song};
 use flakyfy_core::models::download::DownloadInfo;
 use flakyfy_core::settings::{
@@ -18,6 +17,7 @@ use flakyfy_core::settings::{
     LidarrSettings, SettingsStore, SubsonicSettings,
 };
 use flakyfy_core::soulseek::{RoutingKind, SoulseekRouting};
+use futures::FutureExt;
 use parking_lot::Mutex;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;

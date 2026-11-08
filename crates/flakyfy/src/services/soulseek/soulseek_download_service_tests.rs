@@ -8,7 +8,9 @@ use std::time::Duration;
 use chrono::Utc;
 use flakyfy_core::fingerprint::{AcoustIdLookup, AcoustIdRecording, AcoustIdResult};
 use flakyfy_core::models::domain::{Album, Song};
-use flakyfy_core::settings::{AppSettings, DownloadSource, SettingsStore, SoulseekSettings, SubsonicSettings};
+use flakyfy_core::settings::{
+    AppSettings, DownloadSource, SettingsStore, SoulseekSettings, SubsonicSettings,
+};
 use flakyfy_core::soulseek::{RoutingKind, SoulseekFileHit, SoulseekRouting};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -1108,7 +1110,10 @@ async fn a_whole_folder_is_one_search_and_one_batch_and_every_song_lands() {
     let (user, files, destination) = &batches[0];
     assert_eq!(user, "albumpeer");
     assert_eq!(files.len(), 4);
-    assert!(destination.starts_with(".flakyfy-incoming/slskd/"), "{destination}");
+    assert!(
+        destination.starts_with(".flakyfy-incoming/slskd/"),
+        "{destination}"
+    );
     assert_eq!(placed_flacs(&root), 4);
 }
 

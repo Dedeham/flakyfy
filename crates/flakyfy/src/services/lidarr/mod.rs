@@ -11,6 +11,11 @@ pub mod lidarr_track_fetcher;
 #[cfg(test)]
 pub(crate) mod fake_lidarr;
 
+pub use flakyfy_core::lidarr::{
+    LidarrAlbumCandidate, LidarrAlbumImportState, LidarrAlbumState, LidarrChoice, LidarrError,
+    LidarrImportedTrack, LidarrOptions, LidarrRelease, LidarrReleasePick, LidarrRootFolder,
+    LidarrSearchStarted, LidarrStep, LidarrTrackRequest,
+};
 pub use lidarr_album_claims::LidarrAlbumClaims;
 pub use lidarr_client::LidarrClient;
 pub use lidarr_heart_acquisition_service::{
@@ -20,8 +25,3 @@ pub use lidarr_heart_acquisition_service::{
 pub use lidarr_import_handoff::{LidarrImport, LidarrImportHandoff};
 pub use lidarr_pending_albums::{LidarrPendingAlbums, PendingAlbum};
 pub use lidarr_track_fetcher::{ILidarrTrackFetcher, LidarrTrackFetcher};
-pub use flakyfy_core::lidarr::{
-    LidarrAlbumCandidate, LidarrAlbumImportState, LidarrAlbumState, LidarrChoice, LidarrError,
-    LidarrImportedTrack, LidarrOptions, LidarrRelease, LidarrReleasePick, LidarrRootFolder,
-    LidarrSearchStarted, LidarrStep, LidarrTrackRequest,
-};

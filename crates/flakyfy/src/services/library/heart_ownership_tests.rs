@@ -6,8 +6,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::FutureExt;
-use indexmap::IndexMap;
 use flakyfy_core::common::Clock;
 use flakyfy_core::models::domain::{Album, Song};
 use flakyfy_core::settings::{
@@ -15,6 +13,8 @@ use flakyfy_core::settings::{
     LibraryActionDefinition, LibraryActionSettings, SettingsStore, SoulseekSettings, SubsonicSettings,
 };
 use flakyfy_subsonic::SubsonicCredential;
+use futures::FutureExt;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 

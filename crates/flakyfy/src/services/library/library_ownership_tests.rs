@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use futures::FutureExt;
 use flakyfy_core::settings::{AppSettings, SettingsStore, SubsonicSettings};
+use futures::FutureExt;
 use wiremock::matchers::{path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

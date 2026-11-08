@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
-use futures::FutureExt;
 use flakyfy_core::common::Clock;
 use flakyfy_core::lidarr::{LidarrRelease, LidarrReleasePick};
 use flakyfy_core::lyrics::{LyricsResult, SongLyricsPlace};
@@ -15,6 +14,7 @@ use flakyfy_core::models::download::AcquisitionCandidate;
 use flakyfy_core::models::download::acquisition_event::quality_text;
 use flakyfy_core::settings::{DownloadSource, SoulseekSettings};
 use flakyfy_core::soulseek::SoulseekFileHit;
+use futures::FutureExt;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 

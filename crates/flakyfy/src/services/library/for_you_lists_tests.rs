@@ -12,7 +12,6 @@ use axum::extract::{RawQuery, State};
 use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use chrono::{TimeDelta, Utc};
-use indexmap::IndexMap;
 use flakyfy_core::json::dom::Node;
 use flakyfy_core::library::for_you_lists::{self as lists, TopArtist};
 use flakyfy_core::library::generated_playlist_service::str_of;
@@ -21,6 +20,7 @@ use flakyfy_core::settings::{
 };
 use flakyfy_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
 use flakyfy_subsonic::subsonic_response_builder::SubsonicResponseBuilder;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tempfile::TempDir;
 use tokio::sync::watch;

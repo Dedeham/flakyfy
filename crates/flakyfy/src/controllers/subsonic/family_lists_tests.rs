@@ -1426,7 +1426,10 @@ async fn a_held_addition_is_a_request_approving_adds_it_and_declining_drops_it()
     .await;
     assert!(titled, "{:?}", requests.for_user("sam"));
     let asked = requests.for_user("sam").pop().expect("a request");
-    assert_eq!(asked.kind, flakyfy_core::family::request::RequestKind::PlaylistAdd);
+    assert_eq!(
+        asked.kind,
+        flakyfy_core::family::request::RequestKind::PlaylistAdd
+    );
     assert_eq!(asked.state, flakyfy_core::family::request::RequestState::Pending);
     assert_eq!(asked.note, "For the family playlist Road trip");
     assert_eq!(

@@ -10,12 +10,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use futures::FutureExt;
-use futures::future::BoxFuture;
 use flakyfy_core::common::Clock;
 use flakyfy_core::common::acquisition_tracker::{fraction_of, user_safe};
 use flakyfy_core::common::dotnet::{self, compare_ordinal_ignore_case, eq_ignore_case, to_lower_invariant};
 use flakyfy_core::models::download::{AcquisitionCandidate, AcquisitionEvent, AcquisitionHeard};
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use tracing::{debug, info};
 

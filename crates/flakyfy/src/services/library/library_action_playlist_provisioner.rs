@@ -10,9 +10,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet;
 use flakyfy_core::settings::SettingsStore;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tracing::{info, warn};
 

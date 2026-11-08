@@ -573,7 +573,8 @@ impl CoverUpgradeJournal {
                 hash = Some(name);
             }
             let line =
-                flakyfy_core::json::to_string(&CoverUpgradeJournalEntry::new(path, kind, hash, run_id)) + "\n";
+                flakyfy_core::json::to_string(&CoverUpgradeJournalEntry::new(path, kind, hash, run_id))
+                    + "\n";
             let _guard = self.lock.lock();
             std::fs::OpenOptions::new()
                 .create(true)

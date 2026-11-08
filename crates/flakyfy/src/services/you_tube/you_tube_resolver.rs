@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::future::{BoxFuture, Shared};
 use flakyfy_core::settings::SettingsStore;
 use flakyfy_core::soulseek::{SoulseekRouting, StreamFacts};
+use futures::future::{BoxFuture, Shared};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 use tokio::sync::Semaphore;

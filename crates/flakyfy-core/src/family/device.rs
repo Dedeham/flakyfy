@@ -317,8 +317,14 @@ mod tests {
 
     #[test]
     fn flakyfy_android_label() {
-        assert_eq!(app_label("Flakyfy", "Flakyfy/1.6 (Android)"), "Flakyfy 1.6 (Android)");
-        assert_eq!(app_label("Flakyfy", "Flakyfy/1.6.2 (Windows)"), "Flakyfy 1.6.2 (Windows)");
+        assert_eq!(
+            app_label("Flakyfy", "Flakyfy/1.6 (Android)"),
+            "Flakyfy 1.6 (Android)"
+        );
+        assert_eq!(
+            app_label("Flakyfy", "Flakyfy/1.6.2 (Windows)"),
+            "Flakyfy 1.6.2 (Windows)"
+        );
         assert_eq!(app_label("Flakyfy", "okhttp/4.12.0"), "Flakyfy");
     }
 

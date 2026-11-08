@@ -4,9 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use indexmap::IndexMap;
 use flakyfy_core::common::dotnet::{eq_ignore_case, is_blank, to_lower_invariant};
 use flakyfy_core::common::song_identity::SongIdentity;
+use indexmap::IndexMap;
 
 use super::health_words::{self as words, count_text};
 use super::keep_marks::{INTO, TargetReason, UNRATED_ONLY};

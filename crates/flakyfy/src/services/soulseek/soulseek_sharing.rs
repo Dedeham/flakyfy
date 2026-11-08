@@ -176,8 +176,9 @@ impl SoulseekPortCheck {
                     state,
                     Some(port),
                     Some(self.clock.now()),
-                    (state == PortState::Unknown)
-                        .then(|| "Soulseek's port test gave an answer Flakyfy does not understand.".to_string()),
+                    (state == PortState::Unknown).then(|| {
+                        "Soulseek's port test gave an answer Flakyfy does not understand.".to_string()
+                    }),
                 )
             }
             Err(e) => {

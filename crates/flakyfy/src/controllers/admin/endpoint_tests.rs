@@ -7,12 +7,12 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use http_body_util::BodyExt;
 use flakyfy_core::common::Clock;
 use flakyfy_core::lyrics::{LyricsLibraryMode, LyricsLibraryRow, LyricsLibraryRun, LyricsLibraryStatus};
 use flakyfy_core::settings::{
     AppSettings, LibraryAction, LibraryActionDefinition, LibraryActionSettings, SoulseekSettings,
 };
+use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use wiremock::matchers::{method, path};
@@ -1246,9 +1246,9 @@ async fn ignored_ratings_list_the_reason_behind_the_session() {
 #[tokio::test]
 async fn the_list_carries_what_the_page_filters_on() {
     use chrono::{TimeZone, Utc};
-    use futures::FutureExt;
     use flakyfy_core::models::download::acquisition_event::acquisition_event_kinds;
     use flakyfy_core::models::download::{AcquisitionEvent, DownloadHistoryEntry};
+    use futures::FutureExt;
 
     use crate::services::library::library_identity_sweep::CheckedSong;
     use crate::services::library::quality_upgrade_worker::LibrarySongRow;

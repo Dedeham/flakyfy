@@ -6,12 +6,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use flate2::read::ZlibDecoder;
 use flakyfy_core::common::dotnet::{is_null_or_white_space, utf16_len};
 use flakyfy_core::lyrics::{
     ILyricsSource, LyricLine, LyricWord, LyricsCandidate, LyricsIdentity, LyricsLookup, LyricsQuery,
     LyricsResult, LyricsSearch, LyricsText,
 };
+use flate2::read::ZlibDecoder;
 use parking_lot::Mutex;
 use regex::Regex;
 use reqwest::StatusCode;

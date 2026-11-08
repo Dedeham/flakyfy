@@ -4,12 +4,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::FutureExt;
 use flakyfy_core::models::download::AcquisitionCandidate;
 use flakyfy_core::settings::{
     AppSettings, LibraryAction, LibraryActionDefinition, LibraryActionSettings, SettingsStore,
     SoulseekSettings,
 };
+use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 
 use super::download_log_tests::upgrade_worker;

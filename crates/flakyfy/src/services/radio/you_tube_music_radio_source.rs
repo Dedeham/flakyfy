@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use indexmap::IndexMap;
 use flakyfy_core::common::SongIdentity;
 use flakyfy_core::common::song_identity::SongRef;
 use flakyfy_core::last_fm::SimilarTrack;
@@ -14,6 +13,7 @@ use flakyfy_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use flakyfy_core::radio::radio_provider::YOU_TUBE_MUSIC;
 use flakyfy_core::radio::{RadioAnswer, RadioMatch, RadioSeed};
 use flakyfy_core::settings::SettingsStore;
+use indexmap::IndexMap;
 
 use super::radio_source::IRadioSource;
 use crate::services::framework::MemoryCache;

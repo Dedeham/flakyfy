@@ -229,8 +229,11 @@ pub fn build(
         warnings.push(SharingWarning::new("switch", problem.clone()));
     }
     // Sharing off by choice is a choice: the card says so plainly, and it is not a warning.
-    let off_by_choice =
-        !share_switch.on && matches!(share_switch.control, ShareControl::Flakyfy | ShareControl::Unknown);
+    let off_by_choice = !share_switch.on
+        && matches!(
+            share_switch.control,
+            ShareControl::Flakyfy | ShareControl::Unknown
+        );
     if shared.is_empty() && options_json.is_some() && !off_by_choice && share_switch.problem.is_none() {
         warnings.push(SharingWarning::new(
             "nothingShared",

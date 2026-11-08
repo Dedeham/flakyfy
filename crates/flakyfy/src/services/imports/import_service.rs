@@ -6,11 +6,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use indexmap::IndexMap;
 use flakyfy_core::common::Clock;
 use flakyfy_core::common::acquisition_tracker::user_safe;
 use flakyfy_core::common::dotnet::{eq_ignore_case, ordinal_ignore_case_key, to_lower_invariant};
 use flakyfy_core::settings::SettingsStore;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -749,7 +749,8 @@ impl ImportService {
         // already there.
         if on && list.matched_utc.is_none() {
             return ImportActionResult::failed(self.matcher.problem().unwrap_or_else(|| {
-                "Flakyfy has not checked this list against your library yet. Try again in a moment.".to_string()
+                "Flakyfy has not checked this list against your library yet. Try again in a moment."
+                    .to_string()
             }));
         }
         self.store.update(user, id, |l| l.get_missing = on);

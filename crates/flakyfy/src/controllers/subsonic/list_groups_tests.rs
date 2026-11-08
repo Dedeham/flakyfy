@@ -201,7 +201,10 @@ async fn every_flakyfy_list_row_says_its_group_in_json_and_xml() {
             .split("<playlist ")
             .find(|row| row.contains(&format!(r#"name="{name}""#)))
             .unwrap_or_else(|| panic!("{name} in {xml}"));
-        assert!(row.contains(&format!(r#"flakyfyGroup="{group}""#)), "{name}: {row}");
+        assert!(
+            row.contains(&format!(r#"flakyfyGroup="{group}""#)),
+            "{name}: {row}"
+        );
     }
 }
 
@@ -241,6 +244,9 @@ async fn get_playlist_carries_the_group_of_a_year_and_an_artist_mix() {
         let xml = get(&app, &format!("/rest/getPlaylist.view?{AUTH}&id={id}"))
             .await
             .text();
-        assert!(xml.contains(&format!(r#"flakyfyGroup="{group}""#)), "{name}: {xml}");
+        assert!(
+            xml.contains(&format!(r#"flakyfyGroup="{group}""#)),
+            "{name}: {xml}"
+        );
     }
 }

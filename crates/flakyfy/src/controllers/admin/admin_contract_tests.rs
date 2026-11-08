@@ -587,7 +587,10 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         &app,
         Method::GET,
         "/api/admin/browse?path=/",
-        &[("Cookie", "flakyfy_browse=stale"), ("X-Flakyfy-Browse-Token", &token)],
+        &[
+            ("Cookie", "flakyfy_browse=stale"),
+            ("X-Flakyfy-Browse-Token", &token),
+        ],
         None,
     )
     .await;

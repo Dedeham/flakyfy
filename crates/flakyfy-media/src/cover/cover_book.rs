@@ -218,8 +218,8 @@ impl CoverBook {
     /// Reads a design, a background library and (optionally) the genre and decade hues. Field
     /// names are matched ignoring case and numbers may be written as strings.
     pub fn parse(design: &str, library: &str, list_hues: Option<&str>) -> anyhow::Result<CoverBook> {
-        let document: Document =
-            flakyfy_core::json::web::from_slice(design.as_bytes()).context("the cover design does not parse")?;
+        let document: Document = flakyfy_core::json::web::from_slice(design.as_bytes())
+            .context("the cover design does not parse")?;
         let library: Library = flakyfy_core::json::web::from_slice(library.as_bytes())
             .context("the cover library does not parse")?;
         let hues: Option<HueDocument> = match list_hues {

@@ -566,7 +566,10 @@ async fn a_job_that_never_ends_times_out_and_is_cancelled() {
 
     let error = fetch.acquire().await.expect_err("timed out");
 
-    assert!(error.to_string().contains("so Flakyfy stopped waiting"), "{error}");
+    assert!(
+        error.to_string().contains("so Flakyfy stopped waiting"),
+        "{error}"
+    );
     assert_eq!(
         fetch.spotiflac_events().last().map(String::as_str),
         Some("spotiflac cancel")

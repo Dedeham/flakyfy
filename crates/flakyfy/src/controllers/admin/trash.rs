@@ -99,8 +99,10 @@ struct RestoreRequest {
 }
 
 impl FromBody for RestoreRequest {
-    const SHAPE: &'static Shape =
-        text_record!("Flakyfy.Controllers.AdminDownloadsController+RestoreRequest", "id");
+    const SHAPE: &'static Shape = text_record!(
+        "Flakyfy.Controllers.AdminDownloadsController+RestoreRequest",
+        "id"
+    );
 }
 
 /// Puts a removed song back where it was, with its own files, as the signed-in admin.

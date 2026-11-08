@@ -1505,7 +1505,10 @@ async fn the_downloads_log_says_what_came_off_the_peers_tags_and_whether_the_son
         external_id: Some("1".into()),
         ..money_trees()
     };
-    let tracker = Arc::new(AcquisitionTracker::new(None, flakyfy_core::common::Clock::system()));
+    let tracker = Arc::new(AcquisitionTracker::new(
+        None,
+        flakyfy_core::common::Clock::system(),
+    ));
     let tagging = build_with(
         vec![("1", song)],
         serve(money_trees_routes()).await,
@@ -1559,7 +1562,10 @@ async fn a_flac_named_mp3_is_renamed_before_tagging_and_the_log_and_report_say_s
         external_id: Some("1".into()),
         ..teardrop()
     };
-    let tracker = Arc::new(AcquisitionTracker::new(None, flakyfy_core::common::Clock::system()));
+    let tracker = Arc::new(AcquisitionTracker::new(
+        None,
+        flakyfy_core::common::Clock::system(),
+    ));
     let tagging = build_with(
         vec![("1", song)],
         serve(mezzanine_routes("Mezzanine")).await,

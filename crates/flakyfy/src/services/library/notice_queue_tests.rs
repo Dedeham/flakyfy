@@ -692,7 +692,11 @@ fn a_queue_file_with_a_replaced_note_loads_in_the_2026_10_13_entry() {
     assert_eq!(before[1].state, NoticeState::Acted);
     assert_eq!(before[1].cause, InconclusiveReason::SoundsLikeAnother);
     assert_eq!(before[1].origin, NoticeOrigin::LibrarySweep);
-    assert!(before[1].reason.starts_with("Flakyfy replaced this: AcoustID heard"));
+    assert!(
+        before[1]
+            .reason
+            .starts_with("Flakyfy replaced this: AcoustID heard")
+    );
 
     let again = NoticeQueue::with_path(Some(path.clone()));
     assert_eq!(only(&again, "bob").state, NoticeState::Acted);

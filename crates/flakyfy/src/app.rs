@@ -29,7 +29,9 @@ use std::time::Duration;
 use flakyfy_core::common::Clock;
 use flakyfy_core::places::PlaceIndex;
 use flakyfy_core::settings::{AppSettings, RestartTracker, SettingsFileWriter, SettingsStore};
-use flakyfy_core::tagging::{CatalogLookup, FingerprintVerifier, ReleaseIdentifier, ReleaseLookup, TagPreview};
+use flakyfy_core::tagging::{
+    CatalogLookup, FingerprintVerifier, ReleaseIdentifier, ReleaseLookup, TagPreview,
+};
 use flakyfy_media::audio::{AudioFingerprinter, ILoudnessMeter, LoudnessMeter, SpectrumAnalyzer};
 use flakyfy_media::tags::TagWriterExtras;
 use flakyfy_subsonic::SubsonicResponseBuilder;

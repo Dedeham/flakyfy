@@ -7,8 +7,8 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use http_body_util::BodyExt;
 use flakyfy_core::settings::AppSettings;
+use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 use super::*;

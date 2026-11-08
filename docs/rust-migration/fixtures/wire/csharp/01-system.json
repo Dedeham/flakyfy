@@ -902,7 +902,7 @@
    "headers": [
     [
      "Content-Length",
-     "520"
+     "526"
     ],
     [
      "Content-Type",
@@ -919,8 +919,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 520,
-    "sha256": "2595a53cabf31ecb083c0bec459dadb031d0342d174799fe803cb9fa10329bff",
+    "size": 526,
+    "sha256": "a626694b2de4047fbc635e3011eb5391174184b0b98c38a7664998e061ec3786",
     "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"navidrome\",\"serverVersion\":\"0.64.2 (10114574)\",\"openSubsonic\":true,\"openSubsonicExtensions\":[{\"name\":\"transcodeOffset\",\"versions\":[1]},{\"name\":\"formPost\",\"versions\":[1]},{\"name\":\"songLyrics\",\"versions\":[1,2]},{\"name\":\"indexBasedQueue\",\"versions\":[1]},{\"name\":\"transcoding\",\"versions\":[1]},{\"name\":\"playbackReport\",\"versions\":[1]},{\"name\":\"topSongsByArtistId\",\"versions\":[1]},{\"name\":\"flakyfyAcquisitions\",\"versions\":[1]},{\"name\":\"flakyfyLyrics\",\"versions\":[1]}]}}"
    }
   },
@@ -937,7 +937,7 @@
    "headers": [
     [
      "Content-Length",
-     "1130"
+     "1136"
     ],
     [
      "Content-Type",
@@ -954,8 +954,8 @@
    ],
    "body": {
     "kind": "xml",
-    "size": 1130,
-    "sha256": "f3710e4e593d923e79a22772d7f210948feddc883efc2a910c413e0b03b1af50",
+    "size": 1136,
+    "sha256": "eb9079ba236f69d497452b572796334b3d066c1fb8255f2c77efee0c5d846195",
     "text": "<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"ok\" version=\"1.16.1\" type=\"navidrome\" serverVersion=\"0.64.2 (10114574)\" openSubsonic=\"true\">\n  <openSubsonicExtensions name=\"transcodeOffset\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"formPost\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"songLyrics\">\n    <versions>1</versions>\n    <versions>2</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"indexBasedQueue\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"transcoding\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"playbackReport\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"topSongsByArtistId\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"flakyfyAcquisitions\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"flakyfyLyrics\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n</subsonic-response>"
    }
   },
@@ -972,7 +972,7 @@
    "headers": [
     [
      "Content-Length",
-     "520"
+     "526"
     ],
     [
      "Content-Type",
@@ -989,8 +989,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 520,
-    "sha256": "2595a53cabf31ecb083c0bec459dadb031d0342d174799fe803cb9fa10329bff",
+    "size": 526,
+    "sha256": "a626694b2de4047fbc635e3011eb5391174184b0b98c38a7664998e061ec3786",
     "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"navidrome\",\"serverVersion\":\"0.64.2 (10114574)\",\"openSubsonic\":true,\"openSubsonicExtensions\":[{\"name\":\"transcodeOffset\",\"versions\":[1]},{\"name\":\"formPost\",\"versions\":[1]},{\"name\":\"songLyrics\",\"versions\":[1,2]},{\"name\":\"indexBasedQueue\",\"versions\":[1]},{\"name\":\"transcoding\",\"versions\":[1]},{\"name\":\"playbackReport\",\"versions\":[1]},{\"name\":\"topSongsByArtistId\",\"versions\":[1]},{\"name\":\"flakyfyAcquisitions\",\"versions\":[1]},{\"name\":\"flakyfyLyrics\",\"versions\":[1]}]}}"
    }
   },
@@ -1007,7 +1007,7 @@
    "headers": [
     [
      "Content-Length",
-     "1130"
+     "1136"
     ],
     [
      "Content-Type",
@@ -1024,8 +1024,8 @@
    ],
    "body": {
     "kind": "xml",
-    "size": 1130,
-    "sha256": "f3710e4e593d923e79a22772d7f210948feddc883efc2a910c413e0b03b1af50",
+    "size": 1136,
+    "sha256": "eb9079ba236f69d497452b572796334b3d066c1fb8255f2c77efee0c5d846195",
     "text": "<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"ok\" version=\"1.16.1\" type=\"navidrome\" serverVersion=\"0.64.2 (10114574)\" openSubsonic=\"true\">\n  <openSubsonicExtensions name=\"transcodeOffset\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"formPost\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"songLyrics\">\n    <versions>1</versions>\n    <versions>2</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"indexBasedQueue\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"transcoding\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"playbackReport\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"topSongsByArtistId\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"flakyfyAcquisitions\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n  <openSubsonicExtensions name=\"flakyfyLyrics\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n</subsonic-response>"
    }
   },

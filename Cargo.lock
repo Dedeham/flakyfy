@@ -650,6 +650,151 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
+name = "flakyfy"
+version = "2026.10.5"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "brotli",
+ "bytes",
+ "chacha20poly1305",
+ "chrono",
+ "flakyfy-core",
+ "flakyfy-media",
+ "flakyfy-subsonic",
+ "flate2",
+ "futures",
+ "hex",
+ "http",
+ "http-body-util",
+ "httpdate",
+ "if-addrs",
+ "image",
+ "indexmap",
+ "insta",
+ "ipnet",
+ "lofty",
+ "md-5",
+ "mime_guess",
+ "parking_lot",
+ "percent-encoding",
+ "rand",
+ "regex",
+ "reqwest",
+ "rustix",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "url",
+ "uuid",
+ "wiremock",
+ "zip",
+]
+
+[[package]]
+name = "flakyfy-core"
+version = "2026.10.5"
+dependencies = [
+ "any_ascii",
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "base64 0.23.1",
+ "chrono",
+ "flate2",
+ "futures",
+ "hex",
+ "http",
+ "indexmap",
+ "insta",
+ "ipnet",
+ "md-5",
+ "notify",
+ "parking_lot",
+ "percent-encoding",
+ "rand",
+ "rapidfuzz",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "unicode-general-category",
+ "unicode-normalization",
+ "unicode-script",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "flakyfy-media"
+version = "2026.10.5"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cosmic-text",
+ "flakyfy-core",
+ "image",
+ "indexmap",
+ "lofty",
+ "parking_lot",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tiny-skia",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "unicode-general-category",
+ "unicode-normalization",
+ "unicode-script",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "flakyfy-subsonic"
+version = "2026.10.5"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "flakyfy-core",
+ "hex",
+ "indexmap",
+ "insta",
+ "md-5",
+ "percent-encoding",
+ "quick-xml",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1621,151 +1766,6 @@ checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
 dependencies = [
  "hermit-abi",
  "libc",
-]
-
-[[package]]
-name = "flakyfy"
-version = "2026.10.5"
-dependencies = [
- "anyhow",
- "arc-swap",
- "async-trait",
- "axum",
- "base64 0.23.1",
- "brotli",
- "bytes",
- "chacha20poly1305",
- "chrono",
- "flate2",
- "futures",
- "hex",
- "http",
- "http-body-util",
- "httpdate",
- "if-addrs",
- "image",
- "indexmap",
- "insta",
- "ipnet",
- "lofty",
- "md-5",
- "mime_guess",
- "flakyfy-core",
- "flakyfy-media",
- "flakyfy-subsonic",
- "parking_lot",
- "percent-encoding",
- "rand",
- "regex",
- "reqwest",
- "rustix",
- "serde",
- "serde_json",
- "serde_repr",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tower",
- "tower-http 0.7.1",
- "tracing",
- "tracing-subscriber",
- "unicode-normalization",
- "url",
- "uuid",
- "wiremock",
- "zip",
-]
-
-[[package]]
-name = "flakyfy-core"
-version = "2026.10.5"
-dependencies = [
- "any_ascii",
- "anyhow",
- "arc-swap",
- "async-trait",
- "base64 0.23.1",
- "chrono",
- "flate2",
- "futures",
- "hex",
- "http",
- "indexmap",
- "insta",
- "ipnet",
- "md-5",
- "notify",
- "parking_lot",
- "percent-encoding",
- "rand",
- "rapidfuzz",
- "regex",
- "serde",
- "serde_json",
- "serde_repr",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "unicode-general-category",
- "unicode-normalization",
- "unicode-script",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "flakyfy-media"
-version = "2026.10.5"
-dependencies = [
- "anyhow",
- "async-trait",
- "cosmic-text",
- "image",
- "indexmap",
- "lofty",
- "flakyfy-core",
- "parking_lot",
- "regex",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
- "tiny-skia",
- "tokio",
- "tokio-util",
- "tracing",
- "unicode-general-category",
- "unicode-normalization",
- "unicode-script",
- "unicode-segmentation",
-]
-
-[[package]]
-name = "flakyfy-subsonic"
-version = "2026.10.5"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "hex",
- "indexmap",
- "insta",
- "md-5",
- "flakyfy-core",
- "percent-encoding",
- "quick-xml",
- "rand",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tracing",
 ]
 
 [[package]]

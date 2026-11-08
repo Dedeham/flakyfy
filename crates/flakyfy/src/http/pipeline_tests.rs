@@ -564,7 +564,7 @@ async fn static_files_answer_only_get_and_head() {
 
 #[tokio::test]
 async fn the_real_admin_ui_is_served_with_content_hash_etags() {
-    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../flakyfy");
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app");
     let roots = StaticRoots::resolve(None, None, None, Some(&repo));
     let assets = StaticAssets::load(&roots);
     assets.warm_all();
@@ -577,9 +577,8 @@ async fn the_real_admin_ui_is_served_with_content_hash_etags() {
     ] {
         assert!(assets.get(url).is_some(), "{url} missing");
     }
-    // The ETag is the quoted base64 SHA-256 of the file. The dashboard files change with every
-    // release, so their ETags are worked out from the files; the logo does not, so its ETag
-    // stays pinned.
+    // The ETag is the quoted base64 SHA-256 of the file. The dashboard files and the logo
+    // change, so their ETags are worked out from the files.
     let c_sharp_etag = |file: &str| {
         use base64::Engine as _;
         use sha2::Digest as _;
@@ -592,7 +591,7 @@ async fn the_real_admin_ui_is_served_with_content_hash_etags() {
         ("/admin/admin.css", c_sharp_etag("wwwroot/admin/admin.css")),
         (
             "/Assets/flakyfy_logo.png",
-            "\"Qptg3+qU6TXlwlGbzo6M68djiy8XJUt94wGNPAXBs14=\"".to_string(),
+            c_sharp_etag("Assets/flakyfy_logo.png"),
         ),
     ] {
         assert_eq!(assets.get(url).map(|a| a.etag()), Some(etag.as_str()), "{url}");

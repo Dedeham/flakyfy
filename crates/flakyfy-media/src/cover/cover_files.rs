@@ -78,6 +78,19 @@ mod tests {
     }
 
     #[test]
+    fn a_cover_marked_before_the_rename_is_still_its_own() {
+        let mut old = cover_image::mark_as_flakyfy(&jpeg(300));
+        let at = old
+            .windows(18)
+            .position(|w| w == b"Written by Flakyfy")
+            .expect("marked");
+        // The same comment segment as before the rename: "Written by Octo" is three bytes shorter.
+        old.splice(at..at + 18, b"Written by Octo".iter().copied());
+        old[at - 1] -= 3;
+        assert!(cover_image::is_flakyfy_cover(&old));
+    }
+
+    #[test]
     fn writes_only_over_its_own_smaller_cover() {
         let dir = tempfile::tempdir().expect("a temp dir");
         assert!(!should_write(dir.path(), &jpeg(300), false));

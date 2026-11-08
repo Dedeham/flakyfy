@@ -129,9 +129,8 @@ fn run_scenarios(dir: &Path) -> Vec<PathBuf> {
 
         let lyrics = fresh("lyrics");
         let mut file = open(&lyrics);
-        file.set_lyrics(Some(
-            "[re:Flakyfy]\n[00:01.00]Ça va — 東京\n[00:02.50]second line",
-        ));
+        // The reference files were recorded before the rename, with the mark they still carry.
+        file.set_lyrics(Some("[re:Octo]\n[00:01.00]Ça va — 東京\n[00:02.50]second line"));
         save(file);
         let unlyrics = copy(&lyrics, &dir.join(format!("unlyrics.{format}")));
         let mut file = open(&unlyrics);

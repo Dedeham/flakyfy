@@ -886,8 +886,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 52,
-    "sha256": "306b5ae3b0707cdfe7d224c804c6e6df188328dd8d40c4363063eee0b28c2378",
+    "size": 55,
+    "sha256": "c9a89d1d243eac1b2182b9a073ad928f86ccf1da2adc2ec8b8ccea506c6105dc",
     "text": "{\"error\":\"Flakyfy's generated playlists are read-only\"}"
    }
   },

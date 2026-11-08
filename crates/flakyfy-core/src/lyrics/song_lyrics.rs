@@ -10,6 +10,9 @@ use crate::common::dotnet::is_null_or_white_space;
 /// tags. Flakyfy replaces only lyrics that start with it.
 pub const FLAKYFY_MARK: &str = "[re:Flakyfy]";
 
+/// The mark files written before the rename carry (`[re:Octo]`); they still count as Flakyfy's own.
+const LEGACY_MARK: &str = "[re:Octo]";
+
 /// Where a song's lyrics are: nowhere, in a file beside it, or in its own tags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SongLyricsPlace {
@@ -65,10 +68,11 @@ impl SongLyrics {
     }
 
     /// Whether lyrics text (from a song's tags) is Flakyfy's: its first line, byte order mark and
-    /// spaces aside, is [`FLAKYFY_MARK`].
+    /// spaces aside, is [`FLAKYFY_MARK`] (or the mark from before the rename).
     pub fn is_flakyfys_text(text: &str) -> bool {
         let text = text.trim_start_matches('\u{FEFF}');
-        text.split('\n').next().unwrap_or("").trim() == FLAKYFY_MARK
+        let first = text.split('\n').next().unwrap_or("").trim();
+        first == FLAKYFY_MARK || first == LEGACY_MARK
     }
 }
 
@@ -92,6 +96,10 @@ mod tests {
     fn flakyfys_text_starts_with_the_mark() {
         assert!(SongLyrics::is_flakyfys_text("[re:Flakyfy]\n[00:01.00]x"));
         assert!(SongLyrics::is_flakyfys_text("\u{FEFF} [re:Flakyfy] \r\nx"));
+        assert!(
+            SongLyrics::is_flakyfys_text("[re:Octo]\n[00:01.00]x"),
+            "the mark from before the rename"
+        );
         assert!(!SongLyrics::is_flakyfys_text("x\n[re:Flakyfy]"));
         assert!(!SongLyrics::is_flakyfys_text(""));
         assert_eq!(SongLyrics::default(), SongLyrics::NOTHING);

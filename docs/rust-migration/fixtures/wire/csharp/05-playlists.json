@@ -346,8 +346,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 138,
-    "sha256": "177846d6834ee44294d5c683a988e5f52618f000b67693fa98b860cf5c1923ca",
+    "size": 141,
+    "sha256": "e1df565106f6dfb0ab3056d9a5c820d663b16a950ccf9ad6cbaca8a5dfdcae63",
     "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Flakyfy\\u0027s generated playlists are read-only\"}}}"
    }
   },
@@ -364,7 +364,7 @@
    "headers": [
     [
      "Content-Length",
-     "182"
+     "185"
     ],
     [
      "Content-Type",
@@ -381,8 +381,8 @@
    ],
    "body": {
     "kind": "xml",
-    "size": 182,
-    "sha256": "610d713f407c41dc65e1f9232d058ed041cb45de17eb7d122c254c45eb043b35",
+    "size": 185,
+    "sha256": "7e0c640e078c0114b5b875f78c8953db34c2fbd3127ee51d8aec612711327a33",
     "text": "<subsonic-response status=\"failed\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  <error code=\"70\" message=\"Flakyfy's generated playlists are read-only\" />\n</subsonic-response>"
    }
   },
@@ -416,8 +416,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 138,
-    "sha256": "177846d6834ee44294d5c683a988e5f52618f000b67693fa98b860cf5c1923ca",
+    "size": 141,
+    "sha256": "e1df565106f6dfb0ab3056d9a5c820d663b16a950ccf9ad6cbaca8a5dfdcae63",
     "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Flakyfy\\u0027s generated playlists are read-only\"}}}"
    }
   },
@@ -591,8 +591,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 138,
-    "sha256": "177846d6834ee44294d5c683a988e5f52618f000b67693fa98b860cf5c1923ca",
+    "size": 141,
+    "sha256": "e1df565106f6dfb0ab3056d9a5c820d663b16a950ccf9ad6cbaca8a5dfdcae63",
     "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Flakyfy\\u0027s generated playlists are read-only\"}}}"
    }
   },
@@ -609,7 +609,7 @@
    "headers": [
     [
      "Content-Length",
-     "182"
+     "185"
     ],
     [
      "Content-Type",
@@ -626,8 +626,8 @@
    ],
    "body": {
     "kind": "xml",
-    "size": 182,
-    "sha256": "610d713f407c41dc65e1f9232d058ed041cb45de17eb7d122c254c45eb043b35",
+    "size": 185,
+    "sha256": "7e0c640e078c0114b5b875f78c8953db34c2fbd3127ee51d8aec612711327a33",
     "text": "<subsonic-response status=\"failed\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  <error code=\"70\" message=\"Flakyfy's generated playlists are read-only\" />\n</subsonic-response>"
    }
   },

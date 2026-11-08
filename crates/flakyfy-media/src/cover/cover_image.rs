@@ -174,6 +174,9 @@ pub fn detail(bytes: &[u8], side: u32) -> Option<f64> {
 
 const FLAKYFY_MARK: &[u8] = b"Written by Flakyfy";
 
+/// The comment covers written before the rename carry; they still count as Flakyfy's own.
+const LEGACY_MARK: &[u8] = b"Written by Octo";
+
 /// The JPEG with a comment saying Flakyfy wrote it, so a later, sharper cover may replace a
 /// cover.jpg that is Flakyfy's own and never one the owner put there. The comment goes after the
 /// APPn segments, where JFIF readers expect them to stay first. Anything that is not a JPEG
@@ -210,11 +213,8 @@ pub fn is_flakyfy_cover(jpeg: &[u8]) -> bool {
         if length < 2 {
             return false;
         }
-        if jpeg[at + 1] == 0xFE
-            && length - 2 == FLAKYFY_MARK.len()
-            && at + 4 + FLAKYFY_MARK.len() <= jpeg.len()
-            && &jpeg[at + 4..at + 4 + FLAKYFY_MARK.len()] == FLAKYFY_MARK
-        {
+        let comment = jpeg.get(at + 4..at + 2 + length).unwrap_or_default();
+        if jpeg[at + 1] == 0xFE && (comment == FLAKYFY_MARK || comment == LEGACY_MARK) {
             return true;
         }
         at += 2 + length;

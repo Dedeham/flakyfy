@@ -1183,6 +1183,7 @@ Everything that was called `octo` is now `flakyfy`, and nothing answers to the o
 - Rename the `OCTO_*` variables in your `.env` to `FLAKYFY_*` (`OCTO_IMAGE_TAG` is now `FLAKYFY_IMAGE_TAG`), and pull `ghcr.io/dedeham/flakyfy`, `-yt-dlp-shim` and `-sonic` instead of the `winters27/octo` images.
 - Scripts and clients that send `X-Octo-Admin` or `X-Octo-Browse-Token` must send `X-Flakyfy-Admin` and `X-Flakyfy-Browse-Token`.
 - Folders Octo made inside your music library (`.octo-trash`, `.octo-incoming`, `.octo-family`) have to be renamed by hand to `.flakyfy-trash` and so on, or the old contents are ignored.
+- A `places.bin` built by Octo is not read any more (its file header changed). The image build makes a new one; one you built yourself with `flakyfy-places` has to be built again.
 
 ## Acknowledgments
 

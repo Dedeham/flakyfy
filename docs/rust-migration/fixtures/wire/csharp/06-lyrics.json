@@ -591,8 +591,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 361,
-    "sha256": "b7d3f9364e4bc9ee6f9d2ee2c6628acd148e059272c2e0eb8538b74e9b881f31",
+    "size": 364,
+    "sha256": "417f51dcc2822626ec76822a735bdce64cabe7a69703f25c32e8e9e67a1b57cc",
     "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"lyricsCandidates\":{\"id\":\"6TOMTUtoEzhnB8tjXmNY5V\",\"choice\":\"auto\",\"candidate\":[{\"id\":\"lrclib:9001\",\"source\":\"lrclib\",\"title\":\"Polar Night\",\"artist\":\"Aurora Vale\",\"album\":\"Northern Lights\",\"duration\":3,\"kind\":\"line\",\"sameSong\":true,\"chosen\":false,\"preview\":[\"Long dark sky\",\"Stars above\"]}]}}}"
    }
   },
@@ -626,8 +626,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 152,
-    "sha256": "872c0763500ada5b0754d0a39d124ab0f05495af91d6bf8cb8cc813b273400c7",
+    "size": 155,
+    "sha256": "a34eb7ebf97833278638c360103ae80369e7182190e0d08fce7322851a843cc2",
     "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"lyricsCandidates\":{\"id\":\"2A1r2OKTiTVuvPfmtePIIe\",\"choice\":\"auto\",\"candidate\":[]}}}"
    }
   },
@@ -801,8 +801,8 @@
    ],
    "body": {
     "kind": "json",
-    "size": 133,
-    "sha256": "53caf6a784bb04aa152c15cb082dd022a894cc9358735234a953bd440c1ebdd3",
+    "size": 136,
+    "sha256": "70065c39e7e6d76bd4dfbfd1e5ccc932edcccab57f4dab9285b890c01cb85f9e",
     "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"lyricsChoice\":{\"id\":\"doesnotexist000000000x\",\"choice\":\"auto\"}}}"
    }
   },

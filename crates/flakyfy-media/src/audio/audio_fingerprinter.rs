@@ -254,6 +254,59 @@ impl AudioFingerprinter {
         result
     }
 
+    /// [`Self::raw_fingerprint`] of `length_seconds` starting `start_seconds` into the file, so two
+    /// long files can be compared in the middle and at the end, where a remaster or another song
+    /// that shares an intro has parted ways. ffmpeg cuts the window into a temporary WAV, which is
+    /// removed afterwards. Every failure is "no opinion".
+    pub async fn raw_fingerprint_window(
+        &self,
+        path: &Path,
+        start_seconds: i32,
+        length_seconds: i32,
+        timeout_seconds: i32,
+    ) -> Option<RawFingerprint> {
+        if start_seconds <= 0 {
+            return self.raw_fingerprint(path, length_seconds, timeout_seconds).await;
+        }
+        if self.binary_missing.load(Ordering::Relaxed) {
+            return None;
+        }
+        let wav = std::env::temp_dir().join(format!(
+            "octo-window-{}-{}.wav",
+            std::process::id(),
+            SPEED_RUN.fetch_add(1, Ordering::Relaxed)
+        ));
+        let start = start_seconds.to_string();
+        let length = length_seconds.max(1).to_string();
+        let source = path.to_string_lossy();
+        let target = wav.to_string_lossy();
+        let arguments = [
+            "-v", "error", "-nostdin", "-y", "-ss", &start, "-t", &length, "-i", &source, "-vn", "-f", "wav",
+            &target,
+        ];
+        let timeout = Duration::from_secs(timeout_seconds.max(0).unsigned_abs() as u64);
+        let made = match tool::spawn("ffmpeg", &arguments) {
+            Ok(mut child) => match tokio::time::timeout(timeout, tool::collect(&mut child, false)).await {
+                Ok(Ok(run)) => run.exit_code == 0,
+                Ok(Err(_)) | Err(_) => {
+                    tool::kill(&mut child);
+                    false
+                }
+            },
+            Err(error) => {
+                warn!("ffmpeg could not start for a fingerprint window: {error}");
+                false
+            }
+        };
+        let frames = if made {
+            self.raw_fingerprint(&wav, length_seconds, timeout_seconds).await
+        } else {
+            None
+        };
+        let _ = std::fs::remove_file(&wav);
+        frames
+    }
+
     /// fpcalc -json writes one object to stdout: {"duration": 253.14, "fingerprint": "AQADt..."}.
     /// Simpler than the transcoder's stderr scraping, which is why -json is used.
     ///

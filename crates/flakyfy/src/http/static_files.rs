@@ -309,6 +309,8 @@ impl StaticAssets {
         for asset in &self.assets {
             let route = if FAMILY_PAGES.iter().any(|(_, file)| *file == asset.url_path) {
                 Self::serving_family_page(asset.clone())
+            } else if asset.url_path == LOGO_URL {
+                Self::serving_logo(asset.clone())
             } else {
                 Self::serving(asset.clone())
             };
@@ -338,6 +340,26 @@ impl StaticAssets {
         )
     }
 
+    /// The logo: the one the owner uploaded when there is one, else the file Flakyfy comes with.
+    fn serving_logo(asset: Arc<StaticAsset>) -> axum::routing::MethodRouter<crate::app::AppState> {
+        get(
+            move |axum::extract::State(state): axum::extract::State<crate::app::AppState>, req: Request| {
+                let asset = asset.clone();
+                async move {
+                    let covers = state.cover_art_service.clone();
+                    match tokio::task::spawn_blocking(move || covers.custom_logo()).await {
+                        Ok(Some((png, modified))) => {
+                            let custom =
+                                StaticAsset::new(asset.url_path.clone(), asset.content_type, png, modified);
+                            serve(&custom, req.method(), req.headers())
+                        }
+                        _ => serve(&asset, req.method(), req.headers()),
+                    }
+                }
+            },
+        )
+    }
+
     fn serving(asset: Arc<StaticAsset>) -> axum::routing::MethodRouter<crate::app::AppState> {
         get(move |req: Request| {
             let asset = asset.clone();
@@ -345,6 +367,9 @@ impl StaticAssets {
         })
     }
 }
+
+/// The logo's address, the same for the bundled file and an uploaded one.
+const LOGO_URL: &str = "/Assets/flakyfy_logo.png";
 
 /// What the Family pages say while Family is off.
 pub const FAMILY_OFF_PAGE: &str = "<!doctype html>

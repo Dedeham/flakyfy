@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use image::imageops::FilterType;
@@ -25,6 +25,7 @@ use super::cover_glyph::CoverGlyph;
 use super::cover_image;
 use super::cover_layout::{self, CoverSpec};
 use super::cover_painter::{self, CoverArt};
+use super::custom_logo;
 use super::text::{eq_ignore_case, strip_suffix_ignore_case, utf16_len};
 
 /// The kinds of list Flakyfy makes.
@@ -105,7 +106,8 @@ pub(crate) const GENRE_LIGHTNESS: f64 = 0.62;
 
 /// Draws list covers, the placeholder and the Flakyfy badge.
 pub struct CoverArtService {
-    logo: OnceLock<Option<RgbaImage>>,
+    /// None until the logo is first wanted, and again after it changes.
+    logo: Mutex<Option<Option<Arc<RgbaImage>>>>,
     logo_paths: Vec<PathBuf>,
     named_covers: Mutex<HashMap<String, Vec<u8>>>,
     music_memo: Mutex<HashMap<String, (Option<CoverMusic>, Instant)>>,
@@ -126,7 +128,7 @@ impl CoverArtService {
             .and_then(|exe| exe.parent().map(Path::to_path_buf))
             .unwrap_or_default();
         CoverArtService {
-            logo: OnceLock::new(),
+            logo: Mutex::new(None),
             logo_paths: vec![
                 base.join("Assets").join("flakyfy_logo.png"),
                 base.join("wwwroot").join("Assets").join("flakyfy_logo.png"),
@@ -149,46 +151,105 @@ impl CoverArtService {
     /// The same service, looking for the logo at these paths, in order.
     pub fn with_logo_paths(mut self, paths: Vec<PathBuf>) -> CoverArtService {
         self.logo_paths = paths;
-        self.logo = OnceLock::new();
+        self.logo = Mutex::new(None);
         self
     }
 
-    fn flakyfy_logo(&self) -> Option<&RgbaImage> {
-        self.logo
-            .get_or_init(|| {
-                for path in &self.logo_paths {
-                    if !path.is_file() {
-                        continue;
-                    }
-                    match image::open(path) {
-                        Ok(logo) => {
-                            let logo = logo.to_rgba8();
-                            info!(
-                                "Flakyfy logo loaded from {} ({}x{})",
-                                path.display(),
-                                logo.width(),
-                                logo.height()
-                            );
-                            return Some(logo);
-                        }
-                        Err(e) => warn!(error = %e, "Failed to load Flakyfy logo from {}", path.display()),
-                    }
+    /// The uploaded logo's file, in the config folder the covers folder is in.
+    fn custom_logo_path(&self) -> Option<PathBuf> {
+        Some(
+            self.covers_directory
+                .as_ref()?
+                .parent()?
+                .join(custom_logo::FILE_NAME),
+        )
+    }
+
+    /// Whether an uploaded logo is in use.
+    pub fn has_custom_logo(&self) -> bool {
+        self.custom_logo_path().is_some_and(|path| path.is_file())
+    }
+
+    /// The uploaded logo's PNG and when it was saved, when there is one.
+    pub fn custom_logo(&self) -> Option<(Vec<u8>, SystemTime)> {
+        let path = self.custom_logo_path()?;
+        let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+        Some((std::fs::read(&path).ok()?, modified))
+    }
+
+    /// Keeps `png` as the logo, from the next use on.
+    pub fn save_custom_logo(&self, png: &[u8]) -> std::io::Result<()> {
+        let path = self.custom_logo_path().ok_or(std::io::ErrorKind::NotFound)?;
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder)?;
+        }
+        let partial = path.with_extension("png.tmp");
+        std::fs::write(&partial, png)?;
+        std::fs::rename(&partial, &path)?;
+        self.forget_logo();
+        Ok(())
+    }
+
+    /// Goes back to the logo Flakyfy comes with.
+    pub fn remove_custom_logo(&self) -> std::io::Result<()> {
+        if let Some(path) = self.custom_logo_path() {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.forget_logo();
+        Ok(())
+    }
+
+    /// The next badge loads the logo again, and no cover with the old badge is served.
+    fn forget_logo(&self) {
+        *self.logo.lock() = None;
+        self.badged.clear();
+    }
+
+    fn flakyfy_logo(&self) -> Option<Arc<RgbaImage>> {
+        self.logo.lock().get_or_insert_with(|| self.load_logo()).clone()
+    }
+
+    fn load_logo(&self) -> Option<Arc<RgbaImage>> {
+        let candidates: Vec<PathBuf> = self
+            .custom_logo_path()
+            .into_iter()
+            .chain(self.logo_paths.iter().cloned())
+            .collect();
+        for path in &candidates {
+            if !path.is_file() {
+                continue;
+            }
+            match image::open(path) {
+                Ok(logo) => {
+                    let logo = logo.to_rgba8();
+                    info!(
+                        "Flakyfy logo loaded from {} ({}x{})",
+                        path.display(),
+                        logo.width(),
+                        logo.height()
+                    );
+                    return Some(Arc::new(logo));
                 }
-                let paths: Vec<String> = self.logo_paths.iter().map(|p| p.display().to_string()).collect();
-                warn!(
-                    "Flakyfy logo not found at any of: {}; radio cover badges disabled",
-                    paths.join(", ")
-                );
-                None
-            })
-            .as_ref()
+                Err(e) => warn!(error = %e, "Failed to load Flakyfy logo from {}", path.display()),
+            }
+        }
+        let paths: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
+        warn!(
+            "Flakyfy logo not found at any of: {}; radio cover badges disabled",
+            paths.join(", ")
+        );
+        None
     }
 
     fn sized_logo(&self, width: u32, height: u32) -> Option<RgbaImage> {
         let logo = self.flakyfy_logo()?;
         // Bicubic (Catmull-Rom) resampling.
         Some(image::imageops::resize(
-            logo,
+            &*logo,
             width.max(1),
             height.max(1),
             FilterType::CatmullRom,

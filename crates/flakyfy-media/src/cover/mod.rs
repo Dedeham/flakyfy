@@ -14,6 +14,7 @@ pub mod cover_image;
 pub mod cover_layout;
 pub mod cover_painter;
 pub mod cover_veil;
+pub mod custom_logo;
 mod design;
 mod jpeg_420;
 mod text;

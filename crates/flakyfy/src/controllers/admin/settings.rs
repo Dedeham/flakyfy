@@ -446,6 +446,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 "YoutubeCheckAutoReplace",
                 Node::Bool(actions.youtube_check_auto_replace),
             ),
+            (
+                "YoutubeUnsureAutoReplace",
+                Node::Bool(actions.youtube_unsure_auto_replace),
+            ),
             ("DuplicatesEnabled", Node::Bool(actions.duplicates_enabled)),
             ("DuplicatesPlaylistName", n_str(&actions.duplicates_playlist_name)),
             ("DuplicatesScanHours", n_num(actions.duplicates_scan_hours)),

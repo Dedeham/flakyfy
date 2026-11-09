@@ -3373,3 +3373,116 @@ fn an_upload_is_named_by_its_title_who_posted_it_and_its_link() {
         None
     );
 }
+
+// ---- Replacing an unsure song under an accepted rule ------------------------------------
+
+/// Replacing switched on for unsure songs only, not for the sweep or the YouTube check.
+fn unsure_replacing() -> LibraryActionSettings {
+    LibraryActionSettings {
+        review_sweep_auto_replace_preview: false,
+        youtube_unsure_auto_replace: true,
+        ..replacing_by_preview(60)
+    }
+}
+
+async fn unsure_replaces(
+    settings: LibraryActionSettings,
+    isrc: Option<&str>,
+    marked: Option<bool>,
+) -> Replacing {
+    let sweep = Sweep::new();
+    let path = sweep.tagged("a.flac", "Massive Attack", "Teardrop", isrc);
+    let replacer = FakeReplacer::marked(marked);
+    let worker = sweep.worker(
+        FakeVerifier::never_heard(None),
+        Options {
+            queue: Some(Arc::new(NoticeQueue::new())),
+            settings: Some(settings),
+            replacer: Some(replacer.clone()),
+            ..Default::default()
+        },
+    );
+    let question = VerificationResult {
+        verdict: VerificationVerdict::Inconclusive,
+        reason: InconclusiveReason::DiffersFromYouTube,
+        evidence: Some("47% of its bits differ".into()),
+        ..Default::default()
+    };
+    let file = SweptFile {
+        song: song_titled("Teardrop"),
+        tagged: true,
+        isrc: isrc.map(str::to_string),
+    };
+    let witness = PreviewWitness {
+        bit_error: 0.47,
+        album_agrees: true,
+    };
+    let answer = worker
+        .replace_for_unsure("bob", &path, &file, &question, witness)
+        .await;
+    if answer != Replacing::Done {
+        assert!(replacer.requests().is_empty());
+    }
+    answer
+}
+
+#[tokio::test]
+async fn an_unsure_song_is_replaced_only_with_its_own_switch_and_every_gate_open() {
+    let ok = Some(false);
+    assert_eq!(
+        unsure_replaces(unsure_replacing(), None, ok).await,
+        Replacing::Done
+    );
+
+    let off = LibraryActionSettings {
+        youtube_unsure_auto_replace: false,
+        ..unsure_replacing()
+    };
+    assert_eq!(unsure_replaces(off, None, ok).await, Replacing::Declined);
+
+    let youtube_check_only = LibraryActionSettings {
+        youtube_unsure_auto_replace: false,
+        youtube_check_auto_replace: true,
+        ..unsure_replacing()
+    };
+    assert_eq!(
+        unsure_replaces(youtube_check_only, None, ok).await,
+        Replacing::Declined
+    );
+
+    let dry = LibraryActionSettings {
+        dry_run: true,
+        ..unsure_replacing()
+    };
+    assert_eq!(unsure_replaces(dry, None, ok).await, Replacing::Declined);
+
+    let not_kept = LibraryActionSettings {
+        keep_replaced_originals: false,
+        ..unsure_replacing()
+    };
+    assert_eq!(unsure_replaces(not_kept, None, ok).await, Replacing::Declined);
+
+    let nobody = LibraryActionSettings {
+        allowed_users: Vec::new(),
+        ..unsure_replacing()
+    };
+    assert_eq!(unsure_replaces(nobody, None, ok).await, Replacing::Declined);
+
+    assert_eq!(
+        unsure_replaces(unsure_replacing(), Some("USRC17607839"), ok).await,
+        Replacing::Declined
+    );
+    assert_eq!(
+        unsure_replaces(unsure_replacing(), None, Some(true)).await,
+        Replacing::Declined
+    );
+    assert_eq!(
+        unsure_replaces(unsure_replacing(), None, None).await,
+        Replacing::Declined
+    );
+}
+
+#[test]
+fn unsure_songs_are_never_replaced_by_default() {
+    assert!(!LibraryActionSettings::default().youtube_unsure_auto_replace);
+}

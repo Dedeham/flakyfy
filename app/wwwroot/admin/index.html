@@ -2744,9 +2744,27 @@
                 <button class="btn btn-ghost" type="button" id="youtube-check-start"><span>Check</span></button>
               </div>
             </div>
+            <div class="set-row stack" id="unsure-section">
+              <div class="set-info"><div class="set-info-t">Unsure songs</div><div class="set-info-d" id="unsure-status">Songs the YouTube check could not settle. Hear each one next to its video and say what it is.</div><div class="set-info-more"><p>Nothing here changes a file. An answer of Wrong song becomes a question under Recent questions, where Replace now keeps its own checks. Your answers stay, and a song is not compared again until its file changes. Needs your Navidrome admin sign-in.</p></div></div>
+              <div class="set-buttons" role="group" aria-label="Which unsure songs to show">
+                <button class="btn btn-ghost btn-sm" type="button" data-unsure-show="open" aria-pressed="true"><span>Open</span></button>
+                <button class="btn btn-ghost btn-sm" type="button" data-unsure-show="answered" aria-pressed="false"><span>Answered</span></button>
+                <a class="btn btn-ghost btn-sm" href="/api/admin/youtube-check/unsure/export" download><span>Download answers</span></a>
+              </div>
+              <div id="unsure-list" class="unsure-list"></div>
+              <details class="set-more" id="unsure-learned">
+                <summary>What your answers suggest</summary>
+                <div id="unsure-rules"></div>
+                <div id="unsure-report"></div>
+              </details>
+            </div>
             <div class="set-row">
               <div class="set-info"><div class="set-info-t">Replace what the YouTube check clearly hears as another song</div><div class="set-info-d">Flakyfy fetches the right song through Wrong song instead of asking. Off by default.</div><div class="set-info-more"><p>The same rule as replacing by the YouTube preview above: only a song AcoustID has never heard, against a YouTube Music row with the song's title, artist and length from the same album as the file and not a live album, with at least 42% of the file differing from it. A song with no tags, an ISRC tag, a star or a rating stays a question in Review.</p><p>Needs Wrong song on, dry run off, Keep the original after a replacement on and a download source other than YouTube alone, and counts toward the same limit a day. Review keeps a note of what was replaced.</p></div></div>
               <label class="switch"><input type="checkbox" name="LibraryActions.YoutubeCheckAutoReplace" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Let a replace rule replace unsure songs</div><div class="set-info-d">Off by default, and does nothing until you accept a replace rule under Unsure songs.</div><div class="set-info-more"><p>A rule that may replace is only suggested after 50 answers of Wrong song in a row for one kind of doubt. It then acts only when at least two videos clearly disagree with the song and none sounds like it, AcoustID has never heard it, and every check of replacing by the YouTube preview passes: dry run off, Wrong song on, the keeper on the allowlist, originals kept, no ISRC, no star or rating. It counts toward the same daily limit, and the rule turns itself off the moment you disagree with it.</p></div></div>
+              <label class="switch"><input type="checkbox" name="LibraryActions.YoutubeUnsureAutoReplace" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <details class="set-more">
               <summary>Playlist name and size</summary>

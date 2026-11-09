@@ -1,0 +1,18 @@
+{
+  "about": [
+    "When the answers people gave about unsure songs suggest a rule. Read by unsure_songs_tests.rs.",
+    "A bucket is why the song is unsure, where the video came from and how far apart they sounded.",
+    "A rule is suggested only where every answer in the bucket agrees: an unsure bucket mixes right and wrong songs, and a rule that is wrong costs more than a question."
+  ],
+  "cases": [
+    { "note": "nine answers are not enough", "reason": "name", "album": false, "bits": 0.31, "answers": { "right": 9 }, "expect": [] },
+    { "note": "ten right answers suggest settling", "reason": "name", "album": false, "bits": 0.31, "answers": { "right": 10 }, "expect": ["settle"] },
+    { "note": "ten wrong answers suggest asking, never replacing", "reason": "name", "album": false, "bits": 0.45, "answers": { "wrong": 10 }, "expect": ["ask"] },
+    { "note": "49 wrong answers still do not allow replacing", "reason": "between", "album": true, "bits": 0.36, "answers": { "wrong": 49 }, "expect": ["ask"] },
+    { "note": "50 wrong answers allow suggesting replacing too", "reason": "between", "album": true, "bits": 0.36, "answers": { "wrong": 50 }, "expect": ["ask", "replace"] },
+    { "note": "one wrong answer among many right ones stops a rule", "reason": "name", "album": false, "bits": 0.31, "answers": { "right": 40, "wrong": 1 }, "expect": [] },
+    { "note": "another version is not the same as right", "reason": "length", "album": false, "bits": 0.28, "answers": { "right": 20, "version": 1 }, "expect": [] },
+    { "note": "answers of only another version suggest nothing", "reason": "length", "album": false, "bits": 0.28, "answers": { "version": 30 }, "expect": [] },
+    { "note": "can't tell is not an answer", "reason": "name", "album": false, "bits": 0.31, "answers": { "right": 9, "cant_tell": 20 }, "expect": [] }
+  ]
+}

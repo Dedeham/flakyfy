@@ -713,6 +713,21 @@ and rests an hour when the shim stops answering. It needs library actions and Re
 someone on the allowed list to ask. Where it is is kept in `youtube-check.json` beside the
 settings, so a restart carries on; pressing the button again starts over.
 
+A song the check cannot settle (another version, or a video that may not be the song) is kept under
+"Unsure songs" beside the button, once the check has run on this release. It plays next to its
+YouTube video, and one button jumps between the two at the same moment of the song, so you can say
+Right song, Wrong song, Other version, YouTube is wrong or Can't tell. Nothing changes a file: Wrong
+song only raises a Review question with Replace now, and Look for another video only adds a
+comparison. An answer holds until the file changes, and is kept in `youtube-unsure.json` beside the
+settings. Once 10 of your answers about one kind of doubt all agree, Flakyfy suggests a rule that
+takes such songs as right or asks about them in Review; it does nothing until you accept it, and
+stops by itself the moment you disagree with something it decided. A rule's own decisions never
+count as answers. `LIBRARY_ACTIONS_YOUTUBE_UNSURE_AUTO_REPLACE` (off by default) does nothing until
+you accept a replace rule, which needs 50 answers of Wrong song in a row for one kind of doubt; it
+then still needs at least two videos that clearly disagree and none that sounds like the song, a
+sound AcoustID has never heard, and every condition of
+`LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PREVIEW`, toward the same daily limit.
+
 `LIBRARY_ACTIONS_DUPLICATES` adds a Duplicates playlist per allowed user: recordings the
 library holds more than once, side by side, the copy worth keeping first (lossless before
 lossy, then the higher bitrate). Two files are copies only when they carry the same

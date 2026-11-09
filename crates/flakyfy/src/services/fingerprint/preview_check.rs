@@ -105,7 +105,7 @@ impl PreviewFacts {
         }
     }
 
-    fn from_hit(hit: YouTubeHit, artist: Option<String>) -> Self {
+    pub(crate) fn from_hit(hit: YouTubeHit, artist: Option<String>) -> Self {
         Self {
             video_id: hit.video_id,
             title: hit.title,

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use flakyfy_core::common::dotnet::{self, is_blank};
@@ -761,16 +761,20 @@ fn range_not_satisfiable(size: u64) -> Response {
 
 /// The file, typed by its extension, with single-range support and no ETag or Last-Modified.
 async fn serve_file(call: &SubsonicCall, path: &str) -> Result<Response, AppError> {
+    serve_path(call.headers(), path).await
+}
+
+/// [`serve_file`] for any caller with request headers.
+pub(crate) async fn serve_path(request_headers: &HeaderMap, path: &str) -> Result<Response, AppError> {
     let content_type = content_type_for_file(path);
     let mut file = tokio::fs::File::open(path).await?;
     let length = file.metadata().await?.len();
 
     // An If-Range the file cannot be checked against (it has no validators) sends it whole.
-    let range = call
-        .headers()
+    let range = request_headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
-        .filter(|_| !call.headers().contains_key(header::IF_RANGE))
+        .filter(|_| !request_headers.contains_key(header::IF_RANGE))
         .map(|v| parse_range(v, length))
         .unwrap_or(RangeOutcome::Whole);
 

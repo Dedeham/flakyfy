@@ -445,6 +445,36 @@ impl YouTubeResolver {
         }
     }
 
+    /// Every YouTube Music row a search for the song finds, in the background lane, each crediting
+    /// who the row itself names so a row of someone else's song is never believed. Empty when
+    /// YouTube Music cannot be asked.
+    pub async fn music_rows_for_song(&self, artist: &str, title: &str) -> Vec<YouTubeHit> {
+        if !self.music.configured() {
+            return Vec::new();
+        }
+        let query = format!("{artist} {title}");
+        let lookup = async {
+            let _permit = self.music_bg_gate.acquire().await;
+            self.music
+                .search_limited_background(&query, "songs", Self::MUSIC_ROWS)
+                .await
+        };
+        let Ok(Ok(rows)) = tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await else {
+            return Vec::new();
+        };
+        rows.into_iter()
+            .map(|row| YouTubeHit {
+                channel: Some(row.artists.join(", ")),
+                video_id: row.video_id,
+                title: Some(row.title),
+                duration: row.duration_seconds,
+                album: row.album,
+                pick: SoulseekRouting::VIDEO_PICK,
+                ..Default::default()
+            })
+            .collect()
+    }
+
     /// The shim's ranked pick for `query` as a background check, leaving the videos in `skip`
     /// out: `/search` with `bg=1` and `resolve=0`, so it ranks only (no stream URL, no cache).
     /// A 404 (no candidate) is [`Lookup::None`]; any other failure is [`Lookup::Failed`]

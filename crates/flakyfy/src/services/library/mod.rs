@@ -38,6 +38,7 @@ pub mod rejections;
 pub mod replacement_handoff;
 mod state_dictionary;
 pub mod tidy;
+pub mod unsure_songs;
 pub mod upgrade_queue;
 pub mod upgrade_sources;
 pub mod version_check;

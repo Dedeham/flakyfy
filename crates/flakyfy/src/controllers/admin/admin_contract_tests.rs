@@ -288,6 +288,7 @@ async fn settings_list_the_sweep_replacing_off_with_ten_a_day() {
         assert_eq!(actions["ReviewSweepAutoReplacePerDay"], 10, "{path}");
         assert_eq!(actions["ReviewSweepAutoReplacePreview"], false, "{path}");
         assert_eq!(actions["YoutubeCheckAutoReplace"], false, "{path}");
+        assert_eq!(actions["YoutubeUnsureAutoReplace"], false, "{path}");
     }
 }
 
@@ -872,8 +873,9 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // then LibraryActions:KeepRatedCopies, Subsonic:DownloadAlbumOnSongStar,
     // Metadata:AnimatedArt and Subsonic:CoverBadge, then LibraryActions:YoutubeCheckPerHour and
     // the sweep's preview replacing, LibraryActions:ReviewSweepAutoReplacePreview, and the
-    // YouTube check's, LibraryActions:YoutubeCheckAutoReplace, listed last.
-    assert_eq!(rows.len(), 207);
+    // YouTube check's, LibraryActions:YoutubeCheckAutoReplace, and the replacing of unsure songs,
+    // LibraryActions:YoutubeUnsureAutoReplace, listed last.
+    assert_eq!(rows.len(), 208);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()
@@ -896,6 +898,8 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     );
     assert_eq!(rows[206]["Key"], "LibraryActions:YoutubeCheckAutoReplace");
     assert_eq!(row("LibraryActions:YoutubeCheckAutoReplace")["IsSecret"], false);
+    assert_eq!(rows[207]["Key"], "LibraryActions:YoutubeUnsureAutoReplace");
+    assert_eq!(row("LibraryActions:YoutubeUnsureAutoReplace")["IsSecret"], false);
     assert_eq!(row("Subsonic:CoverBadge")["IsSecret"], false);
     assert_eq!(row("Subsonic:DownloadAlbumOnSongStar")["IsSecret"], false);
     assert_eq!(

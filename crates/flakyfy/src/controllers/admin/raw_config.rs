@@ -322,6 +322,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "LibraryActions:YoutubeCheckPerHour",
     "LibraryActions:ReviewSweepAutoReplacePreview",
     "LibraryActions:YoutubeCheckAutoReplace",
+    "LibraryActions:YoutubeUnsureAutoReplace",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

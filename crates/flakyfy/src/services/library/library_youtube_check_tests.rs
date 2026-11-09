@@ -12,6 +12,7 @@ use flakyfy_core::settings::{AppSettings, LibraryActionSettings, NoticeKind, Sub
 use super::*;
 use crate::services::library::library_identity_sweep::CheckedSong;
 use crate::services::library::notice_queue::NoticeState;
+use crate::services::library::unsure_songs::{UnsureLabel, suggestions};
 
 /// Answers one by one from a script, and remembers which files it was asked about.
 #[derive(Default)]
@@ -149,6 +150,7 @@ fn heard(heard: Heard, bit_error: f64) -> Compared {
         heard,
         bit_error,
         album_agrees: true,
+        video: None,
     }
 }
 
@@ -1316,4 +1318,228 @@ async fn the_check_asks_youtube_music_in_the_background_lane() {
         .collect();
     assert_eq!(asked.len(), 1, "{asked:?}");
     assert!(asked[0].contains("bg=1"), "{asked:?}");
+}
+
+// ---- Songs the check could not settle ---------------------------------------------------
+
+fn unclear(video_id: &str, bit_error: f64) -> Compared {
+    Compared::Heard {
+        heard: Heard::Unclear,
+        bit_error,
+        album_agrees: false,
+        video: Some(Box::new(HeardVideo {
+            video_id: video_id.into(),
+            title: Some("Teardrop".into()),
+            artist: Some("A Stranger".into()),
+            album: None,
+            seconds: Some(40),
+            bit_error,
+            offset_seconds: 0.0,
+            trusted: false,
+            reason: UnsureReason::Name,
+            rejected: false,
+        })),
+    }
+}
+
+#[tokio::test]
+async fn only_a_song_the_check_could_not_settle_is_kept_for_a_person() {
+    let check = Check::new();
+    for name in ["a.flac", "b.flac", "c.flac"] {
+        check.tagged(name);
+    }
+    let matching = Compared::Heard {
+        heard: Heard::Match,
+        bit_error: 0.02,
+        album_agrees: false,
+        video: match unclear("m", 0.02) {
+            Compared::Heard { video, .. } => video,
+            _ => None,
+        },
+    };
+    let different = Compared::Heard {
+        heard: Heard::Mismatch,
+        bit_error: 0.47,
+        album_agrees: false,
+        video: match unclear("x", 0.47) {
+            Compared::Heard { video, .. } => video,
+            _ => None,
+        },
+    };
+    let checker = FakeChecker::answering(vec![matching, unclear("u", 0.31), different]);
+    let (worker, notices) = check.simple(checker);
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    let kept = worker.unsure().read(|state| state.songs.clone());
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].path, "b.flac");
+    assert_eq!(kept[0].title, "Teardrop");
+    assert_eq!(kept[0].videos[0].video_id, "u");
+    assert_eq!(worker.store().read(|s| (s.unsure, s.alike, s.asked)), (1, 1, 1));
+    assert_eq!(notices.open_count(NoticeOrigin::LibrarySweep), 1);
+}
+
+#[tokio::test]
+async fn an_unsure_song_changes_no_file_and_asks_nobody() {
+    let check = Check::new();
+    let path = check.tagged("a.flac");
+    let before = std::fs::read(&path).expect("read");
+    let (worker, notices) = check.simple(FakeChecker::answering(vec![unclear("u", 0.31)]));
+
+    worker.start();
+    run_to_the_end(&worker).await;
+
+    assert_eq!(std::fs::read(&path).expect("read"), before);
+    assert_eq!(notices.open_count(NoticeOrigin::LibrarySweep), 0);
+    assert_eq!(worker.store().read(|s| s.asked), 0);
+}
+
+#[tokio::test]
+async fn a_song_a_person_answered_is_not_compared_again_until_it_changes() {
+    let check = Check::new();
+    let path = check.tagged("a.flac");
+    let checker = FakeChecker::answering(vec![unclear("u", 0.31)]);
+    let (worker, _) = check.simple(checker.clone());
+    worker.start();
+    run_to_the_end(&worker).await;
+    let id = worker.unsure().song_at("a.flac").expect("kept").id;
+    worker
+        .unsure()
+        .decide(id, Some(UnsureLabel::Right), None, "bob", Utc::now());
+
+    worker.start();
+    run_to_the_end(&worker).await;
+    assert_eq!(checker.asked(), ["a.flac"]);
+
+    // The file changes: its answer no longer holds.
+    let mut file = TagFile::open(&path).expect("opens");
+    file.set_title(Some("Teardrop (edit)"));
+    file.save().expect("saved");
+    worker.start();
+    run_to_the_end(&worker).await;
+    assert_eq!(checker.asked(), ["a.flac", "a.flac"]);
+}
+
+#[tokio::test]
+async fn a_start_over_keeps_the_answers() {
+    let check = Check::new();
+    check.tagged("a.flac");
+    let (worker, _) = check.simple(FakeChecker::answering(vec![unclear("u", 0.31)]));
+    worker.start();
+    run_to_the_end(&worker).await;
+    let id = worker.unsure().song_at("a.flac").expect("kept").id;
+    worker
+        .unsure()
+        .decide(id, Some(UnsureLabel::Version), None, "bob", Utc::now());
+
+    worker.start();
+
+    assert_eq!(
+        worker
+            .unsure()
+            .song(id)
+            .expect("kept")
+            .decision
+            .expect("kept")
+            .label,
+        UnsureLabel::Version
+    );
+}
+
+#[tokio::test]
+async fn a_rule_that_asks_raises_a_question_for_the_next_song_of_its_kind() {
+    let check = Check::new();
+    let mut answers = Vec::new();
+    for n in 0..11 {
+        check.tagged(&format!("{n:02}.flac"));
+        answers.push(unclear(&format!("v{n}"), 0.46));
+    }
+    let (worker, notices) = check.simple(FakeChecker::answering(answers));
+    worker.start();
+    for _ in 0..10 {
+        worker.tick().await;
+    }
+    for id in 1..=10 {
+        worker
+            .unsure()
+            .decide(id, Some(UnsureLabel::Wrong), None, "bob", Utc::now());
+    }
+    let rule = worker.unsure().read(suggestions)[0].id.clone();
+    assert!(worker.unsure().accept_rule(&rule, Utc::now()));
+
+    run_to_the_end(&worker).await;
+
+    let last = worker.unsure().song_at("10.flac").expect("kept");
+    assert_eq!(last.decision.expect("decided").label, UnsureLabel::Wrong);
+    assert_eq!(notices.open_count(NoticeOrigin::LibrarySweep), 1);
+    assert_eq!(worker.store().read(|s| s.asked), 1);
+}
+
+#[tokio::test]
+async fn another_look_tries_other_rows_first_and_keeps_who_they_credit() {
+    use wiremock::matchers::{method, path as url_path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let Some(file) = noise_flac(dir.path(), "file.flac", "pink") else {
+        eprintln!("skipped: ffmpeg or fpcalc is not on the PATH");
+        return;
+    };
+    let shim = MockServer::start().await;
+    let row = |id: &str, seconds: i32| {
+        serde_json::json!({
+            "videoId": id, "title": "Teardrop", "artists": ["Another Band"], "album": "Other Album",
+            "durationSeconds": seconds, "videoType": "MUSIC_VIDEO_TYPE_ATV",
+        })
+    };
+    Mock::given(method("GET"))
+        .and(url_path("/ytm/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "tracks": [row("heard-before", 40), row("much-longer", 400), row("new-row", 40)],
+        })))
+        .mount(&shim)
+        .await;
+    Mock::given(method("GET"))
+        .and(url_path("/search"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&shim)
+        .await;
+    Mock::given(method("GET"))
+        .and(url_path("/stream"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(std::fs::read(&file).expect("the noise"), "audio/flac"),
+        )
+        .mount(&shim)
+        .await;
+    let checker = AppYoutubeChecker {
+        fingerprinter: Arc::new(AudioFingerprinter::new()),
+        youtube: Arc::new(YouTubeResolver::with_base_url(Some(&shim.uri()))),
+        settings: settings_of(60),
+    };
+    let song = Song {
+        artist: "Massive Attack".into(),
+        title: "Teardrop".into(),
+        ..Default::default()
+    };
+
+    let heard = checker
+        .another_look(&file, &song, &["heard-before".to_string()])
+        .await;
+
+    assert_eq!(heard.len(), 1, "{heard:?}");
+    assert_eq!(heard[0].video_id, "new-row");
+    assert_eq!(heard[0].artist.as_deref(), Some("Another Band"));
+    assert!(!heard[0].trusted, "a row of another artist is never believed");
+    let sent: Vec<String> = shim
+        .received_requests()
+        .await
+        .expect("recorded")
+        .iter()
+        .filter(|r| r.url.path() == "/stream")
+        .map(|r| r.url.query().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(sent[0].contains("new-row"), "{sent:?}");
 }

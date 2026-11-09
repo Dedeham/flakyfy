@@ -1031,7 +1031,7 @@ fn extensions_match_the_recordings() {
     navidrome["subsonic-response"]["openSubsonicExtensions"]
         .as_array_mut()
         .expect("extensions")
-        .retain(|extension| !extension["name"].as_str().unwrap_or("").starts_with("flakyfy"));
+        .retain(|extension| !extension["name"].as_str().unwrap_or("").starts_with("octo"));
     let navidrome = navidrome.to_string();
     for name in ["extensions-json", "extensions-json-noauth"] {
         assert_recorded(

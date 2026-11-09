@@ -1031,7 +1031,7 @@ impl LibraryReviewSweepWorker {
             let trash = library_walk::trash_folder(Path::new(&root), &settings);
             let listed = Arc::new(Self::enumerate(&root, Some(&trash)));
             *self.files.lock() = Some(listed.clone());
-            let flakyfy_files: HashSet<String> = if settings.review_sweep_flakyfy_downloads {
+            let flakyfy_files: HashSet<String> = if settings.review_sweep_octo_downloads {
                 HashSet::new()
             } else {
                 self.library

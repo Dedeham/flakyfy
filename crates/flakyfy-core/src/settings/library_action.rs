@@ -249,7 +249,7 @@ pub struct LibraryActionSettings {
     /// Check Flakyfy's own downloads too. Off by default: those were checked when they arrived, as
     /// long as download verification was on then.
     /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS
-    pub review_sweep_flakyfy_downloads: bool,
+    pub review_sweep_octo_downloads: bool,
 
     /// Let the sweep replace a file that clearly is another song, through Wrong song, instead
     /// of asking. Off by default. Only a confident AcoustID match, at or above the download
@@ -360,7 +360,7 @@ impl Default for LibraryActionSettings {
             review_enabled: false,
             review_playlist_name: "Review".to_string(),
             review_sweep_per_hour: 0,
-            review_sweep_flakyfy_downloads: false,
+            review_sweep_octo_downloads: false,
             review_sweep_auto_replace: false,
             review_sweep_auto_replace_per_day: 10,
             review_sweep_auto_replace_preview: false,

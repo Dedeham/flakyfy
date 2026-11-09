@@ -140,7 +140,7 @@ async fn a_postal_code_comes_back_in_xml_by_default() {
     assert_eq!(
         reply.text(),
         concat!(
-            "<subsonic-response status=\"ok\" version=\"1.16.1\" type=\"flakyfy\" openSubsonic=\"true\" xmlns=\"http://subsonic.org/restapi\">\n",
+            "<subsonic-response status=\"ok\" version=\"1.16.1\" type=\"octo\" openSubsonic=\"true\" xmlns=\"http://subsonic.org/restapi\">\n",
             "  <place code=\"02134\" name=\"Allston\" state=\"Massachusetts\" country=\"US\" latitude=\"42.35\" longitude=\"-71.13\" />\n",
             "</subsonic-response>"
         )

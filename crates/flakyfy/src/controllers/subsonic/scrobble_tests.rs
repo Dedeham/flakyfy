@@ -989,7 +989,7 @@ async fn a_completed_play_is_written_down_with_its_app_whatever_the_radio_does()
     assert_eq!(play.song_id, "lib1");
     assert_eq!(play.title, "Title lib1");
     assert_eq!(play.genre.as_deref(), Some("Rock"));
-    assert_eq!(play.app, "Flakyfy 1.9.0 (Android)");
+    assert_eq!(play.app, "Octo 1.9.0 (Android)");
     assert_eq!(play.platform, "android");
     assert_eq!(play.source, "scrobble");
     assert!(play.is_local);

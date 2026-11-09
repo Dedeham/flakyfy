@@ -593,7 +593,7 @@
     "kind": "json",
     "size": 364,
     "sha256": "417f51dcc2822626ec76822a735bdce64cabe7a69703f25c32e8e9e67a1b57cc",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"lyricsCandidates\":{\"id\":\"6TOMTUtoEzhnB8tjXmNY5V\",\"choice\":\"auto\",\"candidate\":[{\"id\":\"lrclib:9001\",\"source\":\"lrclib\",\"title\":\"Polar Night\",\"artist\":\"Aurora Vale\",\"album\":\"Northern Lights\",\"duration\":3,\"kind\":\"line\",\"sameSong\":true,\"chosen\":false,\"preview\":[\"Long dark sky\",\"Stars above\"]}]}}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"lyricsCandidates\":{\"id\":\"6TOMTUtoEzhnB8tjXmNY5V\",\"choice\":\"auto\",\"candidate\":[{\"id\":\"lrclib:9001\",\"source\":\"lrclib\",\"title\":\"Polar Night\",\"artist\":\"Aurora Vale\",\"album\":\"Northern Lights\",\"duration\":3,\"kind\":\"line\",\"sameSong\":true,\"chosen\":false,\"preview\":[\"Long dark sky\",\"Stars above\"]}]}}}"
    }
   },
   {
@@ -628,7 +628,7 @@
     "kind": "json",
     "size": 155,
     "sha256": "a34eb7ebf97833278638c360103ae80369e7182190e0d08fce7322851a843cc2",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"lyricsCandidates\":{\"id\":\"2A1r2OKTiTVuvPfmtePIIe\",\"choice\":\"auto\",\"candidate\":[]}}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"lyricsCandidates\":{\"id\":\"2A1r2OKTiTVuvPfmtePIIe\",\"choice\":\"auto\",\"candidate\":[]}}}"
    }
   },
   {
@@ -803,7 +803,7 @@
     "kind": "json",
     "size": 136,
     "sha256": "70065c39e7e6d76bd4dfbfd1e5ccc932edcccab57f4dab9285b890c01cb85f9e",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"lyricsChoice\":{\"id\":\"doesnotexist000000000x\",\"choice\":\"auto\"}}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"lyricsChoice\":{\"id\":\"doesnotexist000000000x\",\"choice\":\"auto\"}}}"
    }
   },
   {

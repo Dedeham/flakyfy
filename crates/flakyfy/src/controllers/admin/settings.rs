@@ -426,7 +426,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("ReviewSweepPerHour", n_num(actions.review_sweep_per_hour)),
             (
                 "ReviewSweepOctoDownloads",
-                Node::Bool(actions.review_sweep_flakyfy_downloads),
+                Node::Bool(actions.review_sweep_octo_downloads),
             ),
             (
                 "ReviewSweepAutoReplace",

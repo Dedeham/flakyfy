@@ -610,7 +610,7 @@ fn only_the_flakyfy_app_gets_plain_covers() {
     for (client, plain) in [
         ("Octo", true),
         ("octo", true),
-        (" Flakyfy ", true),
+        (" Octo ", true),
         ("Symfonium", false),
         ("Feishin", false),
         ("OctoPlayer", false),

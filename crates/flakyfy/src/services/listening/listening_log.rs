@@ -75,7 +75,7 @@ pub struct Play {
     pub is_local: bool,
     /// The song was hearted while it played.
     pub hearted: bool,
-    /// The app, as the Family page names a device's app ("Flakyfy 1.9.0 (Android)").
+    /// The app, as the Family page names a device's app ("Octo 1.9.0 (Android)").
     pub app: String,
     /// android, iphone, windows, macos, linux or unknown.
     pub platform: String,

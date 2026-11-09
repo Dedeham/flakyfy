@@ -33,7 +33,7 @@
     "kind": "json",
     "size": 107,
     "sha256": "f7fcfa81f941ed4f568cdad948c24e888c3b5f7946b981a7bef97c00797425c2",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"acquisitions\":{\"acquisition\":[]}}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"acquisitions\":{\"acquisition\":[]}}}"
    }
   },
   {
@@ -68,7 +68,7 @@
     "kind": "json",
     "size": 107,
     "sha256": "f7fcfa81f941ed4f568cdad948c24e888c3b5f7946b981a7bef97c00797425c2",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"acquisitions\":{\"acquisition\":[]}}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"acquisitions\":{\"acquisition\":[]}}}"
    }
   },
   {
@@ -208,7 +208,7 @@
     "kind": "json",
     "size": 225,
     "sha256": "5660484a45a6802a06e2cf621b264eb8082a5c21e0c50dcbbe65d70ab3defd51",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"openSubsonic\":true,\"libraryActions\":{\"enabled\":false,\"allowed\":false,\"dryRun\":true,\"actions\":[],\"keepDays\":30,\"parallel\":1,\"upgradeSource\":\"Soulseek\"}}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"openSubsonic\":true,\"libraryActions\":{\"enabled\":false,\"allowed\":false,\"dryRun\":true,\"actions\":[],\"keepDays\":30,\"parallel\":1,\"upgradeSource\":\"Soulseek\"}}}"
    }
   },
   {
@@ -278,7 +278,7 @@
     "kind": "json",
     "size": 107,
     "sha256": "9d6bfc0eab4ed2328926cf486581fb02772a8cb853f38d8959cb01dbc847eb92",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"openSubsonic\":true,\"upgrades\":[]}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"openSubsonic\":true,\"upgrades\":[]}}"
    }
   },
   {
@@ -313,7 +313,7 @@
     "kind": "json",
     "size": 107,
     "sha256": "9d6bfc0eab4ed2328926cf486581fb02772a8cb853f38d8959cb01dbc847eb92",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"openSubsonic\":true,\"upgrades\":[]}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"openSubsonic\":true,\"upgrades\":[]}}"
    }
   },
   {
@@ -418,7 +418,7 @@
     "kind": "json",
     "size": 213,
     "sha256": "5650dc02ba866cd1a2a281fdd8c8f0f01ed6e43a353ffe1a1e573b857cd4ff0a",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"openSubsonic\":true,\"libraryAction\":{\"id\":\"2A1r2OKTiTVuvPfmtePIIe\",\"action\":\"remove\",\"state\":\"skipped\",\"detail\":\"Library actions are off.\"}}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"openSubsonic\":true,\"libraryAction\":{\"id\":\"2A1r2OKTiTVuvPfmtePIIe\",\"action\":\"remove\",\"state\":\"skipped\",\"detail\":\"Library actions are off.\"}}}"
    }
   },
   {
@@ -453,7 +453,7 @@
     "kind": "json",
     "size": 214,
     "sha256": "fcae5c6befbfd67e8ade75d0a419365232d4d3aade5c563e2ada1b019c19b801",
-    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"flakyfy\",\"openSubsonic\":true,\"libraryAction\":{\"id\":\"79UbMHtfpdvxM9dnNYPHLu\",\"action\":\"upgrade\",\"state\":\"skipped\",\"detail\":\"Library actions are off.\"}}}"
+    "text": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"type\":\"octo\",\"openSubsonic\":true,\"libraryAction\":{\"id\":\"79UbMHtfpdvxM9dnNYPHLu\",\"action\":\"upgrade\",\"state\":\"skipped\",\"detail\":\"Library actions are off.\"}}}"
    }
   },
   {

@@ -95,6 +95,13 @@ render() { # template, destination
   mv -f "$2.tmp" "$2"
 }
 
+# An Octo install's helper watches the same folder and cannot reach a Flakyfy release, so it goes.
+if [ -e "$unit_dir/octo-updater.path" ] || [ -e /usr/local/lib/octo ]; then
+  systemctl disable --now octo-updater.path > /dev/null 2>&1 || true
+  rm -f "$unit_dir/octo-updater.path" "$unit_dir/octo-updater.service"
+  rm -rf /usr/local/lib/octo
+fi
+
 install -d -m 0755 "$lib_dir"
 place 0755 "$here/flakyfy-updater.sh" "$lib_dir/flakyfy-updater.sh"
 # Kept beside the script as they are, so a later release can tell whether they changed.

@@ -15,7 +15,7 @@ services:
   # ghcr.io), build flakyfy-source, at the end of this file. Flakyfy is written in Rust; the
   # environment below and the config folder are the ones the C# Flakyfy read, unchanged.
   flakyfy:
-    image: ghcr.io/dedeham/flakyfy:${FLAKYFY_IMAGE_TAG:-2026.11.09.1}
+    image: ghcr.io/dedeham/flakyfy:${FLAKYFY_IMAGE_TAG:-2026.11.09.2}
     container_name: flakyfy
     restart: unless-stopped
     logging: *logging
@@ -415,7 +415,7 @@ services:
   # Pulled, not built, like Flakyfy, and at the same tag, so the two always match.
   # Without access to ghcr.io, build it from this folder with yt-dlp-shim-source (below).
   yt-dlp-shim:
-    image: ghcr.io/dedeham/flakyfy-yt-dlp-shim:${FLAKYFY_IMAGE_TAG:-2026.11.09.1}
+    image: ghcr.io/dedeham/flakyfy-yt-dlp-shim:${FLAKYFY_IMAGE_TAG:-2026.11.09.2}
     container_name: yt-dlp-shim
     restart: unless-stopped
     logging: *logging
@@ -476,7 +476,7 @@ services:
   # Pulled, not built, like the shim: compiling it (Rust and FFmpeg) takes minutes and more
   # memory than a small machine has. flakyfy-sonic-source (below) builds it from this folder.
   flakyfy-sonic:
-    image: ghcr.io/dedeham/flakyfy-sonic:${FLAKYFY_IMAGE_TAG:-2026.11.09.1}
+    image: ghcr.io/dedeham/flakyfy-sonic:${FLAKYFY_IMAGE_TAG:-2026.11.09.2}
     container_name: flakyfy-sonic
     restart: unless-stopped
     logging: *logging
@@ -659,7 +659,7 @@ services:
   # nothing, which is what an older update helper runs; that keeps even the update to this
   # release from compiling anything.
   flakyfy-source:
-    image: ghcr.io/dedeham/flakyfy:${FLAKYFY_IMAGE_TAG:-2026.11.09.1}
+    image: ghcr.io/dedeham/flakyfy:${FLAKYFY_IMAGE_TAG:-2026.11.09.2}
     build:
       context: .
       args:
@@ -668,11 +668,11 @@ services:
         PLACES_REFRESH: ${PLACES_REFRESH:-}
     profiles: ["source"]
   yt-dlp-shim-source:
-    image: ghcr.io/dedeham/flakyfy-yt-dlp-shim:${FLAKYFY_IMAGE_TAG:-2026.11.09.1}
+    image: ghcr.io/dedeham/flakyfy-yt-dlp-shim:${FLAKYFY_IMAGE_TAG:-2026.11.09.2}
     build: ./yt-dlp-shim
     profiles: ["source"]
   flakyfy-sonic-source:
-    image: ghcr.io/dedeham/flakyfy-sonic:${FLAKYFY_IMAGE_TAG:-2026.11.09.1}
+    image: ghcr.io/dedeham/flakyfy-sonic:${FLAKYFY_IMAGE_TAG:-2026.11.09.2}
     build: ./sonic
     profiles: ["source"]
 

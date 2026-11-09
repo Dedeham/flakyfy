@@ -861,7 +861,7 @@ fn the_path_helpers_answer_at_their_edges() {
     assert_eq!(get_directory_name("/"), None);
     assert_eq!(get_directory_name("name.mp3").as_deref(), Some(""));
     assert!(BaseDownloadService::is_staged_upload(
-        "/music/.FLAKYFY-INCOMING/upload.mp3"
+        "/music/.OCTO-INCOMING/upload.mp3"
     ));
     assert!(!BaseDownloadService::is_staged_upload("/music/A/upload.mp3"));
     assert_eq!(

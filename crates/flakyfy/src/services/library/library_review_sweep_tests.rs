@@ -1899,7 +1899,7 @@ async fn the_recheck_clears_only_flakyfys_stamps_and_walks_them_once() {
         first.clone(),
         Options {
             settings: Some(LibraryActionSettings {
-                review_sweep_flakyfy_downloads: true,
+                review_sweep_octo_downloads: true,
                 ..settings_of(60)
             }),
             ..Default::default()

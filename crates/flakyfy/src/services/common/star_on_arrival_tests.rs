@@ -387,7 +387,7 @@ fn is_flakyfy_app() {
     let cases = [
         (Some("Octo"), true),
         (Some("octo"), true),
-        (Some(" Flakyfy "), true),
+        (Some(" Octo "), true),
         (Some("flakyfy-android"), false),
         (Some("Symfonium"), false),
         (None, false),

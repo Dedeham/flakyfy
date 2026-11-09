@@ -105,5 +105,11 @@ parity/
 # guide the README links to and the icon attribution.
 *.md
 !README.md
+!AGENTS.md
 !docs/family.md
 !scripts/admin-icons/SOURCES.md
+
+# Local agent state; only the shared plugin list is committed
+.claude/*
+!.claude/settings.json
+.dev-env/

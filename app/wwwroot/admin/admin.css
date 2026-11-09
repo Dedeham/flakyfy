@@ -2828,3 +2828,9 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .test-check.warn .icon { color: var(--warn); }
 .test-check.fail { color: var(--ink); }
 .test-check.fail .icon { color: var(--bad); }
+
+/* ── Logo (About) ── */
+.logo-setting { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+.logo-preview { width: 64px; height: 64px; object-fit: contain; flex: none; }
+.logo-actions { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.logo-file-label { font-weight: 600; }

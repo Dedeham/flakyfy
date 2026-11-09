@@ -15,6 +15,7 @@
 pub mod activity;
 pub mod ambient;
 pub mod animated_art;
+pub mod branding;
 pub mod browse;
 pub mod charts;
 pub mod cover_upgrade;
@@ -132,6 +133,7 @@ pub fn routes() -> RouteSet {
     admin_controller_routes()
         .merge(library_and_job_routes())
         .merge(imports::routes())
+        .merge(branding::routes())
         .merge(activity_routes())
 }
 

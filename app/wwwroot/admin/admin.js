@@ -9760,3 +9760,64 @@ document.getElementById('art-wall')?.addEventListener('click', async event => {
   }).catch(() => null);
   if (response?.ok) loadAnimatedArt();
 });
+
+// About → Logo: the picture is served at its usual address, so after a change only the images
+// on this page need asking again.
+(function logoCard() {
+  const file = document.getElementById('logo-file');
+  const upload = document.getElementById('logo-upload');
+  const reset = document.getElementById('logo-reset');
+  if (!file || !upload || !reset) return;
+  const MAX_BYTES = 2 * 1024 * 1024;
+
+  const showAgain = () => {
+    const fresh = `/Assets/flakyfy_logo.png?v=${Date.now()}`;
+    document.querySelectorAll('#logo-preview, .sidebar-logo, .status-card-logo, link[rel="icon"]').forEach(node => {
+      if (node.tagName === 'LINK') node.href = fresh;
+      else node.src = fresh;
+    });
+  };
+  const load = async () => {
+    const reply = await api('/api/admin/branding/logo').catch(() => null);
+    if (!reply?.ok) return;
+    const body = await reply.json().catch(() => ({}));
+    reset.hidden = !body.custom;
+  };
+  const answerOf = async reply => {
+    const body = await reply.json().catch(() => ({}));
+    if (!reply.ok) throw new Error(body.error || body.message || 'The logo could not be changed.');
+    reset.hidden = !body.custom;
+    showAgain();
+  };
+
+  file.addEventListener('change', () => {
+    const chosen = file.files[0];
+    upload.disabled = !chosen || chosen.size > MAX_BYTES;
+    if (chosen && chosen.size > MAX_BYTES) note(upload, 'That picture is over 2 MB. Choose a smaller one.', 'error');
+    else note(upload, '');
+  });
+  upload.addEventListener('click', async () => {
+    const form = new FormData();
+    form.append('file', file.files[0]);
+    upload.disabled = true;
+    note(upload, 'Saving…', 'busy');
+    try {
+      await answerOf(await api('/api/admin/branding/logo', { method: 'POST', body: form }));
+      file.value = '';
+      note(upload, 'Your logo is in use.', 'ok');
+    } catch (error) {
+      upload.disabled = false;
+      note(upload, error.message, 'error');
+    }
+  });
+  reset.addEventListener('click', async () => {
+    note(upload, 'Saving…', 'busy');
+    try {
+      await answerOf(await api('/api/admin/branding/logo', { method: 'DELETE' }));
+      note(upload, 'The snowflake is back.', 'ok');
+    } catch (error) {
+      note(upload, error.message, 'error');
+    }
+  });
+  load();
+})();

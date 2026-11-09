@@ -104,6 +104,11 @@ impl BadgedCovers {
         }
     }
 
+    /// Forgets every cover, when the badge on them has changed.
+    pub fn clear(&self) {
+        *self.state.lock() = State::default();
+    }
+
     /// The cover kept under `key`, while it is fresh at `now`.
     pub fn get(&self, key: &str, now: Instant) -> Option<Arc<Vec<u8>>> {
         let mut state = self.state.lock();

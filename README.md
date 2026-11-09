@@ -22,9 +22,9 @@ Flakyfy gives a home server what a streaming app has: search that reaches past y
 
 It runs on [Navidrome](https://www.navidrome.org/), the open-source music server. If you already run Navidrome, Flakyfy sits in front of it and your library stays as it is. If you don't, the installer starts one for you.
 
-![Searching Fleetwood Mac in the Flakyfy desktop app, playing "Go Your Own Way" from Rumours, pressing + and watching Flakyfy download it into the library](docs/images/demo.gif)
+![Searching Fleetwood Mac in the Octo desktop app, playing "Go Your Own Way" from Rumours, pressing + and watching Flakyfy download it into the library](docs/images/demo.gif)
 
-<sub>Recorded in the Flakyfy desktop app on a real server: search, play, press <b>+</b>, and the song is downloaded into the library. The download is shown faster than it ran, and the Soulseek users the copies came from are renamed.</sub>
+<sub>Recorded in the Octo desktop app on a real server: search, play, press <b>+</b>, and the song is downloaded into the library. The download is shown faster than it ran, and the Soulseek users the copies came from are renamed.</sub>
 
 ## What you get
 
@@ -32,7 +32,7 @@ It runs on [Navidrome](https://www.navidrome.org/), the open-source music server
 - **Radio that learns.** Your Radio, discovery, artist and genre stations grow from what you play, plus optional genre and decade mixes from your own library.
 - **Keep what you love.** Press **+** or heart a song and Flakyfy downloads the best copy it can find from Soulseek or your own Lidarr, FLAC first, catches a "lossless" file that was made from an MP3, tags it, adds the cover and lyrics, and files it in your library. Whole albums work too.
 - **Bring your music.** Import your liked songs and playlists from Spotify or any other service, see what you already have, and let Flakyfy fetch the rest a few songs an hour. See [Importing your music](#importing-your-music).
-- **Apps for every device.** [Flakyfy's own apps](#flakyfys-own-apps) for Windows, Linux and Android, and [any Subsonic app](#compatible-apps) on iPhone, Mac and everywhere else.
+- **Apps for every device.** [The Octo apps](#the-octo-apps) for Windows, Linux and Android, and [any Subsonic app](#compatible-apps) on iPhone, Mac and everywhere else.
 - **Yours to run.** The files are on your disk, everyone in the house gets their own login and their own stations, and there is nothing to pay each month.
 
 > If you pay for Qobuz, Deezer or Yandex Music and want that catalog in your library, [V1ck3s/octo-fiesta](https://github.com/V1ck3s/octo-fiesta) fits better, since it downloads from those services directly. Flakyfy needs no paid streaming account.
@@ -77,11 +77,11 @@ On the starter stack Navidrome runs from the same `docker-compose.yml`, turned o
 
 </details>
 
-## Flakyfy's own apps
+## The Octo apps
 
-Any Subsonic app works with Flakyfy. Its own apps for desktop and Android are made for it: the music Flakyfy finds sits beside your library, and keeping a song is just **Add to library**.
+Any Subsonic app works with Flakyfy. The Octo apps for desktop and Android are made for it: the music Flakyfy finds sits beside your library, and keeping a song is just **Add to library**.
 
-![Home in the Flakyfy desktop app](docs/images/players/desktop-home.webp)
+![Home in the Octo desktop app](docs/images/players/desktop-home.webp)
 
 - **Add songs to your library.** Press **+** on a song, an album or a search result and it joins your library.
 - **One search for everything.** Your music comes first, then what Flakyfy found, and all of it plays straight away.
@@ -90,23 +90,32 @@ Any Subsonic app works with Flakyfy. Its own apps for desktop and Android are ma
 - **Find songs.** Run a song's search again on your download sources (Soulseek, and Lidarr's releases), see every copy with its details, and pick the one you want. For a song you have, only a lossless copy can take its place.
 - **Your stations on Home**, each with its own painted cover.
 
-![An album in the Flakyfy desktop app](docs/images/players/desktop-album.webp)
+![An album in the Octo desktop app](docs/images/players/desktop-album.webp)
 
-![A station in the Flakyfy desktop app](docs/images/players/desktop-playlists.webp)
+![A station in the Octo desktop app](docs/images/players/desktop-playlists.webp)
 
-![The player in the Flakyfy desktop app](docs/images/players/desktop-player.webp)
+![The player in the Octo desktop app](docs/images/players/desktop-player.webp)
 
 <table>
-<tr><td width="33%"><img src="docs/images/players/phone-search.webp" alt="Search in the Flakyfy Android app"></td><td width="33%"><img src="docs/images/players/phone-album.webp" alt="An album in the Flakyfy Android app"></td><td width="33%"><img src="docs/images/players/phone-player.webp" alt="The player in the Flakyfy Android app"></td></tr>
+<tr><td width="33%"><img src="docs/images/players/phone-search.webp" alt="Search in the Octo Android app"></td><td width="33%"><img src="docs/images/players/phone-album.webp" alt="An album in the Octo Android app"></td><td width="33%"><img src="docs/images/players/phone-player.webp" alt="The player in the Octo Android app"></td></tr>
 </table>
 
-Flakyfy has no apps of its own yet. The desktop and Android apps of the original Octo project work with it: the desktop app runs on Windows and Linux, and the Android app on Android 10 and newer. They work as regular players with Navidrome too. Download them from [Octo for Windows and Linux](https://github.com/winters27/octo/releases/tag/desktop-v1.6.0) and [Octo for Android](https://github.com/winters27/octo/releases/tag/android-v1.6.0), or add [Octo's F-Droid repository](https://winters27.github.io/octo/fdroid/) so the Android app updates through F-Droid, Droid-ify or Neo Store. The source is at [winters27/octo-player](https://github.com/winters27/octo-player).
+Flakyfy is only the server, and it has no apps of its own. The Octo apps are supported, today and in every future release: Flakyfy keeps the names they talk to the server with, so they find it, sign in and work as they do on Octo. Nothing needs changing in the apps.
+
+| App | Get it |
+|---|---|
+| Octo for Windows and Linux | [Release 1.11.0](https://github.com/winters27/octo/releases/tag/desktop-v1.11.0) |
+| Octo for Android (10 and newer) | [Release 1.11.0](https://github.com/winters27/octo/releases/tag/android-v1.11.0), or [Octo's F-Droid repository](https://winters27.github.io/octo/fdroid/) so it updates through F-Droid, Droid-ify or Neo Store |
+| Every app release | [winters27/octo releases](https://github.com/winters27/octo/releases) |
+| Source of the apps | [winters27/octo-player](https://github.com/winters27/octo-player) |
+
+They work as regular players with Navidrome too.
 
 ## Compatible apps
 
 | Works | App | Platform |
 |---|---|---|
-| ✅ | [Flakyfy's own apps](#flakyfys-own-apps) | Windows, Linux, Android |
+| ✅ | [The Octo apps](#the-octo-apps) | Windows, Linux, Android |
 | ✅ | [Feishin](https://github.com/jeffvli/feishin) | desktop |
 | ✅ | [Supersonic](https://github.com/dweymouth/supersonic) | desktop |
 | ✅ | [Sublime Music](https://github.com/sublime-music/sublime-music) | Linux |
@@ -240,6 +249,8 @@ An override from 2026.10.05 or earlier that made Flakyfy pulled (`build: !reset 
 
 Every setting has a form, every backing service has a live status indicator, and the **Raw Config** tab lets you edit the whole effective configuration as a JSON file if you'd rather work that way. Changes hot-reload: no rebuild, and no restart for most settings. The few that only apply after a restart are marked **Restart** where you edit them, and anything saved but still waiting on a restart is listed at the top of every page until you restart Flakyfy.
 
+To use your own logo instead of the snowflake, upload it under **About**, **Logo**. It shows in the dashboard, the family pages, the browser tab and on the covers of songs outside your library.
+
 ### Signing in
 
 The dashboard asks for a **Navidrome admin** account. Flakyfy checks it with your Navidrome and
@@ -323,7 +334,7 @@ Yes, that's what it's for. Flakyfy adds the parts of Spotify that a library play
 
 ### Does this work with Plex / Plexamp?
 
-No. Flakyfy speaks the Subsonic API, not the Plex API. If you're a Plex user looking for a self-hosted service with discovery, the move is Flakyfy with Navidrome (the installer sets up both) and a Subsonic app such as Flakyfy's own, Feishin or Arpeggi.
+No. Flakyfy speaks the Subsonic API, not the Plex API. If you're a Plex user looking for a self-hosted service with discovery, the move is Flakyfy with Navidrome (the installer sets up both) and a Subsonic app such as the Octo apps, Feishin or Arpeggi.
 
 ### How is this different from Navidrome's built-in radio?
 
@@ -343,7 +354,7 @@ Yes. Every image is published for amd64 and arm64, so a Pi pulls Flakyfy, the yt
 
 ### What is the snowflake on some covers?
 
-It marks songs, albums and artists that are not in your library yet, so you can tell them apart in any app: a heart on one downloads it. Your own covers never carry it, it is never written into your files, and Flakyfy's own apps mark these songs their own way. To show those covers plain, turn off **Mark outside covers** under Settings, Search and discovery, or set `COVER_BADGE=false` in `.env`. Apps that saved a cover earlier keep their copy until they refresh it.
+It marks songs, albums and artists that are not in your library yet, so you can tell them apart in any app: a heart on one downloads it. Your own covers never carry it, it is never written into your files, and the Octo apps mark these songs their own way. To show those covers plain, turn off **Mark outside covers** under Settings, Search and discovery, or set `COVER_BADGE=false` in `.env`. Apps that saved a cover earlier keep their copy until they refresh it.
 
 On a small disk, mind the cover copies: Flakyfy keeps each library cover it has shown in its config folder (`cover-cache/`), up to 1024 MB by default. Set `COVER_CACHE_MB` in `.env` to a smaller number of megabytes, or to 0 to keep none.
 
@@ -381,7 +392,7 @@ dashboard) makes Flakyfy also favorite a download when it lands, for the person 
 album heart then favorites the album. With it on, the heart stays on the song in that person's
 apps the whole way: in their starred lists and on the song wherever it is listed while it
 downloads, and on the song they hearted once its library copy is the favorite, where taking the
-heart back takes the copy's favorite back too. Flakyfy's own apps are left out,
+heart back takes the copy's favorite back too. The Octo apps are left out,
 because their star button means Add. The person's sign-in is held in memory
 with the download until the song arrives (a password is first turned into a token, so the
 password itself is never held), and a restart drops it.
@@ -424,7 +435,7 @@ Four Docker containers in one `docker compose` stack (the diagram leaves out fla
 
 - **`flakyfy`** (port 5274): the proxy + admin UI, written in Rust. Personalized Radio, its state store, recommendation queue, and refresh worker all run in this process. Flakyfy hijacks the Subsonic endpoints that need enrichment and passes everything else through to Navidrome.
 - **`yt-dlp-shim`** (internal): wraps `yt-dlp` behind two HTTP endpoints. Process-isolation keeps yt-dlp's frequent extractor breakage from affecting the rest of the stack.
-- **`flakyfy-sonic`** (internal): reads each song once for its transition profile, which the Flakyfy apps use to blend one song into the next, and for how it sounds, for Sounds alike radio. `RADIO_SOUNDS_ALIKE=false` turns Sounds alike radio off; flakyfy-sonic keeps making transition profiles.
+- **`flakyfy-sonic`** (internal): reads each song once for its transition profile, which the Octo apps use to blend one song into the next, and for how it sounds, for Sounds alike radio. `RADIO_SOUNDS_ALIKE=false` turns Sounds alike radio off; flakyfy-sonic keeps making transition profiles.
 - **`slskd`** (port 5030 for its web page, 50300 for other Soulseek users): Soulseek client with REST API. Flakyfy authenticates and queues downloads, and slskd shares your library back, read-only (see [Sharing back on Soulseek](#sharing-back-on-soulseek)).
 
 Navidrome is **not** part of the stack. Flakyfy just talks to whatever Navidrome you already have.
@@ -483,7 +494,7 @@ alike 0.4), what radio has learned, and "Forget what radio learned". `RADIO_YOUT
 YouTube Music and ListenBrainz receive the artist and title of the song a radio starts from.
 
 Sounds alike runs in the `flakyfy-sonic` service (bliss-rs). The same reading makes each song's
-transition profile, which the Flakyfy apps use to blend one song into the next, so flakyfy-sonic runs
+transition profile, which the Octo apps use to blend one song into the next, so flakyfy-sonic runs
 whether or not Sounds alike is on. It reads each song once, one at a time
 with `RADIO_SONIC_PAUSE_SECONDS` between, only while nothing downloads, then keeps up with new
 and changed songs; a damaged file costs only that file. On a network mount the first pass takes
@@ -785,7 +796,7 @@ because cross-process locking is not supported.
 
 ### Made for you
 
-Every listener gets three lists, made again every day from their own plays, on the Flakyfy apps'
+Every listener gets three lists, made again every day from their own plays, on the Octo apps'
 Home under **Made for you** and as read-only playlists in every other app:
 
 - **New Releases:** albums, EPs and singles from the `NEW_RELEASE_ARTISTS` artists they play
@@ -835,7 +846,7 @@ Every Flakyfy list row in getPlaylists and getPlaylist carries `octoGroup` (octo
 so an app can group Flakyfy's lists: `genre`, `decade`, `year`, `country`, `artist`, `chart`,
 `forYou`, `liked` or `station`.
 
-Mix and station covers are drawn by Flakyfy in the same design as the Flakyfy apps' playlist
+Mix and station covers are drawn by Flakyfy in the same design as the Octo apps' playlist
 covers: the list's name in white over one of 48 painted backgrounds, picked to match the
 colours of the covers of its first songs (a station's seed artist first), or its genre's or
 decade's colour when those give none. The same list keeps the same background while its
@@ -852,7 +863,7 @@ Every listener also gets read-only playlists of what is popular and new, in ever
 from Apple Music's public web pages for the country Flakyfy's server is in:
 
 - **Popular right now**: the 50 most played songs (Deezer's chart, then Last.fm's, when Apple's
-  cannot be read). The Flakyfy apps show the same chart in search before anything is typed.
+  cannot be read). The Octo apps show the same chart in search before anything is typed.
 - **Best New Songs**: Apple Music's 100 picks of the week.
 - **Trending Songs**: what is catching on this week.
 - **Top Hip-Hop/Rap**, **Top Pop** and **Top Country**: the 50 most played songs of a genre.
@@ -871,7 +882,7 @@ They are on by default, whether or not the mixes are. The dashboard's Mixes page
 `trending` and Apple genre numbers, default `new,trending,18,14,6`; empty for none);
 `CHART_COUNTRY` is `auto` or a two-letter country such as `gb`.
 
-Each listener can pick their own chart country and pin up to three more in the Flakyfy apps' Charts
+Each listener can pick their own chart country and pin up to three more in the Octo apps' Charts
 page; the dashboard's Charts card sets them for anyone. A pinned country adds every chart list
 that is on, named after its country, such as `Popular right now · Japan`.
 
@@ -887,7 +898,7 @@ The switch never downloads anything by itself. **Keep as playlist** and **Get mi
 as before, and a list with either of them on still follows its link for songs added later. To
 listen with previews and hearts only, leave **Get missing songs** and download on play off.
 
-The dashboard's **Import** page, and the same view in the Flakyfy apps, shows what your library
+The dashboard's **Import** page, and the same view in the Octo apps, shows what your library
 has of the playlists and liked songs you bring from another service. A list can be kept as a
 Navidrome playlist of the songs you have, in the list's order, and filled in as the rest
 arrive; its missing songs can go to the trickle, which fetches them a few an hour through the
@@ -994,7 +1005,7 @@ A file named for another format than it holds (a FLAC named `.mp3`, an M4A named
 
 A peer tags a file for the release it ripped, so Flakyfy cleans what the file arrived with before writing its own. The album id, `RELEASEDATE` (and a Vorbis `YEAR`, which Navidrome also reads as one) and `ALBUMVERSION` never stay on a download, for the same reason Flakyfy never writes them; the one exception is a song joining an album folder that already carries them (the `Organized` layout), which gets that album's exact values so it lands in the same album. When the song is filed under another album than the one the file named (a compilation rip filed under the studio album, say), everything else the peer wrote about that release goes too: its barcode, label, catalog number, release ids, original date, album gain and its track and disc numbers. A field Flakyfy writes is the only value under any of its names, so a peer's `ORGANIZATION` or `UPC` cannot stand beside Flakyfy's `LABEL` or `BARCODE` as a second label or barcode. `DISCTOTAL` is written when the release says how many discs it has. Whether the words are explicit goes into `ITUNESADVISORY` (the `rtng` atom on MP4: 1 explicit, 2 the clean edit, 0 neither), which Navidrome shows as each song's explicit status; it comes from the Deezer hit whose ISRC is the downloaded file's (the one asked for stands in only when neither the file nor the fingerprint names one), and a file name that says clean always wins.
 
-`REPLAYGAIN` (on) measures each download's loudness once, beside the lookups, and writes `REPLAYGAIN_TRACK_GAIN` and `REPLAYGAIN_TRACK_PEAK` by the ReplayGain 2.0 convention (-18 LUFS, true peak), which the Flakyfy apps and most players use to even out volume; an album fetched whole gets `REPLAYGAIN_ALBUM_GAIN` and `REPLAYGAIN_ALBUM_PEAK` once the walk ends. `REPLAYGAIN_TIMEOUT_SECONDS` (45) caps the measurement; past it the download goes on without ReplayGain. Every lookup has its own cap too, and a timeout costs fields, never the download.
+`REPLAYGAIN` (on) measures each download's loudness once, beside the lookups, and writes `REPLAYGAIN_TRACK_GAIN` and `REPLAYGAIN_TRACK_PEAK` by the ReplayGain 2.0 convention (-18 LUFS, true peak), which the Octo apps and most players use to even out volume; an album fetched whole gets `REPLAYGAIN_ALBUM_GAIN` and `REPLAYGAIN_ALBUM_PEAK` once the walk ends. `REPLAYGAIN_TIMEOUT_SECONDS` (45) caps the measurement; past it the download goes on without ReplayGain. Every lookup has its own cap too, and a timeout costs fields, never the download.
 
 Under each row of **Fetched songs**, "How it was tagged" shows the release that won and how sure Flakyfy is, every candidate it weighed with its biggest penalties, what each field was set to and from, the notes (a catalog that did not answer, a release lookup that timed out), the seconds each stage took and the measured loudness. **Try it on a song** (Tags & genres) runs the same identification on a file in the music folder (fingerprint and loudness included) or on an artist and title alone, and shows the same report without writing anything, including whether the song is explicit and what a download would take off the file. `TAG_REHEARSAL` (off) runs the matching on every real download and shows the report, but writes only what Flakyfy wrote before, plus ReplayGain, the ISRC and the fingerprint id, which do not depend on the match: a way to watch it on real downloads before trusting it.
 
@@ -1002,7 +1013,7 @@ Cover art comes from a chain, and the largest cover found wins: Apple's full-siz
 
 **Soft covers** (dashboard, Cover art) finds soft covers and replaces the ones you pick. A scan reads your songs only (album by album, using Navidrome's own song list), Flakyfy's downloads or the whole library, and shows every album whose cover is smaller than the size you choose (or missing) as a wall of covers. Pick all of them or just some and find better covers: albums are matched at Apple in bulk by barcode (from the song's own tag, or from Deezer), 20 to 40 per request, and each tile then shows the larger cover found, with its true size, without downloading it yet. A cover that does not look like the album's current one (another edition, or another album with the same name) is marked Different art and left unpicked. Replace downloads Apple's master at up to 5000 px and puts it in every song and, if you ask, in a JPEG `cover.jpg` or `folder.jpg` beside it. A cover is replaced only when the new one is clearly larger, and every cover replaced is kept so Undo puts them all back.
 
-**Animated art.** Where an album has it on Apple Music, the Flakyfy apps can play its animated art: a square loop in place of the cover, and often a tall one that fills a full-screen player. Flakyfy matches the album to its Apple release (by barcode when it knows one, otherwise by artist and title, the same strict way it matches covers), reads the album's Apple Music page once and keeps what it found for a month (a week when there was none). An app opening an album gets the artwork with the album if it is already known; the first time, Flakyfy looks it up in the background and the app asks again with `getAnimatedArt`. `ANIMATED_ART` sets how it plays: `direct` (the default) from Apple's own video network, `relay` through Flakyfy so the apps reach nothing but your server, or `off`. Other Subsonic apps see no difference.
+**Animated art.** Where an album has it on Apple Music, the Octo apps can play its animated art: a square loop in place of the cover, and often a tall one that fills a full-screen player. Flakyfy matches the album to its Apple release (by barcode when it knows one, otherwise by artist and title, the same strict way it matches covers), reads the album's Apple Music page once and keeps what it found for a month (a week when there was none). An app opening an album gets the artwork with the album if it is already known; the first time, Flakyfy looks it up in the background and the app asks again with `getAnimatedArt`. `ANIMATED_ART` sets how it plays: `direct` (the default) from Apple's own video network, `relay` through Flakyfy so the apps reach nothing but your server, or `off`. Other Subsonic apps see no difference.
 
 `LYRICS_FETCH` (off by default) writes lyrics beside each download, looked up in the background so a slow service never holds up the next download, and answers `getLyricsBySongId` live for any song as it plays, external songs included. Synced lyrics go in a `.lrc` and plain ones in a `.txt` with the audio file's name, both of which Navidrome reads at request time without a rescan; an instrumental gets nothing, and a file that already has lyrics is never touched. `LYRICS_SOURCES` sets the order: `song` (the lyrics a song already has, in its tags or a file beside it, which cannot be switched off and comes first when it is not listed), `kugou` (timed word by word for most songs, but an unofficial API that can change without notice), `lrclib` (open, timed line by line), `lyricsovh` (plain text), and `netease`, which goes much deeper on non-Western and older music but is also an unofficial API, so it only runs when you list it. Leave a source out and it is never contacted. A song's own lyrics rank like any source, so with `kugou` above `song`, a song whose tags hold line-timed lyrics plays KuGou's word-timed ones; with `LYRICS_PREFER_WORD_TIMED` on, word timing wins wherever it ranks. `LYRICS_SAVE_TO` says where found lyrics are saved: `beside` (the default), `inside` the song's tags (which rewrites the audio file, and shows after a Navidrome scan that Flakyfy asks for), or `both`. What Flakyfy writes is marked `[re:Flakyfy]`, and lyrics Flakyfy did not write are never replaced. The order was chosen by measurement: see [docs/lyrics-source-eval.md](docs/lyrics-source-eval.md). Every source is held to the same rule before its lyrics are used: the same title (a remix or a live take never stands in for the original), the same artist, and a length within three seconds. Credits at the top of a lyric are stripped.
 
@@ -1069,7 +1080,7 @@ The dashboard's **Better quality** page lists every song in your library that is
 
 Copies come from Soulseek, from Lidarr, or from both: **Library actions → Where to look for a higher quality copy** (`LIBRARY_ACTIONS_UPGRADE_SOURCE`). Automatic, the default, asks Soulseek first and Lidarr for what Soulseek cannot find, using whichever is set up, and asks Lidarr alone while Soulseek is offline. Lidarr only fetches whole albums, so Flakyfy borrows the album: it copies out the one song, which then goes through the same checks and the same in-place swap as a Soulseek copy, deletes the other files that search brought in, and puts the album's monitoring back as it was. A song whose file Lidarr itself manages is left to Lidarr, which upgrades it in place when its quality profile asks for lossless.
 
-> **A heart is "fetch" for a song you do not have, and "favorite" for one you do.** Flakyfy checks your library first. A song you already have, even the copy Flakyfy found outside your library, becomes your favorite in Navidrome straight away and downloads nothing (an MP3 is queued for Better quality). A song you do not have is downloaded and nothing more: once it is in your library, heart it again (the song the app still shows will do) to make it a favorite. `STAR_DOWNLOADS_FOR_REQUESTER` makes Flakyfy favorite downloads when they land instead. Flakyfy's own apps are left out of both, since their heart means Add.
+> **A heart is "fetch" for a song you do not have, and "favorite" for one you do.** Flakyfy checks your library first. A song you already have, even the copy Flakyfy found outside your library, becomes your favorite in Navidrome straight away and downloads nothing (an MP3 is queued for Better quality). A song you do not have is downloaded and nothing more: once it is in your library, heart it again (the song the app still shows will do) to make it a favorite. `STAR_DOWNLOADS_FOR_REQUESTER` makes Flakyfy favorite downloads when they land instead. The Octo apps are left out of both, since their heart means Add.
 
 ### Sharing back on Soulseek
 
@@ -1178,12 +1189,22 @@ Project layout:
 
 ## Moving from Octo
 
-Everything that was called `octo` is now `flakyfy`, and nothing answers to the old names. Before you update an existing install:
+An Octo install moves over in place. Your settings, family, music, trash and history stay where they are, because Flakyfy reads Octo's folders as they are, and the Octo apps keep working without any change. Stay in the same folder, so Docker keeps its volumes:
 
-- Rename the `OCTO_*` variables in your `.env` to `FLAKYFY_*` (`OCTO_IMAGE_TAG` is now `FLAKYFY_IMAGE_TAG`), and pull `ghcr.io/dedeham/flakyfy`, `-yt-dlp-shim` and `-sonic` instead of the `winters27/octo` images.
-- Scripts and clients that send `X-Octo-Admin` or `X-Octo-Browse-Token` must send `X-Octo-Admin` and `X-Octo-Browse-Token`.
-- Folders Octo made inside your music library (`.octo-trash`, `.octo-incoming`, `.octo-family`) have to be renamed by hand to `.octo-trash` and so on, or the old contents are ignored.
-- A `places.bin` built by Octo is not read any more (its file header changed). The image build makes a new one; one you built yourself with `flakyfy-places` has to be built again.
+```bash
+docker compose down
+git remote set-url origin https://github.com/Dedeham/flakyfy.git
+git fetch --tags
+git checkout --detach <newest Flakyfy release>
+scripts/migrate-from-octo.sh           # shows what would change in .env
+scripts/migrate-from-octo.sh --apply   # changes it; .env.octo-backup keeps the original
+docker compose pull
+docker compose up -d --remove-orphans
+```
+
+If you use **Update now**, run `sudo scripts/updater/install-updater.sh` afterwards. It replaces Octo's update helper with Flakyfy's. If you built Mornye (the `spotiflac` profile), run `docker compose build spotiflac` once.
+
+Only the names you set yourself change: `OCTO_*` settings are now `FLAKYFY_*`, and the images are `ghcr.io/dedeham/flakyfy`, `-yt-dlp-shim` and `-sonic`. The script handles them. Names the apps use to talk to the server, such as `X-Octo-Admin` and `octoLists`, stay Octo's for good.
 
 ## Acknowledgments
 

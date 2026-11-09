@@ -212,9 +212,9 @@ pub(crate) fn chart_playlist_fields(
         "comment".into(),
         chart_playlist_comment(kind, genre, country.as_deref()).into(),
     );
-    // flakyfyCoverTitle: the words the Flakyfy apps put on the list's cover in place of its name.
+    // octoCoverTitle: the words the Flakyfy apps put on the list's cover in place of its name.
     if let Some(title) = super::media::chart_cover_words(&chart, pinned.as_deref(), &list.name) {
-        fields.insert("flakyfyCoverTitle".into(), title.into());
+        fields.insert("octoCoverTitle".into(), title.into());
     }
     fields
 }
@@ -222,7 +222,7 @@ pub(crate) fn chart_playlist_fields(
 /// Where a notice playlist's cover is drawn: `getCoverArt` paints it with the notice's glyph.
 pub(crate) const NOTICE_COVER_PREFIX: &str = "oc-notice-";
 
-/// The notice kinds a playlist row can be marked with, as `flakyfyNotice` names them.
+/// The notice kinds a playlist row can be marked with, as `octoNotice` names them.
 pub(crate) const NOTICE_REVIEW: &str = "review";
 pub(crate) const NOTICE_DUPLICATES: &str = "duplicates";
 
@@ -274,7 +274,7 @@ fn notice_of(
 }
 
 /// Marks the listener's notice playlists in a getPlaylists or getPlaylist answer: `coverArt`
-/// becomes the notice's painted cover and `flakyfyNotice` names the notice, so every client shows
+/// becomes the notice's painted cover and `octoNotice` names the notice, so every client shows
 /// the glyph and the Flakyfy apps know which list it is. A playlist of anyone else, or one named
 /// like a notice that is off, is left as Navidrome sent it. None when nothing was marked, or the
 /// body is not one this reads.
@@ -318,7 +318,7 @@ pub(super) fn mark_notice_rows(
                     "coverArt".into(),
                     Node::String(format!("{NOTICE_COVER_PREFIX}{word}")),
                 );
-                row.insert("flakyfyNotice".into(), Node::String(word.to_string()));
+                row.insert("octoNotice".into(), Node::String(word.to_string()));
                 marked = true;
             }
         }
@@ -333,7 +333,7 @@ pub(super) fn mark_notice_rows(
         let word = notice_of(row.attribute("owner"), row.attribute("name"), username, notices);
         if let Some(word) = word {
             row.set_attr("coverArt", format!("{NOTICE_COVER_PREFIX}{word}"));
-            row.set_attr("flakyfyNotice", word.to_string());
+            row.set_attr("octoNotice", word.to_string());
             marked = true;
         }
     };
@@ -350,7 +350,7 @@ pub(super) fn mark_notice_rows(
 }
 
 /// Liked Songs as a playlist row: the keys a mix has, read-only, with its real song count and
-/// `flakyfyList: "liked"` so the Flakyfy apps put it first on Home and draw its heart cover.
+/// `octoList: "liked"` so the Flakyfy apps put it first on Home and draw its heart cover.
 pub(crate) fn liked_playlist_fields(
     builder: &flakyfy_subsonic::SubsonicResponseBuilder,
     list: &GeneratedPlaylist,
@@ -362,7 +362,7 @@ pub(crate) fn liked_playlist_fields(
     fields.insert("comment".into(), "Your hearted songs, newest first".into());
     // Always current, so there is no time it is good until.
     fields.remove("validUntil");
-    fields.insert("flakyfyList".into(), for_you_lists::LIKED_KIND.into());
+    fields.insert("octoList".into(), for_you_lists::LIKED_KIND.into());
     fields
 }
 
@@ -506,8 +506,8 @@ fn utc_millis(at: &DateTime<Utc>) -> String {
 
 /// One family playlist's row as `viewer` sees it: owned by "Family", public, with the number
 /// of songs this viewer is shown and how long they last. Read-only for a viewer who cannot
-/// change it. It also carries `flakyfyFamily` (true), `flakyfyFamilyCreatedBy`, and, for this viewer,
-/// `flakyfyFamilyMayRename` and `flakyfyFamilyMayDelete`. `changed` is the newest of when it was made,
+/// change it. It also carries `octoFamily` (true), `octoFamilyCreatedBy`, and, for this viewer,
+/// `octoFamilyMayRename` and `octoFamilyMayDelete`. `changed` is the newest of when it was made,
 /// when any song was added, and its own change time.
 fn family_playlist_fields(
     playlist: &FamilyPlaylist,
@@ -534,17 +534,14 @@ fn family_playlist_fields(
     fields.insert("created".into(), utc_millis(&playlist.created).into());
     fields.insert("changed".into(), utc_millis(&changed).into());
     fields.insert("readonly".into(), (!family_playlists::may_edit(viewer)).into());
-    fields.insert("flakyfyFamily".into(), true.into());
+    fields.insert("octoFamily".into(), true.into());
+    fields.insert("octoFamilyCreatedBy".into(), playlist.created_by.clone().into());
     fields.insert(
-        "flakyfyFamilyCreatedBy".into(),
-        playlist.created_by.clone().into(),
-    );
-    fields.insert(
-        "flakyfyFamilyMayRename".into(),
+        "octoFamilyMayRename".into(),
         family_playlists::may_rename(viewer, playlist).into(),
     );
     fields.insert(
-        "flakyfyFamilyMayDelete".into(),
+        "octoFamilyMayDelete".into(),
         family_playlists::may_delete(viewer).into(),
     );
     fields
@@ -1382,13 +1379,13 @@ async fn family_mutate(state: &AppState, call: &SubsonicCall, id: &str, change: 
                     ),
                 );
             }
-            let song_removals = call.incoming.parameter_values("flakyfySongToRemove");
+            let song_removals = call.incoming.parameter_values("octoSongToRemove");
             if !song_removals.is_empty() && !call.incoming.parameter_values("songIndexToRemove").is_empty() {
                 return family_error(
                     state,
                     call,
                     10,
-                    "Use flakyfySongToRemove or songIndexToRemove, not both.",
+                    "Use octoSongToRemove or songIndexToRemove, not both.",
                 );
             }
             let removals: Vec<usize> = call

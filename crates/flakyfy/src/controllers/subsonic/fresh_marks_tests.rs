@@ -58,7 +58,7 @@ async fn list_id(app: &App, kind: &str) -> String {
         if let Some(row) = playlists(app)
             .await
             .into_iter()
-            .find(|row| row["flakyfyList"] == kind)
+            .find(|row| row["octoList"] == kind)
         {
             return row["id"].as_str().expect("an id").to_string();
         }
@@ -190,17 +190,15 @@ async fn liked_songs_is_listed_first_in_json_and_xml() {
 
     let first = rows.first().expect("a row");
     assert_eq!(first["name"], "Liked Songs");
-    assert_eq!(first["flakyfyList"], "liked");
+    assert_eq!(first["octoList"], "liked");
     assert_eq!(first["songCount"], 2);
     assert_eq!(first["readonly"], true);
     let version = flakyfy_media::cover::CoverBook::shipped().version;
     let id = first["id"].as_str().expect("an id");
     assert_eq!(first["coverArt"], format!("{id}_{version}c2"));
     let first_row = xml.find("<playlist ").expect("a row");
-    assert!(
-        xml[first_row..].starts_with("<playlist ") && xml[first_row..].contains(r#"flakyfyList="liked""#)
-    );
-    let liked_at = xml.find(r#"flakyfyList="liked""#).expect("liked");
+    assert!(xml[first_row..].starts_with("<playlist ") && xml[first_row..].contains(r#"octoList="liked""#));
+    let liked_at = xml.find(r#"octoList="liked""#).expect("liked");
     assert!(
         xml[first_row..liked_at].matches("<playlist ").count() == 1,
         "Liked Songs is the first row: {xml}"
@@ -240,20 +238,10 @@ async fn liked_songs_takes_the_name_it_is_given() {
 async fn liked_songs_switched_off_or_with_no_hearts_is_not_listed() {
     let (upstream, app) = setup_with(|settings| settings.generated_playlists.liked_songs = false).await;
     heart(&upstream, "alice", "big1", "2026-10-01T10:00:00.000Z");
-    assert!(
-        !playlists(&app)
-            .await
-            .iter()
-            .any(|row| row["flakyfyList"] == "liked")
-    );
+    assert!(!playlists(&app).await.iter().any(|row| row["octoList"] == "liked"));
 
     let (_upstream, app) = setup().await;
-    assert!(
-        !playlists(&app)
-            .await
-            .iter()
-            .any(|row| row["flakyfyList"] == "liked")
-    );
+    assert!(!playlists(&app).await.iter().any(|row| row["octoList"] == "liked"));
 }
 
 #[tokio::test]

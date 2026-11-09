@@ -4,7 +4,7 @@
  * Afterglow. The page takes its colour from a fetched song's cover: three soft lights behind the
  * glass and an accent for the controls, read on the server with the station covers' colour rules
  * (GET /api/admin/ambient). Until a cover has been read, the lights are Flakyfy's own blue-greys.
- * Spacing, type steps and motion are still the Flakyfy apps' tokens (FlakyfyTokens, FlakyfyType,
+ * Spacing, type steps and motion are still the Octo apps' tokens (FlakyfyTokens, FlakyfyType,
  * FlakyfyMotion); when the apps change one, change it here too.
  *
  *   Surfaces   a dark page lit from behind; panels are clear glass with a lit rim; a component
@@ -1099,7 +1099,7 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
   color: var(--accent);
 }
 .status-card-head .icon { width: 22px; height: 22px; }
-/* Flakyfy's own card carries the flakyfypus, the same mark as the sidebar. */
+/* Flakyfy's own card carries the snowflake, the same mark as the sidebar. */
 .status-card-logo { width: 28px; height: 28px; border-radius: 8px; }
 .status-card-head .status-dot { margin-left: auto; }
 .status-card-title { font-size: var(--t-body); font-weight: 600; color: var(--ink); }

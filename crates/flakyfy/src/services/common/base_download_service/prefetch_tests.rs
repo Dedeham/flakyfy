@@ -61,7 +61,7 @@ impl Ahead {
         );
         // The transfer lands a real FLAC in a staging folder, as a Soulseek job would, and
         // says what its checks found.
-        let staging = root.path().join(".flakyfy-incoming").join("job");
+        let staging = root.path().join(".octo-incoming").join("job");
         harness.backend.land(move |song, id| {
             std::fs::create_dir_all(&staging).expect("staging");
             let path = staging.join(format!("{id}.flac"));
@@ -146,7 +146,7 @@ async fn a_heart_afterwards_keeps_the_file_without_a_second_transfer() {
     assert_eq!(w.harness.backend.transfers(), 1, "no second download");
     assert!(Path::new(&landed).starts_with(w.root.path()), "{landed}");
     assert!(Path::new(&landed).is_file());
-    assert!(!landed.contains(".flakyfy-incoming"), "{landed}");
+    assert!(!landed.contains(".octo-incoming"), "{landed}");
     // Gone from the folder, facts and all.
     assert!(w.store.ready("test", "t1").is_none());
     assert!(!w.folder.path().join("test_t1.flac").exists());
@@ -219,7 +219,7 @@ impl DownloadBackend for GatedBackend {
             self.started.notify_one();
             self.open.notified().await;
         }
-        let staging = self.root.join(".flakyfy-incoming").join("gated");
+        let staging = self.root.join(".octo-incoming").join("gated");
         std::fs::create_dir_all(&staging)?;
         let path = staging.join(format!("{}.flac", download.track_id));
         std::fs::write(&path, crate::services::test_support::flac())?;
@@ -448,7 +448,7 @@ async fn a_download_ahead_never_writes_into_a_row_that_has_ended() {
             ..Default::default()
         },
     );
-    let staging = root.path().join(".flakyfy-incoming").join("job");
+    let staging = root.path().join(".octo-incoming").join("job");
     harness.backend.land(move |_, id| {
         std::fs::create_dir_all(&staging).expect("staging");
         let path = staging.join(format!("{id}.flac"));

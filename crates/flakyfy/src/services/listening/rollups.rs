@@ -218,7 +218,7 @@ fn artist_key(play: &Play) -> String {
     play.artist.trim().to_lowercase()
 }
 
-/// The app a play is counted under: Flakyfy's apps by platform ("Flakyfy for Android"), any other
+/// The app a play is counted under: Octo apps by platform ("Octo for Android"), any other
 /// app by name without its version ("Symfonium 12.3.0" is Symfonium).
 pub fn app_name(label: &str, platform: &str) -> String {
     let label = label.trim();
@@ -226,10 +226,10 @@ pub fn app_name(label: &str, platform: &str) -> String {
         return UNKNOWN_APP.to_string();
     }
     let lower = label.to_lowercase();
-    if lower == "flakyfy" || lower.starts_with("flakyfy ") {
+    if lower == "octo" || lower.starts_with("octo ") {
         return match platform_name(platform) {
-            Some(name) => format!("Flakyfy for {name}"),
-            None => "Flakyfy".to_string(),
+            Some(name) => format!("Octo for {name}"),
+            None => "Octo".to_string(),
         };
     }
     match label.rsplit_once(' ') {

@@ -6,17 +6,17 @@ share with them.
 
 ## Where members' music lives
 
-By default members' music is kept next to your library, in a folder named `.flakyfy-family`
+By default members' music is kept next to your library, in a folder named `.octo-family`
 inside your music folder (the one Flakyfy downloads to and Navidrome scans). Flakyfy and Navidrome
 already see that folder at the same path, so there is nothing to set up: no extra volume, no
 extra folder on the host.
 
-- Each member's songs are in `.flakyfy-family/<username>`, which is that member's own library in
+- Each member's songs are in `.octo-family/<username>`, which is that member's own library in
   Navidrome.
-- A song two members want is kept once, in `.flakyfy-family/.pool`, and linked into each
+- A song two members want is kept once, in `.octo-family/.pool`, and linked into each
   member's folder.
 - Your own library leaves the folder out. Navidrome skips folders whose names start with a
-  dot, and when Family is turned on Flakyfy also adds the line `.flakyfy-family/` to the
+  dot, and when Family is turned on Flakyfy also adds the line `.octo-family/` to the
   `.ndignore` file in your music folder, so the folder stays out even if Navidrome is set to
   scan such folders. Flakyfy only adds that one line; anything else in the file stays as it was.
 - Flakyfy's own work on your library (covers, lyrics, explicit marks) leaves the folder out too.

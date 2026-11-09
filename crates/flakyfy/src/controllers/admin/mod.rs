@@ -7,7 +7,7 @@
 //! the container back with the new values.
 //!
 //! Every route here sits behind the admin request guard (`crate::middleware::admin_guard`), a
-//! write needs the `X-Flakyfy-Admin` header, and behind the sign-in gate
+//! write needs the `X-Octo-Admin` header, and behind the sign-in gate
 //! (`crate::middleware::admin_sign_in_gate`), which answers 401 to anyone not signed in apart
 //! from its few open endpoints. The endpoints that read files also need a Navidrome admin's own
 //! sign-in, never the recovery code ([`plumbing::BrowseUser`]).

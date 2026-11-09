@@ -227,11 +227,11 @@ async fn sweep_fixture(enabled: bool) -> Sweep {
 async fn a_sweep_removes_the_navidrome_rows_of_songs_the_trash_deleted_for_good() {
     let f = sweep_fixture(true).await;
     let old_day = (chrono::Utc::now() - chrono::TimeDelta::days(400)).format("%Y-%m-%d");
-    let old = format!("{}/.flakyfy-trash/{old_day}", f.root);
+    let old = format!("{}/.octo-trash/{old_day}", f.root);
     std::fs::create_dir_all(&old).expect("old trash");
     std::fs::write(format!("{old}/Old - Song.flac"), [1u8; 8]).expect("written");
     std::fs::write(
-        format!("{old}/Old - Song.flac.flakyfy-action.json"),
+        format!("{old}/Old - Song.flac.octo-action.json"),
         json!({"OriginalPath": format!("{}/Old - Song.flac", f.root), "NavidromeId": "nd-old",
                "Action": "Delete", "Username": "alice", "AtUtc": "2025-01-01T00:00:00Z"})
         .to_string(),

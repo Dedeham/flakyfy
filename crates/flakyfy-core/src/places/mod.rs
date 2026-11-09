@@ -5,9 +5,9 @@
 //! compact file of deflated blocks of sorted lines, and read by [`PlaceIndex`] a block at a
 //! time: only the small block list stays in memory, never the places themselves.
 //!
-//! The file, `FLAKYPL1`:
+//! The file, `OCTOPLC1`:
 //!
-//! - 8 bytes: the magic `FLAKYPL1`;
+//! - 8 bytes: the magic `OCTOPLC1`;
 //! - the blocks, each a raw deflate stream of whole lines, sorted by key across the section;
 //! - the block list, plain text, one line per block: `section \t first key \t offset \t length`,
 //!   where the section is `p` (postal codes), `c` (cities) or `g` (the grid), and one line
@@ -34,7 +34,7 @@ pub use index::PlaceIndex;
 use crate::common::romanize::romanized_words;
 
 /// The first and last 8 bytes of a places file.
-pub const MAGIC: &[u8; 8] = b"FLAKYPL1";
+pub const MAGIC: &[u8; 8] = b"OCTOPLC1";
 
 /// The section of postal codes in the block list.
 const POSTAL_SECTION: &str = "p";

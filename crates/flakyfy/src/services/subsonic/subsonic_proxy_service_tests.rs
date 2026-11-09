@@ -419,7 +419,7 @@ fn repeated_parameters_go_upstream_as_the_client_sent_them() {
         ("u", "x"),
         ("f", "xml"),
         ("songId", "1,2,3"),
-        ("c", "Flakyfy"),
+        ("c", "Octo"),
     ]);
 
     let restored = restore_repeated_parameters(&parameters, Some(&query), None, false);
@@ -432,7 +432,7 @@ fn repeated_parameters_go_upstream_as_the_client_sent_them() {
         ("f", "xml"),
         ("songId", "1,2,3"),
         // Added by a handler.
-        ("c", "Flakyfy"),
+        ("c", "Octo"),
     ]
     .iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))

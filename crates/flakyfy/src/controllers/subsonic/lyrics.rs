@@ -283,7 +283,7 @@ fn has_no_legacy_lyrics(body: &[u8], format: &str) -> bool {
     }
 }
 
-/// flakyfyLyrics v1: every lyrics entry the sources that are on hold for a song, for choosing
+/// octoLyrics v1: every lyrics entry the sources that are on hold for a song, for choosing
 /// between them, with what the song is set to now. title and artist, when given, search
 /// for those instead of the song's own tags, for a song that is tagged wrong. Always JSON.
 /// Credentials are checked with a ping to Navidrome, as getAcquisitions checks them.
@@ -338,7 +338,7 @@ pub async fn get_lyrics_candidates(State(state): State<AppState>, req: Request) 
         .into_response()
 }
 
-/// flakyfyLyrics v1: set a song's lyrics to one candidate from getLyricsCandidates, to "none"
+/// octoLyrics v1: set a song's lyrics to one candidate from getLyricsCandidates, to "none"
 /// to show no lyrics, or to "auto" to go back to finding them. The choice is the server's,
 /// so every client and every user sees it, and getLyricsBySongId and getLyrics honor it.
 pub async fn set_lyrics_choice(State(state): State<AppState>, req: Request) -> Response {

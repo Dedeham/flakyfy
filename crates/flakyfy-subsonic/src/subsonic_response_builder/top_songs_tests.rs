@@ -96,7 +96,7 @@ fn a_chart_says_which_chart_its_name_and_country() {
     let response = answer(&builder().create_top_songs_response(&header, &rows));
     let top = &response["subsonic-response"]["topSongs"];
 
-    assert_eq!(response["subsonic-response"]["type"], "flakyfy");
+    assert_eq!(response["subsonic-response"]["type"], "octo");
     let keys: Vec<&str> = top.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
@@ -211,12 +211,12 @@ fn the_top_songs_extension_is_listed_only_while_search_discovery_is_on() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|e| e["name"] == "flakyfyTopSongs")
+            .find(|e| e["name"] == "octoTopSongs")
             .cloned()
     };
     assert_eq!(listed(true).unwrap()["versions"], json!([1, 2, 3]));
     assert!(listed(false).is_none());
     // The older call never lists it, so the answers recorded before charts stay as they were.
     let older = answer(&builder().merge_open_subsonic_extensions("json", None, None, true, false));
-    assert!(!older.to_string().contains("flakyfyTopSongs"));
+    assert!(!older.to_string().contains("octoTopSongs"));
 }

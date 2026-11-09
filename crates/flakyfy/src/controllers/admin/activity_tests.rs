@@ -585,7 +585,7 @@ async fn the_endpoint_lists_jobs_for_a_signed_in_browser() {
         &app,
         Method::GET,
         "/api/admin/activity",
-        &[("X-Flakyfy-Browse-Token", &token)],
+        &[("X-Octo-Browse-Token", &token)],
         None,
     )
     .await;
@@ -597,7 +597,7 @@ async fn the_endpoint_lists_jobs_for_a_signed_in_browser() {
         &app,
         Method::GET,
         "/api/admin/activity",
-        &[("X-Flakyfy-Browse-Token", &recovery)],
+        &[("X-Octo-Browse-Token", &recovery)],
         None,
     )
     .await;

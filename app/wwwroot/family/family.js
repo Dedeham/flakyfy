@@ -61,7 +61,7 @@
       { key: 'streamCap', title: 'Highest quality at home, in kbps', help: '0 means the original file. Their own choice can only go lower.', kind: 'number' },
       { key: 'awayCap', title: 'Highest quality away from home, in kbps', help: '0 means the same as at home.', kind: 'number' },
       { key: 'devicesAtOnce', title: 'Devices playing at once', help: '0 means no limit. The newest device plays.', kind: 'number' },
-      { key: 'offlineCopies', title: 'Keep songs for offline', help: 'In the Flakyfy apps, for planes and bad signal.', kind: 'switch' },
+      { key: 'offlineCopies', title: 'Keep songs for offline', help: 'In the Octo apps, for planes and bad signal.', kind: 'switch' },
       { key: 'downloadFiles', title: 'Download song files', help: 'Off means songs stream only.', kind: 'switch' },
       { key: 'cleanOnly', title: 'Clean songs only', help: 'Songs marked explicit do not play for them.', kind: 'switch' }
     ] },
@@ -165,7 +165,7 @@
     else if (a.awayCap > 0) add(true, 'Away from home, songs stream at up to ' + a.awayCap + ' kbps.');
     else add(true, 'You can listen at home and away.');
     if (a.devicesAtOnce > 0) add(true, a.devicesAtOnce === 1 ? 'One device plays at a time.' : a.devicesAtOnce + ' devices can play at once.');
-    add(a.offlineCopies, a.offlineCopies ? 'The Flakyfy apps can keep songs for offline.' : 'Offline copies are off.');
+    add(a.offlineCopies, a.offlineCopies ? 'The Octo apps can keep songs for offline.' : 'Offline copies are off.');
     add(a.downloadFiles, a.downloadFiles ? 'You can download song files.' : 'Song files stream only; downloads are off.');
     add(a.share, a.share ? 'You can make share links.' : 'Share links are off.');
     add(a.familyPlaylistsEdit, a.familyPlaylistsEdit ? 'You can add to family playlists.' : 'Family playlists are to listen to.');
@@ -854,7 +854,7 @@
       var res = null;
       var answer = {};
       try {
-        res = await fetch('/api/family/me/imports/file', { method: 'POST', credentials: 'same-origin', headers: { 'X-Flakyfy-Family': '1' }, body: form });
+        res = await fetch('/api/family/me/imports/file', { method: 'POST', credentials: 'same-origin', headers: { 'X-Octo-Family': '1' }, body: form });
         answer = await res.json().catch(function () { return {}; });
       } catch (e) {
         answer = { error: 'Flakyfy did not answer. Check your connection and try again.' };
@@ -983,7 +983,7 @@
     F.append(main, [
       pageHeader('tray', 'Requests', 'Copies you asked for, and what became of them. Cancel one that is still waiting.'),
       card(null, null, null, reply.data.length ? list
-        : empty('tray', 'No requests yet. Ask for a copy of a saved song, here or in the Flakyfy app.', el('a', { class: 'btn', href: '#/saved' }, 'Open saved songs')))
+        : empty('tray', 'No requests yet. Ask for a copy of a saved song, here or in the Octo app.', el('a', { class: 'btn', href: '#/saved' }, 'Open saved songs')))
     ]);
   }
 
@@ -1132,7 +1132,7 @@
   function handOverCard() {
     return card('Sign in on another device', null, null,
       el('p', { class: 'fam-where-uses' }, F.icon('qr'),
-        el('span', null, 'Open the Flakyfy app on a device that is already signed in and choose ', el('strong', null, 'Sign in on another device'), '. It shows a QR code: scan it on the new device and allow it, and the new device is signed in without typing.')),
+        el('span', null, 'Open the Octo app on a device that is already signed in and choose ', el('strong', null, 'Sign in on another device'), '. It shows a QR code: scan it on the new device and allow it, and the new device is signed in without typing.')),
       el('p', { class: 'fam-help' }, 'This page cannot show that code: it never holds your password.'));
   }
 

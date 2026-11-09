@@ -60,14 +60,14 @@ pub const SUBSONIC_VERSION: &str = "1.16.1";
 /// adds each row's log (getAcquisition), clearing finished rows (clearAcquisitions) and Find
 /// songs (findSongs, getFoundSongs, pickFoundSong). Version 3: pickFoundSong takes `anyway` and
 /// may answer `confirm`, asking before a library song is replaced by a copy no better than it.
-pub const ACQUISITIONS_EXTENSION: &str = "flakyfyAcquisitions";
+pub const ACQUISITIONS_EXTENSION: &str = "octoAcquisitions";
 pub const ACQUISITIONS_EXTENSION_VERSION: i32 = 3;
 
 /// getArtistTopSongs and getTopChart. Version 2: getTopChart takes `chart` (Best New Songs,
 /// Trending Songs, a genre) and getCharts lists the charts. Version 3: getCharts and getTopChart
 /// take `country`, getCharts says the caller's `setting`, `pinned`, the `serverCountry`, Apple's
 /// `countries` and `maxPinned`, and setChartCountry and pinChartCountry save the caller's own.
-pub const TOP_SONGS_EXTENSION: &str = "flakyfyTopSongs";
+pub const TOP_SONGS_EXTENSION: &str = "octoTopSongs";
 pub const TOP_SONGS_EXTENSION_VERSION: i32 = 3;
 
 /// The extensions Flakyfy answers itself, with their versions. songLyrics is here because Flakyfy
@@ -95,25 +95,25 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
 
 /// The OpenSubsonic extension a client checks for before it offers imports (getImports,
 /// getImport, importAction). Version 2: getImportServices, importFile and importText.
-pub const IMPORTS_EXTENSION: &str = "flakyfyImports";
+pub const IMPORTS_EXTENSION: &str = "octoImports";
 pub const IMPORTS_EXTENSION_VERSION: i32 = 2;
 
-/// Flakyfy's radio answers name the source of each song (`flakyfySuggestedBy`): Last.fm, YouTube
+/// Flakyfy's radio answers name the source of each song (`octoSuggestedBy`): Last.fm, YouTube
 /// Music, ListenBrainz, Sounds alike or Your library.
-pub const RADIO_SOURCES_EXTENSION: &str = "flakyfyRadioSources";
+pub const RADIO_SOURCES_EXTENSION: &str = "octoRadioSources";
 pub const RADIO_SOURCES_EXTENSION_VERSION: i32 = 1;
 
-/// flakyfyLists v1: Made for you (New Releases, Rediscover, Deep Cuts) are read-only playlists whose
-/// entry in getPlaylists and getPlaylist carries `flakyfyList`, the list's kind (and Liked Songs
-/// carries `flakyfyList: "liked"`). Version 2: every Flakyfy list's entry also carries `flakyfyGroup`,
+/// octoLists v1: Made for you (New Releases, Rediscover, Deep Cuts) are read-only playlists whose
+/// entry in getPlaylists and getPlaylist carries `octoList`, the list's kind (and Liked Songs
+/// carries `octoList: "liked"`). Version 2: every Flakyfy list's entry also carries `octoGroup`,
 /// the group it belongs to: `genre`, `decade`, `year`, `country` or `artist` for a mix, `chart`,
-/// `forYou` for Made for you, `liked` and `station`. `flakyfyList` is unchanged.
-pub const LISTS_EXTENSION: &str = "flakyfyLists";
+/// `forYou` for Made for you, `liked` and `station`. `octoList` is unchanged.
+pub const LISTS_EXTENSION: &str = "octoLists";
 pub const LISTS_EXTENSION_VERSION: i32 = 2;
 
 /// getTransitionProfile: each song's transition profile (where it can blend into the next
 /// song), made by flakyfy-sonic. Listed while Sounds alike runs, since the same reading makes both.
-pub const TRANSITIONS_EXTENSION: &str = "flakyfyTransitions";
+pub const TRANSITIONS_EXTENSION: &str = "octoTransitions";
 pub const TRANSITIONS_EXTENSION_VERSION: i32 = 1;
 
 /// getStationSongs: a radio station is not a fixed list. It answers `stationSongs` with the
@@ -124,13 +124,13 @@ pub const TRANSITIONS_EXTENSION_VERSION: i32 = 1;
 /// or on its stream, the newest 1,000) is not served again unless nothing new is left. Error 70
 /// for a station that is not the caller's or not there any more. Listed while radio stations are
 /// served as playlists.
-pub const STATIONS_EXTENSION: &str = "flakyfyStations";
+pub const STATIONS_EXTENSION: &str = "octoStations";
 pub const STATIONS_EXTENSION_VERSION: i32 = 1;
 
 /// getAnimatedArt, and `animatedArt` on getAlbum for an Flakyfy app: an album's animated art from
 /// Apple Music, a square loop and a tall one, each an HLS playlist with a still frame and a
 /// background color. Listed while animated art is on.
-pub const ANIMATED_ART_EXTENSION: &str = "flakyfyAnimatedArt";
+pub const ANIMATED_ART_EXTENSION: &str = "octoAnimatedArt";
 pub const ANIMATED_ART_EXTENSION_VERSION: i32 = 1;
 
 /// Fields only a file in the library can truthfully have.
@@ -331,9 +331,9 @@ impl SubsonicResponseBuilder {
         fields.insert("coverArt".into(), station.id.clone().into());
         fields.insert("readonly".into(), true.into());
         fields.insert("validUntil".into(), millis(&station.valid_until_utc).into());
-        // flakyfyLists v2: the group of Flakyfy's lists this row belongs to.
+        // octoLists v2: the group of Flakyfy's lists this row belongs to.
         fields.insert(
-            "flakyfyGroup".into(),
+            "octoGroup".into(),
             flakyfy_core::library::generated_playlist_service::STATION_GROUP.into(),
         );
         fields
@@ -656,7 +656,7 @@ impl SubsonicResponseBuilder {
     /// Navidrome's getOpenSubsonicExtensions with Flakyfy's own added, in the format asked for.
     /// A failed answer passes through untouched; with no answer at all, Flakyfy lists its own.
     ///
-    /// flakyfyTopSongs, flakyfyRadioSources, flakyfyTransitions, flakyfyStations and flakyfyPlaces are left out;
+    /// octoTopSongs, octoRadioSources, octoTransitions, octoStations and octoPlaces are left out;
     /// [`Self::merge_open_subsonic_extensions_with`] lists them.
     pub fn merge_open_subsonic_extensions(
         &self,
@@ -681,12 +681,12 @@ impl SubsonicResponseBuilder {
         )
     }
 
-    /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with flakyfyTopSongs
+    /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
     /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
-    /// discovery being off hides, flakyfyRadioSources while radio can answer (`radio_sources`),
-    /// flakyfyTransitions while flakyfy-sonic makes profiles (`transitions`), flakyfyStations while
-    /// radio stations are served as playlists (`stations`), flakyfyPlaces while the place data
-    /// can be read (`places`), and flakyfyAnimatedArt while animated art is on
+    /// discovery being off hides, octoRadioSources while radio can answer (`radio_sources`),
+    /// octoTransitions while flakyfy-sonic makes profiles (`transitions`), octoStations while
+    /// radio stations are served as playlists (`stations`), octoPlaces while the place data
+    /// can be read (`places`), and octoAnimatedArt while animated art is on
     /// (`animated_art`).
     pub fn merge_open_subsonic_extensions_with(
         &self,
@@ -703,10 +703,10 @@ impl SubsonicResponseBuilder {
         animated_art: bool,
     ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
-        // flakyfyLyrics is only listed while its lookups can run, so a client never offers a
-        // "choose lyrics" that can only answer that lookups are off. flakyfyLibraryActions is only
-        // listed while library actions are on, flakyfyRadioSources while radio can answer, and
-        // flakyfyPlaces while there is place data to answer from, for the same reason.
+        // octoLyrics is only listed while its lookups can run, so a client never offers a
+        // "choose lyrics" that can only answer that lookups are off. octoLibraryActions is only
+        // listed while library actions are on, octoRadioSources while radio can answer, and
+        // octoPlaces while there is place data to answer from, for the same reason.
         let own: Vec<(&str, &[i32])> = OWN_EXTENSIONS
             .iter()
             .copied()
@@ -745,7 +745,7 @@ impl SubsonicResponseBuilder {
             return self.create_json_response(json!({
                 "status": "ok",
                 "version": SUBSONIC_VERSION,
-                "type": "flakyfy",
+                "type": "octo",
                 "openSubsonicExtensions": own
                     .iter()
                     .map(|(name, versions)| json!({ "name": name, "versions": versions }))
@@ -945,9 +945,9 @@ impl SubsonicResponseBuilder {
         if let Some(year) = song.year {
             fields.insert("year".into(), year.into());
         }
-        // Which radio source suggested the song; only radio answers carry it (flakyfyRadioSources).
+        // Which radio source suggested the song; only radio answers carry it (octoRadioSources).
         if let Some(by) = song.suggested_by.as_deref().filter(|by| !by.is_empty()) {
-            fields.insert("flakyfySuggestedBy".into(), by.into());
+            fields.insert("octoSuggestedBy".into(), by.into());
         }
 
         if !song.is_local {

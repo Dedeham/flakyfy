@@ -48,7 +48,7 @@ pub fn routes() -> RouteSet {
         .route("/api/admin/review-sweep/pause", post(pause_review_sweep))
         .route("/api/admin/review-sweep/reset", post(reset_review_sweep))
         .route(
-            "/api/admin/review-sweep/recheck-flakyfy",
+            "/api/admin/review-sweep/recheck-octo",
             post(recheck_flakyfy_downloads),
         )
         .route("/api/admin/youtube-check", get(get_youtube_check))

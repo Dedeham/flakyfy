@@ -433,7 +433,7 @@ impl DuplicateScanWorker {
         let mut tracks = Vec::new();
         for page in 0..Self::MAX_PAGES {
             let url = format!(
-                "{base_url}/rest/search3?f=json&c=flakyfy&v=1.16.1&query=%22%22&songCount={}&songOffset={}&albumCount=0&artistCount=0&u={}&t={}&s={}",
+                "{base_url}/rest/search3?f=json&c=octo&v=1.16.1&query=%22%22&songCount={}&songOffset={}&albumCount=0&artistCount=0&u={}&t={}&s={}",
                 Self::PAGE_SIZE,
                 page * Self::PAGE_SIZE,
                 dotnet::escape_data_string(&user),

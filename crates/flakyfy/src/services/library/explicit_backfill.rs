@@ -633,7 +633,7 @@ impl ExplicitBackfill {
         let mut paths: Vec<String> = walked
             .into_iter()
             .filter(|path| KINDS.iter().any(|kind| eq_ignore_case(kind, &extension_of(path))))
-            .filter(|path| !path.contains("/.flakyfy-"))
+            .filter(|path| !path.contains("/.octo-"))
             .collect();
         paths.sort_by(|a, b| compare_ordinal(a, b));
         Ok(paths

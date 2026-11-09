@@ -987,11 +987,11 @@ fn lyrics_choice_answers_are_always_json() {
     assert_eq!(reply.content_type, "application/json; charset=utf-8");
     assert_eq!(
         reply.text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"flakyfy","lyricsCandidates":{"id":"s1","choice":"lrclib:9001","candidate":[{"id":"lrclib:9001","source":"lrclib","title":"Polar Night","artist":"Aurora Vale","album":null,"duration":3,"kind":"line","sameSong":true,"chosen":true,"preview":["Long dark sky"]}]}}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","lyricsCandidates":{"id":"s1","choice":"lrclib:9001","candidate":[{"id":"lrclib:9001","source":"lrclib","title":"Polar Night","artist":"Aurora Vale","album":null,"duration":3,"kind":"line","sameSong":true,"chosen":true,"preview":["Long dark sky"]}]}}}"#
     );
     assert_eq!(
         builder().create_lyrics_choice_response("s1", "none").text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"flakyfy","lyricsChoice":{"id":"s1","choice":"none"}}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","lyricsChoice":{"id":"s1","choice":"none"}}}"#
     );
 }
 
@@ -1224,7 +1224,7 @@ fn a_radio_station_is_a_read_only_playlist() {
     };
     assert_eq!(
         flakyfy_core::json::to_string(&builder().radio_playlist_fields(&station)),
-        r#"{"id":"or1","name":"Radio","owner":"alice","public":false,"songCount":2,"duration":100,"created":"2026-01-02T03:04:05.000Z","changed":"2026-01-02T03:04:05.000Z","coverArt":"or1","readonly":true,"validUntil":"2026-01-02T03:04:05.000Z","flakyfyGroup":"station"}"#
+        r#"{"id":"or1","name":"Radio","owner":"alice","public":false,"songCount":2,"duration":100,"created":"2026-01-02T03:04:05.000Z","changed":"2026-01-02T03:04:05.000Z","coverArt":"or1","readonly":true,"validUntil":"2026-01-02T03:04:05.000Z","octoGroup":"station"}"#
     );
     let songs = [song("s1", "One", None)];
     let json = json_of(&builder().create_radio_playlist_response("Json", &station, &songs));
@@ -1234,8 +1234,8 @@ fn a_radio_station_is_a_read_only_playlist() {
     let root = xml_of(&builder().create_radio_playlist_response("xml", &station, &songs));
     let playlist = child(&root, "playlist");
     assert_eq!(playlist.attribute("readonly"), Some("true"));
-    assert_eq!(playlist.attribute("flakyfyGroup"), Some("station"));
-    assert_eq!(json["subsonic-response"]["playlist"]["flakyfyGroup"], "station");
+    assert_eq!(playlist.attribute("octoGroup"), Some("station"));
+    assert_eq!(json["subsonic-response"]["playlist"]["octoGroup"], "station");
     assert_eq!(playlist.elements_named(NS, "song").count(), 1);
 }
 
@@ -1300,7 +1300,7 @@ fn library_actions_offer_what_is_enabled() {
         builder()
             .create_library_actions_response(&off, Some("admin"), 1, true, "Soulseek", false, false, false)
             .text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"flakyfy","openSubsonic":true,"libraryActions":{"enabled":false,"allowed":false,"dryRun":true,"actions":[],"admin":false,"keepDays":30,"parallel":1,"upgradeSource":"Soulseek"}}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryActions":{"enabled":false,"allowed":false,"dryRun":true,"actions":[],"admin":false,"keepDays":30,"parallel":1,"upgradeSource":"Soulseek"}}}"#
     );
     let mut on = LibraryActionSettings {
         enabled: true,
@@ -1371,7 +1371,7 @@ fn library_actions_offer_what_is_enabled() {
         builder()
             .create_library_action_response("s1", "queued", None, UPGRADE_ACTION)
             .text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"flakyfy","openSubsonic":true,"libraryAction":{"id":"s1","action":"upgrade","state":"queued","detail":null}}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryAction":{"id":"s1","action":"upgrade","state":"queued","detail":null}}}"#
     );
 }
 
@@ -1408,7 +1408,7 @@ fn wrong_lyrics_and_wrong_cover_are_offered_only_when_switched_on() {
 
 // ---- getOpenSubsonicExtensions --------------------------------------------------------------
 
-const NAVIDROME_JSON: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1]},{"name":"flakyfyLyrics","versions":[0,1]}]}}"#;
+const NAVIDROME_JSON: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1]},{"name":"octoLyrics","versions":[0,1]}]}}"#;
 
 #[test]
 fn extensions_json_adds_flakyfys_own_and_missing_versions() {
@@ -1423,7 +1423,7 @@ fn extensions_json_adds_flakyfys_own_and_missing_versions() {
     assert_eq!(reply.content_type, "application/json");
     assert_eq!(
         reply.text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"flakyfyLyrics","versions":[1]},{"name":"flakyfyAcquisitions","versions":[1,2,3]},{"name":"flakyfyLibraryActions","versions":[1,2,3]},{"name":"flakyfyImports","versions":[1,2]},{"name":"flakyfyLists","versions":[1,2]}]}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoAcquisitions","versions":[1,2,3]},{"name":"octoLibraryActions","versions":[1,2,3]},{"name":"octoImports","versions":[1,2]},{"name":"octoLists","versions":[1,2]}]}}"#
     );
     // Lyrics choices off and library actions off leave those two out.
     let reply = builder().merge_open_subsonic_extensions(
@@ -1435,7 +1435,7 @@ fn extensions_json_adds_flakyfys_own_and_missing_versions() {
     );
     assert_eq!(
         reply.text(),
-        r#"{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"flakyfyAcquisitions","versions":[1,2,3]},{"name":"songLyrics","versions":[1,2]},{"name":"flakyfyImports","versions":[1,2]},{"name":"flakyfyLists","versions":[1,2]}]}}"#
+        r#"{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"octoAcquisitions","versions":[1,2,3]},{"name":"songLyrics","versions":[1,2]},{"name":"octoImports","versions":[1,2]},{"name":"octoLists","versions":[1,2]}]}}"#
     );
     // A failed answer is written back as it was read.
     let failed = r#"{"subsonic-response":{"status":"failed","error":{"code":40,"message":"isn't"}}}"#;
@@ -1466,16 +1466,16 @@ fn extensions_xml_adds_flakyfys_own_and_reindents() {
             "    <versions>1</versions>\n",
             "    <versions>2</versions>\n",
             "  </openSubsonicExtensions>\n",
-            "  <openSubsonicExtensions name=\"flakyfyAcquisitions\">\n",
+            "  <openSubsonicExtensions name=\"octoAcquisitions\">\n",
             "    <versions>1</versions>\n",
             "    <versions>2</versions>\n",
             "    <versions>3</versions>\n",
             "  </openSubsonicExtensions>\n",
-            "  <openSubsonicExtensions name=\"flakyfyImports\">\n",
+            "  <openSubsonicExtensions name=\"octoImports\">\n",
             "    <versions>1</versions>\n",
             "    <versions>2</versions>\n",
             "  </openSubsonicExtensions>\n",
-            "  <openSubsonicExtensions name=\"flakyfyLists\">\n",
+            "  <openSubsonicExtensions name=\"octoLists\">\n",
             "    <versions>1</versions>\n",
             "    <versions>2</versions>\n",
             "  </openSubsonicExtensions>\n",
@@ -1506,9 +1506,9 @@ fn the_places_extension_is_listed_last_only_with_place_data() {
     };
     assert_eq!(
         listed(true),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"flakyfyLyrics","versions":[1]},{"name":"flakyfyAcquisitions","versions":[1,2,3]},{"name":"flakyfyLibraryActions","versions":[1,2,3]},{"name":"flakyfyImports","versions":[1,2]},{"name":"flakyfyLists","versions":[1,2]},{"name":"flakyfyPlaces","versions":[1]}]}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoAcquisitions","versions":[1,2,3]},{"name":"octoLibraryActions","versions":[1,2,3]},{"name":"octoImports","versions":[1,2]},{"name":"octoLists","versions":[1,2]},{"name":"octoPlaces","versions":[1]}]}}"#
     );
-    assert!(!listed(false).contains("flakyfyPlaces"));
+    assert!(!listed(false).contains("octoPlaces"));
     let own = builder()
         .merge_open_subsonic_extensions_with(
             "xml", None, None, false, false, false, false, false, false, true, false,
@@ -1517,7 +1517,7 @@ fn the_places_extension_is_listed_last_only_with_place_data() {
         .to_string();
     assert!(
         own.ends_with(concat!(
-            "  <openSubsonicExtensions name=\"flakyfyPlaces\">\n",
+            "  <openSubsonicExtensions name=\"octoPlaces\">\n",
             "    <versions>1</versions>\n",
             "  </openSubsonicExtensions>\n",
             "</subsonic-response>"
@@ -1564,7 +1564,7 @@ fn extensions_without_an_answer_list_flakyfys_own() {
         builder()
             .merge_open_subsonic_extensions("json", None, None, true, true)
             .text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"flakyfy","openSubsonicExtensions":[{"name":"flakyfyAcquisitions","versions":[1,2,3]},{"name":"flakyfyLyrics","versions":[1]},{"name":"flakyfyLibraryActions","versions":[1,2,3]},{"name":"songLyrics","versions":[1,2]},{"name":"flakyfyImports","versions":[1,2]},{"name":"flakyfyLists","versions":[1,2]}]}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonicExtensions":[{"name":"octoAcquisitions","versions":[1,2,3]},{"name":"octoLyrics","versions":[1]},{"name":"octoLibraryActions","versions":[1,2,3]},{"name":"songLyrics","versions":[1,2]},{"name":"octoImports","versions":[1,2]},{"name":"octoLists","versions":[1,2]}]}}"#
     );
     assert_eq!(
         builder()
@@ -1572,7 +1572,7 @@ fn extensions_without_an_answer_list_flakyfys_own() {
             .text(),
         concat!(
             "<subsonic-response status=\"ok\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n",
-            "  <openSubsonicExtensions name=\"flakyfyAcquisitions\">\n",
+            "  <openSubsonicExtensions name=\"octoAcquisitions\">\n",
             "    <versions>1</versions>\n",
             "    <versions>2</versions>\n",
             "    <versions>3</versions>\n",
@@ -1581,11 +1581,11 @@ fn extensions_without_an_answer_list_flakyfys_own() {
             "    <versions>1</versions>\n",
             "    <versions>2</versions>\n",
             "  </openSubsonicExtensions>\n",
-            "  <openSubsonicExtensions name=\"flakyfyImports\">\n",
+            "  <openSubsonicExtensions name=\"octoImports\">\n",
             "    <versions>1</versions>\n",
             "    <versions>2</versions>\n",
             "  </openSubsonicExtensions>\n",
-            "  <openSubsonicExtensions name=\"flakyfyLists\">\n",
+            "  <openSubsonicExtensions name=\"octoLists\">\n",
             "    <versions>1</versions>\n",
             "    <versions>2</versions>\n",
             "  </openSubsonicExtensions>\n",
@@ -1660,14 +1660,14 @@ fn the_stations_extension_is_listed_last_and_only_when_asked() {
     };
     let listed = names(true);
     assert_eq!(listed.last().map(String::as_str), Some(STATIONS_EXTENSION));
-    assert_eq!(STATIONS_EXTENSION, "flakyfyStations");
+    assert_eq!(STATIONS_EXTENSION, "octoStations");
     assert!(!names(false).iter().any(|name| name == STATIONS_EXTENSION));
     // The short form never lists it.
     let short = builder()
         .merge_open_subsonic_extensions("json", None, None, true, true)
         .text()
         .into_owned();
-    assert!(!short.contains("flakyfyStations"), "{short}");
+    assert!(!short.contains("octoStations"), "{short}");
 }
 
 #[test]

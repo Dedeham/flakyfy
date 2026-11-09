@@ -1,4 +1,4 @@
-//! getTransitionProfile and the flakyfyTransitions extension, as the apps see them: a profile
+//! getTransitionProfile and the octoTransitions extension, as the apps see them: a profile
 //! flakyfy-sonic made, a song without one, one from an older analysis, a song from outside the
 //! library by the id the app plays it by, and a caller who is not signed in.
 
@@ -93,7 +93,7 @@ async fn a_ready_profile_comes_whole_with_the_id_asked_for() {
     let answer = ask(&h, &format!("getTransitionProfile?{ALICE}&id=nd-1")).await;
 
     assert_eq!(answer["status"], "ok");
-    assert_eq!(answer["type"], "flakyfy");
+    assert_eq!(answer["type"], "octo");
     let got = &answer["transitionProfile"];
     assert_eq!(got["id"], "nd-1");
     assert_eq!(got["ready"], true);
@@ -169,32 +169,29 @@ async fn the_extension_is_listed_once_profiles_are_made() {
     let h = harness(true).await;
     let query = format!("getOpenSubsonicExtensions?{ALICE}&f=json");
     // flakyfy-sonic has not said it makes profiles yet.
-    assert!(!extensions(&ask(&h, &query).await).contains(&"flakyfyTransitions".to_string()));
+    assert!(!extensions(&ask(&h, &query).await).contains(&"octoTransitions".to_string()));
     h.state.sonic_worker.transitions().set_current_version(1);
     let listed = ask(&h, &query).await;
     let entry = listed["openSubsonicExtensions"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|e| e["name"] == "flakyfyTransitions")
+        .find(|e| e["name"] == "octoTransitions")
         .cloned();
-    assert_eq!(
-        entry,
-        Some(json!({ "name": "flakyfyTransitions", "versions": [1] }))
-    );
+    assert_eq!(entry, Some(json!({ "name": "octoTransitions", "versions": [1] })));
 }
 
 #[tokio::test]
 async fn with_sounds_alike_off_the_extension_is_listed_and_profiles_are_served() {
     let off = harness(false).await;
     let query = format!("getOpenSubsonicExtensions?{ALICE}&f=json");
-    assert!(!extensions(&ask(&off, &query).await).contains(&"flakyfyTransitions".to_string()));
+    assert!(!extensions(&ask(&off, &query).await).contains(&"octoTransitions".to_string()));
     off.state.sonic_worker.transitions().set_current_version(1);
     off.state
         .sonic_worker
         .transitions()
         .put("nd-1", "1:1", None, &profile(1));
-    assert!(extensions(&ask(&off, &query).await).contains(&"flakyfyTransitions".to_string()));
+    assert!(extensions(&ask(&off, &query).await).contains(&"octoTransitions".to_string()));
     let answer = ask(&off, &format!("getTransitionProfile?{ALICE}&id=nd-1")).await;
     assert_eq!(answer["transitionProfile"]["ready"], true);
 }

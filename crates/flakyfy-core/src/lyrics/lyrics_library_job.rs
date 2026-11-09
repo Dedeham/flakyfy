@@ -38,7 +38,7 @@ pub enum LyricsLibraryMode {
 }
 
 /// The run's `Scope` when it walks only the songs Flakyfy downloaded.
-pub const FLAKYFY_DOWNLOADS: &str = "FlakyfyDownloads";
+pub const FLAKYFY_DOWNLOADS: &str = "OctoDownloads";
 
 /// The run's `Scope` when it walks every song under the music folder.
 pub const WHOLE_LIBRARY: &str = "WholeLibrary";
@@ -219,7 +219,7 @@ pub struct LyricsLibraryRun {
     pub run_id: String,
     pub status: LyricsLibraryStatus,
 
-    /// FlakyfyDownloads, or WholeLibrary when "Write lyrics files beside all library songs" was on
+    /// OctoDownloads, or WholeLibrary when "Write lyrics files beside all library songs" was on
     /// when the run started.
     #[serde(deserialize_with = "null_as_default")]
     pub scope: String,

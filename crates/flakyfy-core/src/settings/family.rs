@@ -10,7 +10,7 @@ use crate::family::device::parse_networks;
 pub const MEMBERS_NEXT_TO_MUSIC: &str = "Auto";
 
 /// The folder inside the music folder that holds members' music when `MembersPath` is `Auto`.
-pub const FAMILY_FOLDER: &str = ".flakyfy-family";
+pub const FAMILY_FOLDER: &str = ".octo-family";
 
 /// Flakyfy Family's settings. Off by default, and with `Enabled` false nothing Flakyfy answers
 /// changes.
@@ -21,7 +21,7 @@ pub struct FamilySettings {
     /// FAMILY_ENABLED).
     pub enabled: bool,
     /// Where members' own libraries live, at the same path inside Flakyfy and Navidrome. `Auto`
-    /// (the default) is a `.flakyfy-family` folder in the music folder Flakyfy shares with
+    /// (the default) is a `.octo-family` folder in the music folder Flakyfy shares with
     /// Navidrome; anything else is a full folder path.
     pub members_path: String,
     /// Networks that count as home (commas or spaces between them; a bare address is one
@@ -102,7 +102,7 @@ impl FamilySettings {
         path.is_empty() || path.eq_ignore_ascii_case(MEMBERS_NEXT_TO_MUSIC)
     }
 
-    /// The members folder without trailing slashes: `<music_root>/.flakyfy-family` for `Auto`,
+    /// The members folder without trailing slashes: `<music_root>/.octo-family` for `Auto`,
     /// else the path as written.
     pub fn members_path_in(&self, music_root: &str) -> String {
         if self.members_path_is_auto() {
@@ -117,7 +117,7 @@ impl FamilySettings {
     }
 }
 
-/// The members folder next to the music folder `music_root`: `<music_root>/.flakyfy-family`.
+/// The members folder next to the music folder `music_root`: `<music_root>/.octo-family`.
 pub fn next_to_music(music_root: &str) -> String {
     format!("{}/{FAMILY_FOLDER}", music_root.trim().trim_end_matches('/'))
 }
@@ -135,7 +135,7 @@ mod tests {
         assert!(!s.enabled);
         assert_eq!(s.members_path, "Auto");
         assert!(s.members_path_is_auto());
-        assert_eq!(s.members_path_in("/music/"), "/music/.flakyfy-family");
+        assert_eq!(s.members_path_in("/music/"), "/music/.octo-family");
         assert!(!s.owner_sees_member_libraries);
         assert!(!s.owner_sees_member_playlists);
         assert_eq!(s.unmanaged_accounts, "AsToday");

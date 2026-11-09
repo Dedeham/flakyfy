@@ -115,8 +115,8 @@ mod tests {
             ),
             // Names that only start or end like a secret, and empty values, are left alone.
             (
-                "?ts=1&st=2&sort=3&apiKeyId=4&tokens=5&clientId=6&api_keys=7&c=Flakyfy",
-                "?ts=1&st=2&sort=3&apiKeyId=4&tokens=5&clientId=6&api_keys=7&c=Flakyfy",
+                "?ts=1&st=2&sort=3&apiKeyId=4&tokens=5&clientId=6&api_keys=7&c=Octo",
+                "?ts=1&st=2&sort=3&apiKeyId=4&tokens=5&clientId=6&api_keys=7&c=Octo",
             ),
             ("?t=&s=", "?t=&s="),
             ("no query here, t=abc", "no query here, t=abc"),
@@ -150,11 +150,11 @@ mod tests {
         // Each secret name, sent on its own, is masked and the rest of the line kept.
         for name in SECRET_NAMES {
             let secret = format!("Secret{}", uuid::Uuid::new_v4().simple());
-            let line = format!("/rest/ping.view?u=winters&{name}={secret}&v=1.16.1&c=Flakyfy&f=json");
+            let line = format!("/rest/ping.view?u=winters&{name}={secret}&v=1.16.1&c=Octo&f=json");
             let redacted = redact(&line);
             assert!(
                 redacted.contains(&format!(
-                    "/rest/ping.view?u=winters&{name}=***&v=1.16.1&c=Flakyfy&f=json"
+                    "/rest/ping.view?u=winters&{name}=***&v=1.16.1&c=Octo&f=json"
                 )),
                 "{name}: {redacted}"
             );
@@ -180,13 +180,13 @@ mod tests {
             secret(),
         );
         let line = format!(
-            "Request finished HTTP/1.1 GET http://localhost/rest/star.view?u=winters&t={t}&s={s}&p={p}&apiKey={api_key}&token={token}&v=1.16.1&c=Flakyfy&f=json&id=42 - 200"
+            "Request finished HTTP/1.1 GET http://localhost/rest/star.view?u=winters&t={t}&s={s}&p={p}&apiKey={api_key}&token={token}&v=1.16.1&c=Octo&f=json&id=42 - 200"
         );
 
         let redacted = redact(&line);
         assert!(
             redacted.contains(
-                "/rest/star.view?u=winters&t=***&s=***&p=***&apiKey=***&token=***&v=1.16.1&c=Flakyfy&f=json&id=42"
+                "/rest/star.view?u=winters&t=***&s=***&p=***&apiKey=***&token=***&v=1.16.1&c=Octo&f=json&id=42"
             ),
             "{redacted}"
         );
@@ -221,8 +221,8 @@ mod tests {
                 "GET /rest/getFamilySignInRedeem?id=***&v=1.16.1&f=json - 200",
             ),
             (
-                "GET /rest/getFamilySignInRedeem.view?f=json&ID=Id-9&c=Flakyfy",
-                "GET /rest/getFamilySignInRedeem.view?f=json&ID=***&c=Flakyfy",
+                "GET /rest/getFamilySignInRedeem.view?f=json&ID=Id-9&c=Octo",
+                "GET /rest/getFamilySignInRedeem.view?f=json&ID=***&c=Octo",
             ),
             (
                 "POST /api/family/signin/redeem?k=Key-1&token=T",
@@ -251,10 +251,10 @@ mod tests {
 
     #[test]
     fn family_codes_are_masked() {
-        let line = "/rest/flakyfyFamilyPair?username=alex&code=123456&deviceName=Pixel&secret=S1&password=P1&invite=I1&jwt=J1&Code=2";
+        let line = "/rest/octoFamilyPair?username=alex&code=123456&deviceName=Pixel&secret=S1&password=P1&invite=I1&jwt=J1&Code=2";
         assert_eq!(
             redact(line),
-            "/rest/flakyfyFamilyPair?username=alex&code=***&deviceName=Pixel&secret=***&password=***&invite=***&jwt=***&Code=***"
+            "/rest/octoFamilyPair?username=alex&code=***&deviceName=Pixel&secret=***&password=***&invite=***&jwt=***&Code=***"
         );
         // Names that only start like one of them stay readable.
         let other = "?codec=mp3&secrets=1&passwords=2&invited=3&jwtx=4";

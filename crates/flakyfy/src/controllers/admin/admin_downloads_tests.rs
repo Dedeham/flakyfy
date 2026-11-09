@@ -86,14 +86,14 @@ impl Dashboard {
     }
 
     async fn get(&self, token: Option<&str>, path: &str) -> Reply {
-        let headers: Vec<(&str, &str)> = token.map(|t| ("X-Flakyfy-Browse-Token", t)).into_iter().collect();
+        let headers: Vec<(&str, &str)> = token.map(|t| ("X-Octo-Browse-Token", t)).into_iter().collect();
         send(&self.app, Method::GET, path, &headers, None).await
     }
 
     async fn post(&self, token: Option<&str>, path: &str, body: &Value) -> Reply {
-        let mut headers = vec![("X-Flakyfy-Admin", "1")];
+        let mut headers = vec![("X-Octo-Admin", "1")];
         if let Some(token) = token {
-            headers.push(("X-Flakyfy-Browse-Token", token));
+            headers.push(("X-Octo-Browse-Token", token));
         }
         send(&self.app, Method::POST, path, &headers, Some(&body.to_string())).await
     }

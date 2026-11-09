@@ -67,7 +67,7 @@ pub const KEPT_FOLDER: &str = ".kept";
 
 /// The file Flakyfy writes in the pool folder when Family is turned on. A pool folder without it
 /// is not swept and takes no new member downloads.
-pub const POOL_MARKER: &str = ".flakyfy-pool";
+pub const POOL_MARKER: &str = ".octo-pool";
 
 /// What the marker file says, for anyone who finds it.
 const POOL_MARKER_TEXT: &str =
@@ -2483,7 +2483,7 @@ fn carry_companions(companions: &[String], target: &Path, copy: bool) {
 /// the same link, the link becomes a real copy of what it points to.
 fn copy_staged(from: &Path, to: &Path) -> io::Result<()> {
     let mut name = to.as_os_str().to_owned();
-    name.push(".flakyfy-copy");
+    name.push(".octo-copy");
     let staged = PathBuf::from(name);
     copy_file(from, &staged)?;
     if let Err(e) = std::fs::rename(&staged, to) {
@@ -2652,7 +2652,7 @@ fn probe(root: &Path) -> bool {
     if make_dirs(root).is_err() {
         return false;
     }
-    let name = format!(".flakyfy-link-probe-{}", hex::encode(rand::random::<[u8; 6]>()));
+    let name = format!(".octo-link-probe-{}", hex::encode(rand::random::<[u8; 6]>()));
     let file = root.join(&name);
     let link = root.join(format!("{name}.link"));
     let works = std::fs::write(&file, b"flakyfy").is_ok()

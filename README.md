@@ -261,9 +261,9 @@ so.
 
   ```bash
   # flakyfy-login.json holds {"username":"admin","password":"..."}; chmod 600 it.
-  curl -c flakyfy.cookies -H 'Content-Type: application/json' -H 'X-Flakyfy-Admin: 1' \
+  curl -c flakyfy.cookies -H 'Content-Type: application/json' -H 'X-Octo-Admin: 1' \
     --data @flakyfy-login.json http://<your-host>:5274/api/admin/browse/auth
-  curl -b flakyfy.cookies -c flakyfy.cookies -H 'X-Flakyfy-Admin: 1' -X POST \
+  curl -b flakyfy.cookies -c flakyfy.cookies -H 'X-Octo-Admin: 1' -X POST \
     http://<your-host>:5274/api/admin/update/check
   ```
 
@@ -283,7 +283,7 @@ so.
 
 Music apps never need the dashboard; they only use `/rest`. Keeping `/admin` and `/api/admin`
 off a public hostname is still a good idea. Writes to the admin API must also carry an
-`X-Flakyfy-Admin` header, which a page on another website cannot add, so a site you visit cannot
+`X-Octo-Admin` header, which a page on another website cannot add, so a site you visit cannot
 change Flakyfy through your signed-in browser.
 
 Saved passwords, API keys, tokens and webhook addresses never come back out of the admin API:
@@ -341,7 +341,7 @@ Yes. Every download is identified before it is filed: the fingerprint service's 
 
 Yes. Every image is published for amd64 and arm64, so a Pi pulls Flakyfy, the yt-dlp shim and flakyfy-sonic instead of compiling them (see [Published images](#published-images)). The yt-dlp sidecar does most of the CPU work; a Pi 4 or Pi 5 handles a single household's listening fine.
 
-### What is the flakyfypus on some covers?
+### What is the snowflake on some covers?
 
 It marks songs, albums and artists that are not in your library yet, so you can tell them apart in any app: a heart on one downloads it. Your own covers never carry it, it is never written into your files, and Flakyfy's own apps mark these songs their own way. To show those covers plain, turn off **Mark outside covers** under Settings, Search and discovery, or set `COVER_BADGE=false` in `.env`. Apps that saved a cover earlier keep their copy until they refresh it.
 
@@ -473,7 +473,7 @@ it names. An album id starts from its first song, an artist id from artists like
 radio a library song that sounds far from the seed slips down and one that sounds close moves
 up.
 
-Every radio song carries `flakyfySuggestedBy`, the source that counted most for it, and the Flakyfy
+Every radio song carries `octoSuggestedBy`, the source that counted most for it, and the Flakyfy
 apps show it in the song's info. Radio also learns from listening: a radio song played through
 counts for its source and one skipped counts against it, per listener, and each listener's
 weights lean on the sources they keep (never below 0.3 or above 1.5). The dashboard's Radio page
@@ -570,7 +570,7 @@ for confirmation before setting a star, a mis-tap is a request. The playlists ca
 risk, which is why they are the default.
 
 An app can also remove a song directly, without a playlist or a rating, through the
-`flakyfyLibraryActions` extension, which is only listed while library actions are on.
+`octoLibraryActions` extension, which is only listed while library actions are on.
 `getLibraryActions` tells the caller whether actions are on, whether they are on the allowlist,
 whether it is a dry run, and how many days a removed file is kept. `libraryAction` with an `id`
 and `action=remove` does exactly what the Delete playlist does, with the same allowlist, dry run
@@ -626,7 +626,7 @@ is sure a song is something else, or when a song runs much longer or shorter tha
 recording it matched; those are questions too, never acted on by themselves. It stops while 50
 of its questions wait for an answer, and a Keep on one sends nothing to AcoustID, since its
 tags were never confirmed. Flakyfy's own downloads are skipped, since each was checked when it
-arrived if verification was on at the time; `LIBRARY_ACTIONS_REVIEW_SWEEP_FLAKYFY_DOWNLOADS` checks
+arrived if verification was on at the time; `LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS` checks
 them too.
 
 A sound AcoustID has never heard, or one only one person ever linked to the song in AcoustID, is
@@ -831,7 +831,7 @@ a Last.fm key), drawn again every `MIX_REFRESH_HOURS`. The artist cap holds for 
 artists, never for the artist themself. An artist keeps their mix while they rank within
 three places past the count, and one that falls further keeps it until it is a week old.
 
-Every Flakyfy list row in getPlaylists and getPlaylist carries `flakyfyGroup` (flakyfyLists version 2),
+Every Flakyfy list row in getPlaylists and getPlaylist carries `octoGroup` (octoLists version 2),
 so an app can group Flakyfy's lists: `genre`, `decade`, `year`, `country`, `artist`, `chart`,
 `forYou`, `liked` or `station`.
 
@@ -1008,7 +1008,7 @@ Cover art comes from a chain, and the largest cover found wins: Apple's full-siz
 
 Word timing reaches every client that can use it. A `.lrc` with word timing is enhanced LRC: each line keeps its standard `[mm:ss.xx]` tag, so any player shows it line by line, and `<mm:ss.xx>` tags time the words, which Navidrome turns into OpenSubsonic word cues. `getLyricsBySongId` answers with the same cues for the songs Flakyfy answers itself, but only when the client asks for them with `enhanced=true`; a client that does not ask gets exactly the lines it always got. `LYRICS_PREFER_WORD_TIMED` (on by default) lets a later source with word timing win over an earlier one with only line timing. The legacy `getLyrics` call (artist and title) gets the same lookup as plain text.
 
-The dashboard's **Lyrics** page works like the soft covers wall. **Scan** reads your songs (Flakyfy's downloads or the whole library) and lists the ones with no lyrics, plain lyrics, or lyrics timed only by line; it looks nothing up and changes nothing. **Find better lyrics** looks the picked songs up in the source order, a second and a half apart, and shows what it found with its first lines; a match the sources were not sure of is shown but not picked. **Save** writes them where `LYRICS_SAVE_TO` says. Flakyfy replaces only lyrics it wrote: better lyrics for a song with someone else's go beside it as a `.lrc`, which Navidrome serves ahead of the tags, and the originals stay. Everything Save writes over is kept, so **Undo** puts it back. A lyrics pin follows its song by artist and title, so it survives a file being replaced by a better copy. **Fix a song's lyrics** chooses other lyrics for one song, hides them, or goes back to automatic, for every app at once. The Flakyfy app does the same through the `flakyfyLyrics` extension (`getLyricsCandidates`, `setLyricsChoice`).
+The dashboard's **Lyrics** page works like the soft covers wall. **Scan** reads your songs (Flakyfy's downloads or the whole library) and lists the ones with no lyrics, plain lyrics, or lyrics timed only by line; it looks nothing up and changes nothing. **Find better lyrics** looks the picked songs up in the source order, a second and a half apart, and shows what it found with its first lines; a match the sources were not sure of is shown but not picked. **Save** writes them where `LYRICS_SAVE_TO` says. Flakyfy replaces only lyrics it wrote: better lyrics for a song with someone else's go beside it as a `.lrc`, which Navidrome serves ahead of the tags, and the originals stay. Everything Save writes over is kept, so **Undo** puts it back. A lyrics pin follows its song by artist and title, so it survives a file being replaced by a better copy. **Fix a song's lyrics** chooses other lyrics for one song, hides them, or goes back to automatic, for every app at once. The Flakyfy app does the same through the `octoLyrics` extension (`getLyricsCandidates`, `setLyricsChoice`).
 
 ### Subsonic API surface
 
@@ -1017,31 +1017,31 @@ Flakyfy hijacks these endpoints; everything else proxies to Navidrome unchanged:
 | Endpoint | Why |
 |---|---|
 | `search3` | merge local + Last.fm-driven external songs and Deezer-driven external albums; later pages carry on through the outside songs page one started; an outside album the library holds whole (by its songs, under any album name) or by its very name is listed as the library's album, and one held in part carries `ownedCount` beside `songCount` |
-| `getSimilarSongs2` | radio queue blended from Last.fm, YouTube Music, ListenBrainz and Sounds alike, local first; a song the catalogs cannot place is led by its album and genre; each song carries `flakyfySuggestedBy` |
+| `getSimilarSongs2` | radio queue blended from Last.fm, YouTube Music, ListenBrainz and Sounds alike, local first; a song the catalogs cannot place is led by its album and genre; each song carries `octoSuggestedBy` |
 | `getPlaylists`, `getPlaylist` | append authenticated per-user read-only Radio snapshots, mixes and Popular right now, and materialize tracks local-first |
 | `createPlaylist`, `updatePlaylist`, `deletePlaylist` | protect reserved Radio IDs while relaying ordinary mutations |
 | `getInternetRadioStations` | append startup-warmed authenticated Flakyfy stations immediately, with a one-starter same-request fallback, while preserving ordinary internet radio |
 | `createInternetRadioStation`, `updateInternetRadioStation`, `deleteInternetRadioStation` | protect Flakyfy stations while relaying ordinary internet-radio mutations |
 | `/radio/stream/{token}` | consume the ready MP3 pool, optionally frame its existing artist/title as client-requested ICY metadata, and replenish it until disconnect |
 | `stream` | YouTube proxy with Range support, mp4/m4a passthrough |
-| `getCoverArt` | Deezer → iTunes → Last.fm aggregator; outside covers carry the Flakyfy flakyfypus unless `COVER_BADGE=false` |
+| `getCoverArt` | Deezer → iTunes → Last.fm aggregator; outside covers carry the Flakyfy snowflake unless `COVER_BADGE=false` |
 | `getArtist` | an artist's albums, EPs and singles from Deezer beside the ones you own, each with its OpenSubsonic `releaseTypes` and, when counted, `ownedCount` |
 | `getAlbum` | external album tracklists, with the songs you already have given as your library's copies (and `ownedCount`), and fills in tracks you're missing from an album you own |
 | `star` | try enabled heart sources in priority order and stop after the first successful track/album acquisition |
 | `scrobble` | relay library plays to Navidrome, send plays to Last.fm (library ones too unless left to Navidrome) and outside plays to ListenBrainz, prewarm the next 8, and learn deduplicated completed plays for the authenticated user |
 | `getTranscodeDecision` | OpenSubsonic: return direct-play for Flakyfy IDs |
 | `getLyricsBySongId`, `getLyrics` | lyrics for outside songs and for library songs Navidrome has none for; chosen or hidden lyrics for every client; word cues with `enhanced=true` |
-| `getLyricsCandidates`, `setLyricsChoice` | the `flakyfyLyrics` extension: every lyrics entry for a song, and pinning one, hiding lyrics, or going back to automatic |
-| `getLibraryActions`, `libraryAction`, `getLibraryTrash` | the `flakyfyLibraryActions` extension: what the caller may do to library files, removing one song the way the Delete playlist does, putting it back, and the tag, album and cover fixes of Library health |
-| `getAcquisitions`, `getAcquisition`, `clearAcquisitions` | the `flakyfyAcquisitions` extension: the caller's downloads; version 2 adds each one's log and clearing finished ones |
-| `findSongs`, `getFoundSongs`, `pickFoundSong` | `flakyfyAcquisitions` 2: a song's search run again on the caller's download sources, every copy found, and fetching the one picked |
-| `getImports`, `getImport`, `importAction` | the `flakyfyImports` extension: the caller's imported lists with what the library has of each, and the trickle |
+| `getLyricsCandidates`, `setLyricsChoice` | the `octoLyrics` extension: every lyrics entry for a song, and pinning one, hiding lyrics, or going back to automatic |
+| `getLibraryActions`, `libraryAction`, `getLibraryTrash` | the `octoLibraryActions` extension: what the caller may do to library files, removing one song the way the Delete playlist does, putting it back, and the tag, album and cover fixes of Library health |
+| `getAcquisitions`, `getAcquisition`, `clearAcquisitions` | the `octoAcquisitions` extension: the caller's downloads; version 2 adds each one's log and clearing finished ones |
+| `findSongs`, `getFoundSongs`, `pickFoundSong` | `octoAcquisitions` 2: a song's search run again on the caller's download sources, every copy found, and fetching the one picked |
+| `getImports`, `getImport`, `importAction` | the `octoImports` extension: the caller's imported lists with what the library has of each, and the trickle |
 | `getTopSongs` | the standard top songs of an artist (by name, or by id as Navidrome's `topSongsByArtistId`), for every app: ranked as `getArtistTopSongs` ranks them, songs you have as your library's own and the rest as outside songs (only yours while search discovery is off); Navidrome's answer when Flakyfy has none |
-| `getArtistTopSongs`, `getTopChart`, `getCharts` | the `flakyfyTopSongs` extension: an artist's most played songs and the chart of the moment, each marked in the caller's library or playable from outside it, and the charts a country has; `getTopChart` and `getCharts` take `country` (any Apple Music country, the caller's own when not sent or `auto`; error 10 for one Apple does not have, error 0 "Still loading your other countries. Try again in a moment." while two other countries are already loading for the caller; it frees as they finish) |
-| `setChartCountry`, `pinChartCountry` | `flakyfyTopSongs` 3: the caller's own chart country (`country`, or `auto` to follow the server's), and pinning (`pinned=true` or `1`) or unpinning (`pinned=false` or `0`) one more `country`, at most 3; error 10 for a country Apple does not have, error 0 while two other countries are already loading for the caller, which frees as they finish; each answers like `getCharts`, which then says the caller's `setting`, `pinned`, the `serverCountry`, Apple's `countries` and `maxPinned` |
-| `getPlace` | the `flakyfyPlaces` extension, for the apps' Live radio near you: a postal code (`code` and `country`, any case or spacing, `UK` for `GB`; a full UK, Canadian or Dutch code finds the part GeoNames keeps, and a ZIP+4 its five digits), a city (`name`, optional `state` by name or code, and `country`; of the towns with that name, and that state when one is sent, the one with the most postal codes, at the postal code nearest its others) or a coordinate (`latitude` and `longitude` in decimal degrees: the nearest place within 30 km), in that order when several are sent, answered as `place` with `code`, `name`, `state` (when known), `country`, `latitude` and `longitude` (2 decimals). Error 70 for a place Flakyfy does not know, error 10 for missing parameters or coordinates that are not decimal degrees. Answered from GeoNames' postal codes, built into the image; nothing is sent anywhere |
+| `getArtistTopSongs`, `getTopChart`, `getCharts` | the `octoTopSongs` extension: an artist's most played songs and the chart of the moment, each marked in the caller's library or playable from outside it, and the charts a country has; `getTopChart` and `getCharts` take `country` (any Apple Music country, the caller's own when not sent or `auto`; error 10 for one Apple does not have, error 0 "Still loading your other countries. Try again in a moment." while two other countries are already loading for the caller; it frees as they finish) |
+| `setChartCountry`, `pinChartCountry` | `octoTopSongs` 3: the caller's own chart country (`country`, or `auto` to follow the server's), and pinning (`pinned=true` or `1`) or unpinning (`pinned=false` or `0`) one more `country`, at most 3; error 10 for a country Apple does not have, error 0 while two other countries are already loading for the caller, which frees as they finish; each answers like `getCharts`, which then says the caller's `setting`, `pinned`, the `serverCountry`, Apple's `countries` and `maxPinned` |
+| `getPlace` | the `octoPlaces` extension, for the apps' Live radio near you: a postal code (`code` and `country`, any case or spacing, `UK` for `GB`; a full UK, Canadian or Dutch code finds the part GeoNames keeps, and a ZIP+4 its five digits), a city (`name`, optional `state` by name or code, and `country`; of the towns with that name, and that state when one is sent, the one with the most postal codes, at the postal code nearest its others) or a coordinate (`latitude` and `longitude` in decimal degrees: the nearest place within 30 km), in that order when several are sent, answered as `place` with `code`, `name`, `state` (when known), `country`, `latitude` and `longitude` (2 decimals). Error 70 for a place Flakyfy does not know, error 10 for missing parameters or coordinates that are not decimal degrees. Answered from GeoNames' postal codes, built into the image; nothing is sent anywhere |
 | `/api/artist/{id}`, `/api/album?artist_id=` | Navidrome's own API, for clients that use it (Feishin): an outside artist's page and its albums |
-| `getOpenSubsonicExtensions` | Navidrome's list plus `flakyfyAcquisitions` 1 and 2, `flakyfyLyrics` (while lyrics lookups are on), `flakyfyLibraryActions` (while library actions are on), `flakyfyTopSongs` 1 to 3 (while search discovery is on), `flakyfyImports`, `flakyfyRadioSources` (while radio can answer: radio songs carry `flakyfySuggestedBy`), `flakyfyPlaces` (while the place data can be read, so an app without it keeps to its own lookup) and `songLyrics` 1 and 2 |
+| `getOpenSubsonicExtensions` | Navidrome's list plus `octoAcquisitions` 1 and 2, `octoLyrics` (while lyrics lookups are on), `octoLibraryActions` (while library actions are on), `octoTopSongs` 1 to 3 (while search discovery is on), `octoImports`, `octoRadioSources` (while radio can answer: radio songs carry `octoSuggestedBy`), `octoPlaces` (while the place data can be read, so an app without it keeps to its own lookup) and `songLyrics` 1 and 2 |
 
 ### Soulseek download details
 
@@ -1059,7 +1059,7 @@ Around 30 to 50% of Soulseek peer requests get rejected ("overwhelmed", queue fu
 
 Before any of that, Flakyfy checks whether the song is already in your library (Navidrome's own search, the same artist and title in the same version, a length within 8 seconds or the same album). A lossless copy is kept and nothing is downloaded; a lossy one is kept and queued for a higher quality copy when Soulseek or Lidarr can look for one and Better quality is on for you (`SKIP_OWNED_SONGS`, on by default). A heart through Lidarr follows the same rule: Lidarr brings the whole album, and the songs you already have are deleted from what it brought.
 
-Each Soulseek download lands in a hidden folder of its own (`.flakyfy-incoming/slskd/<id>` in slskd's downloads folder), so Flakyfy always finds exactly its own file. Once slskd has shown it honours that folder, up to `SLSKD_PARALLEL_DOWNLOADS` (default 3, at most 6) downloads transfer at once; moving files into your library stays one at a time. An slskd without batch downloads, or one whose download subfolder setting is `{}`, keeps Flakyfy at one at a time.
+Each Soulseek download lands in a hidden folder of its own (`.octo-incoming/slskd/<id>` in slskd's downloads folder), so Flakyfy always finds exactly its own file. Once slskd has shown it honours that folder, up to `SLSKD_PARALLEL_DOWNLOADS` (default 3, at most 6) downloads transfer at once; moving files into your library stays one at a time. An slskd without batch downloads, or one whose download subfolder setting is `{}`, keeps Flakyfy at one at a time.
 
 Starring an album searches the album once and takes one person's folder of it in a single batch, matched to the tracklist by title, length and track number. Songs that folder lacks, or whose file fails a check, are searched one by one, side by side (`SLSKD_ALBUM_FOLDERS`, on by default).
 
@@ -1080,7 +1080,7 @@ How the switch works: Flakyfy signs in to slskd as its administrator and writes 
 While sharing is on:
 
 - **Read-only.** `DOWNLOAD_PATH` is mounted into slskd a second time, at `/share`, read-only, and that is the folder slskd shares. An upload only ever reads a file. Other people see it as a folder named `Music`, never your own path.
-- **Nothing private.** Flakyfy's working folders (`.flakyfy-incoming`, `.flakyfy-trash`) are hidden folders, which slskd skips, and a share filter keeps out Flakyfy's temporary and partial files. slskd's own unfinished downloads live in `slskd-state/incomplete`, which is not shared. What is shared is `SLSKD_SHARED_DIR` (Flakyfy hands it to slskd). To keep a folder of your own out, add it there with a `!` in front, for example `[Music]/share;!/share/Voice Memos`.
+- **Nothing private.** Flakyfy's working folders (`.octo-incoming`, `.octo-trash`) are hidden folders, which slskd skips, and a share filter keeps out Flakyfy's temporary and partial files. slskd's own unfinished downloads live in `slskd-state/incomplete`, which is not shared. What is shared is `SLSKD_SHARED_DIR` (Flakyfy hands it to slskd). To keep a folder of your own out, add it there with a `!` in front, for example `[Music]/share;!/share/Voice Memos`.
 - **Polite limits.** 4 uploads at a time and 2048 KiB/s (about 16 Mbit/s) in all, so sharing never crowds out streaming from your server (`SLSKD_UPLOAD_SLOTS`, `SLSKD_UPLOAD_SPEED_LIMIT`). Raise them if you have upload to spare.
 - **New songs are shared too.** slskd looks through the shared folders once a day (`SLSKD_SHARE_RESCAN_MINUTES`, 60 or more). Every look reads each file's header, so a library on a cloud drive is better at 10080, once a week. The dashboard's **Rescan shared folders** button looks straight away.
 
@@ -1127,7 +1127,7 @@ cargo fmt --all
 
 A debug build serves the dashboard and images from the `app/` folder: set `FLAKYFY_WWWROOT=app/wwwroot` and `FLAKYFY_ASSETS=app/Assets` when you run it from the repository.
 
-`getPlace` reads `data/places.bin` beside the binary (in the image, `/app/data/places.bin`), else `places.bin` in the config folder; `FLAKYFY_PLACES_FILE` names another file. Without one, every place answers error 70, `flakyfyPlaces` is not listed and the log says so once. The image build makes it from GeoNames' postal codes, downloaded once per release (`PLACES_REFRESH` downloads them again; `PLACES_DOWNLOAD=0` builds without them, and the build log warns when an image has none); to make one by hand:
+`getPlace` reads `data/places.bin` beside the binary (in the image, `/app/data/places.bin`), else `places.bin` in the config folder; `FLAKYFY_PLACES_FILE` names another file. Without one, every place answers error 70, `octoPlaces` is not listed and the log says so once. The image build makes it from GeoNames' postal codes, downloaded once per release (`PLACES_REFRESH` downloads them again; `PLACES_DOWNLOAD=0` builds without them, and the build log warns when an image has none); to make one by hand:
 
 ```bash
 curl -O https://download.geonames.org/export/zip/allCountries.zip && unzip allCountries.zip allCountries.txt
@@ -1181,8 +1181,8 @@ Project layout:
 Everything that was called `octo` is now `flakyfy`, and nothing answers to the old names. Before you update an existing install:
 
 - Rename the `OCTO_*` variables in your `.env` to `FLAKYFY_*` (`OCTO_IMAGE_TAG` is now `FLAKYFY_IMAGE_TAG`), and pull `ghcr.io/dedeham/flakyfy`, `-yt-dlp-shim` and `-sonic` instead of the `winters27/octo` images.
-- Scripts and clients that send `X-Octo-Admin` or `X-Octo-Browse-Token` must send `X-Flakyfy-Admin` and `X-Flakyfy-Browse-Token`.
-- Folders Octo made inside your music library (`.octo-trash`, `.octo-incoming`, `.octo-family`) have to be renamed by hand to `.flakyfy-trash` and so on, or the old contents are ignored.
+- Scripts and clients that send `X-Octo-Admin` or `X-Octo-Browse-Token` must send `X-Octo-Admin` and `X-Octo-Browse-Token`.
+- Folders Octo made inside your music library (`.octo-trash`, `.octo-incoming`, `.octo-family`) have to be renamed by hand to `.octo-trash` and so on, or the old contents are ignored.
 - A `places.bin` built by Octo is not read any more (its file header changed). The image build makes a new one; one you built yourself with `flakyfy-places` has to be built again.
 
 ## Acknowledgments

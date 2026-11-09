@@ -573,7 +573,7 @@
               <div class="set-info">
                 <div class="set-info-t">Favorite downloads when they land</div>
                 <div class="set-info-d">Off by default: a heart on a song you do not have only downloads it, and you heart it again once it is in your library (the same song in the app will do). On, Flakyfy also favorites it in Navidrome when it lands, for the person who hearted it, and the heart stays on the song in their apps the whole way.</div>
-                <div class="set-info-more">A heart on a song you already have is always a favorite, whatever this says, and downloads nothing. Flakyfy's own apps are left out, because their heart means Add. The person's sign-in is held in memory until the song arrives, and a restart drops it.</div>
+                <div class="set-info-more">A heart on a song you already have is always a favorite, whatever this says, and downloads nothing. the Octo apps are left out, because their heart means Add. The person's sign-in is held in memory until the song arrives, and a restart drops it.</div>
               </div>
               <label class="switch"><input type="checkbox" id="f-star-downloads-for-requester" name="Subsonic.StarDownloadsForRequester" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
@@ -836,8 +836,8 @@
             <div class="set-row">
               <div class="set-info">
                 <div class="set-info-t">Mark outside covers</div>
-                <div class="set-info-d">A small flakyfypus on the covers of songs, albums and artists that are not in your library yet, so you can tell them apart: a heart on one downloads it.</div>
-                <div class="set-info-more">Your own covers never carry it, and it is never written into your files. Flakyfy's own apps mark these songs their own way and always get plain covers. Apps that saved a cover earlier keep their copy until they refresh it.</div>
+                <div class="set-info-d">A small snowflake on the covers of songs, albums and artists that are not in your library yet, so you can tell them apart: a heart on one downloads it.</div>
+                <div class="set-info-more">Your own covers never carry it, and it is never written into your files. the Octo apps mark these songs their own way and always get plain covers. Apps that saved a cover earlier keep their copy until they refresh it.</div>
               </div>
               <label class="switch"><input type="checkbox" id="f-cover-badge" name="Subsonic.CoverBadge" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
@@ -1102,7 +1102,7 @@
               </select>
             </div>
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">Sounds alike</div><div class="set-info-d">Library songs that sound like it. Flakyfy reads every song once to learn how it sounds, one song at a time and only while nothing is downloading. Off, songs are still read for their transition profiles, which the Flakyfy apps use to blend one song into the next.</div></div>
+              <div class="set-info"><div class="set-info-t">Sounds alike</div><div class="set-info-d">Library songs that sound like it. Flakyfy reads every song once to learn how it sounds, one song at a time and only while nothing is downloading. Off, songs are still read for their transition profiles, which the Octo apps use to blend one song into the next.</div></div>
               <label class="switch"><input type="checkbox" name="RadioSources.SoundsAlike" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
@@ -1327,7 +1327,7 @@
             <div class="set-row">
               <div class="set-info">
                 <div class="set-info-t">Measure loudness (ReplayGain)</div>
-                <div class="set-info-d">Each download is measured once and gets ReplayGain track tags, which the Flakyfy apps and most players use to even out volume.</div>
+                <div class="set-info-d">Each download is measured once and gets ReplayGain track tags, which the Octo apps and most players use to even out volume.</div>
                 <div class="set-info-more">Decodes the whole file beside the lookups, so it rarely adds time. An album fetched whole gets album gain too.</div>
               </div>
               <label class="switch"><input type="checkbox" name="Metadata.ReplayGain" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
@@ -1457,7 +1457,7 @@
                 <div class="set-info-more">The whole library asks you to type the music path to confirm.</div>
               </div>
               <select class="set-input" id="genre-backfill-scope">
-                <option value="FlakyfyDownloads">Downloads Flakyfy made</option>
+                <option value="OctoDownloads">Downloads Flakyfy made</option>
                 <option value="WholeLibrary">The whole library</option>
               </select>
               <div class="set-info-d scope-hint" id="genre-backfill-scope-hint" role="status" hidden>You changed which files. Preview again before applying.</div>
@@ -1496,7 +1496,7 @@
                 <div class="set-info-more">The whole library asks you to type the music path to confirm.</div>
               </div>
               <select class="set-input" id="library-tidy-scope">
-                <option value="FlakyfyDownloads">Downloads Flakyfy made</option>
+                <option value="OctoDownloads">Downloads Flakyfy made</option>
                 <option value="WholeLibrary">The whole library</option>
               </select>
               <div class="set-info-d scope-hint" id="library-tidy-scope-hint" role="status" hidden>You changed which files. Preview again before applying.</div>
@@ -1642,7 +1642,7 @@
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Made for you</h3>
-            <p class="set-desc">Three lists for each listener, made again every day from their own plays. They show on the Flakyfy apps' Home, and as playlists in every other app.</p>
+            <p class="set-desc">Three lists for each listener, made again every day from their own plays. They show on the Octo apps' Home, and as playlists in every other app.</p>
           </div>
           <form data-section="generated-playlists-foryou" class="set-card">
             <div class="set-row">
@@ -1796,7 +1796,7 @@
               <input type="hidden" id="f-charts" name="GeneratedPlaylists.Charts" />
             </div>
             <div class="set-row set-row-stack charts-detail charts-people" id="charts-people" data-own-save hidden>
-              <div class="set-info"><div class="set-info-t">Each person's charts</div><div class="set-info-d">A person's own chart country, and up to three more countries whose charts they get as playlists too, such as Popular right now · Japan. They can also change these in the Flakyfy apps.</div></div>
+              <div class="set-info"><div class="set-info-t">Each person's charts</div><div class="set-info-d">A person's own chart country, and up to three more countries whose charts they get as playlists too, such as Popular right now · Japan. They can also change these in the Octo apps.</div></div>
               <div class="charts-people-ctrl">
                 <label class="charts-people-label" id="charts-person-label" for="charts-person">Person</label>
                 <select class="set-input" id="charts-person"></select>
@@ -1994,7 +1994,7 @@
             </div>
             <div class="set-row" id="recheck-offer" hidden>
               <div class="set-info"><div class="set-info-t">Re-check Flakyfy's downloads</div><div class="set-info-d">You changed how sure AcoustID must be. Re-check Flakyfy's downloads?</div></div>
-              <button class="btn btn-ghost" type="button" data-recheck-flakyfy><span>Re-check</span></button>
+              <button class="btn btn-ghost" type="button" data-recheck-octo><span>Re-check</span></button>
             </div>
             <div class="set-row">
               <div class="set-info">
@@ -2067,7 +2067,7 @@
             <div class="cover-toolbar">
               <div class="cover-chips">
                 <select class="seg-src" id="cover-scope" aria-label="Which songs" hidden>
-                  <option value="FlakyfyDownloads">Flakyfy's downloads</option>
+                  <option value="OctoDownloads">Flakyfy's downloads</option>
                   <option value="WholeLibrary">Whole library</option>
                 </select>
                 <div class="seg" data-seg-for="cover-scope"><span class="seg-thumb"></span></div>
@@ -2177,7 +2177,7 @@
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Animated art</h3>
-            <p class="set-desc">Apple Music&rsquo;s animated album art in the Flakyfy apps, where an album has it.</p>
+            <p class="set-desc">Apple Music&rsquo;s animated album art in the Octo apps, where an album has it.</p>
           </div>
           <form data-section="animated-art" class="set-card">
             <div class="set-row stack">
@@ -2226,7 +2226,7 @@
             <div class="cover-toolbar">
               <div class="cover-chips">
                 <select class="seg-src" id="lyrics-scope" aria-label="Which songs" hidden>
-                  <option value="FlakyfyDownloads">Flakyfy's downloads</option>
+                  <option value="OctoDownloads">Flakyfy's downloads</option>
                   <option value="WholeLibrary">Whole library</option>
                 </select>
                 <div class="seg" data-seg-for="lyrics-scope"><span class="seg-thumb"></span></div>
@@ -2365,7 +2365,7 @@
               </div>
             </div>
             <div id="lyrics-choices" class="set-row stack" hidden>
-              <div class="set-info"><div class="set-info-t">Chosen lyrics</div><div class="set-info-d">Songs whose lyrics someone chose or hid, here or in the Flakyfy app.</div></div>
+              <div class="set-info"><div class="set-info-t">Chosen lyrics</div><div class="set-info-d">Songs whose lyrics someone chose or hid, here or in the Octo app.</div></div>
               <div id="lyrics-choices-list" class="config-table"></div>
             </div>
           </div>
@@ -2580,7 +2580,7 @@
         </div>
       </section>
 
-      <!-- ─── LIBRARY HEALTH: the Flakyfy app's checks and fixes, for every admin ─── -->
+      <!-- ─── LIBRARY HEALTH: the Octo app's checks and fixes, for every admin ─── -->
       <section data-pane="health">
         <header class="page-header">
           <div>
@@ -2708,7 +2708,7 @@
             </div>
             <div class="set-row">
               <div class="set-info"><div class="set-info-t">Include Flakyfy's own downloads</div><div class="set-info-d">They were checked when they arrived, if verification was on then.</div></div>
-              <label class="switch"><input type="checkbox" name="LibraryActions.ReviewSweepFlakyfyDownloads" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+              <label class="switch"><input type="checkbox" name="LibraryActions.ReviewSweepOctoDownloads" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
               <div class="set-info"><div class="set-info-t">Replace a download that clearly is another song</div><div class="set-info-d">Flakyfy fetches the right song through Wrong song instead of asking. Off by default.</div><div class="set-info-more"><p>Only when AcoustID is at least as sure as the minimum match score under Verify downloads, and names a song with another title by another artist, on a file whose artist and title tags are set. Another take or a remaster of the same song, the same artist's song under a title written another way, a file with no tags, a file whose ISRC is also on the song AcoustID heard or cannot be checked, a song you starred or rated, a song of the wrong length, and anything AcoustID is not sure of are still asked about in Review.</p><p>Needs Wrong song on and dry run off. It asks as the library keeper, and Review keeps a note of what Flakyfy heard and how sure it was.</p></div></div>
@@ -2731,7 +2731,7 @@
             </div>
             <div class="set-row">
               <div class="set-info"><div class="set-info-t">Re-check Flakyfy's downloads</div><div class="set-info-d" id="review-sweep-recheck-status">Checks every song Flakyfy downloaded once more, then stops. Useful after changing the minimum match score.</div><div class="set-info-more">At least 60 songs an hour, even with the library check at 0. Songs already answered in Review are not asked about again.</div></div>
-              <button class="btn btn-ghost" type="button" id="review-sweep-recheck" data-recheck-flakyfy><span>Re-check</span></button>
+              <button class="btn btn-ghost" type="button" id="review-sweep-recheck" data-recheck-octo><span>Re-check</span></button>
             </div>
             <div class="set-row">
               <div class="set-info"><div class="set-info-t">YouTube check <span class="set-opt">songs an hour</span></div><div class="set-info-d">Songs compared with YouTube. 0 is off. Only while nothing is downloading.</div></div>

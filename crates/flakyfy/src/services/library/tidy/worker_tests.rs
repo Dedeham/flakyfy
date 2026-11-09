@@ -534,8 +534,8 @@ async fn apply_flakyfys_records_follow_the_file() {
         ..DownloadHistoryEntry::default()
     });
 
-    rig.preview(TidyScope::FlakyfyDownloads).await;
-    rig.apply(TidyScope::FlakyfyDownloads, &[]).await;
+    rig.preview(TidyScope::OctoDownloads).await;
+    rig.apply(TidyScope::OctoDownloads, &[]).await;
 
     assert_eq!(
         rig.run_state().status,
@@ -585,7 +585,7 @@ async fn apply_the_cover_lyrics_explicit_and_trash_records_follow_the_file() {
         });
     });
     // A song of the album removed earlier waits in the trash with its note.
-    let trashed = rig.at(".flakyfy-trash/2026-10-01/Beyonce/A/02 - Gone.flac");
+    let trashed = rig.at(".octo-trash/2026-10-01/Beyonce/A/02 - Gone.flac");
     std::fs::create_dir_all(Path::new(&trashed).parent().expect("a folder")).expect("made");
     std::fs::write(&trashed, &rig.flac).expect("written");
     std::fs::write(
@@ -632,7 +632,7 @@ fn a_hidden_file_beside_the_songs_is_not_one_of_the_albums_songs() {
     let album = dir.path().join("A");
     std::fs::create_dir_all(album.join(".hidden")).expect("made");
     std::fs::write(album.join("01 - S.flac"), b"x").expect("written");
-    std::fs::write(album.join(".flakyfy-keep-0a1b.flac"), b"x").expect("written");
+    std::fs::write(album.join(".octo-keep-0a1b.flac"), b"x").expect("written");
     std::fs::write(album.join(".hidden/02 - T.flac"), b"x").expect("written");
 
     let contents = walk_all(&album).expect("walked");
@@ -651,8 +651,8 @@ async fn flakyfy_downloads_scope_leaves_other_files_alone() {
     rig.navidrome.own(&mine);
     rig.navidrome.own(&own_album);
 
-    rig.preview(TidyScope::FlakyfyDownloads).await;
-    rig.apply(TidyScope::FlakyfyDownloads, &[]).await;
+    rig.preview(TidyScope::OctoDownloads).await;
+    rig.apply(TidyScope::OctoDownloads, &[]).await;
 
     assert_eq!(
         rig.run_state().status,

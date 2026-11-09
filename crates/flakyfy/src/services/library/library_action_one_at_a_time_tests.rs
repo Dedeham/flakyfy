@@ -25,7 +25,7 @@ use crate::services::library::replacement_handoff::ArrivedTags;
 
 const FILE_NAME: &str = "Massive Attack - Teardrop";
 /// The Soulseek download service's `INCOMING_FOLDER_NAME`.
-const INCOMING_FOLDER_NAME: &str = ".flakyfy-incoming";
+const INCOMING_FOLDER_NAME: &str = ".octo-incoming";
 
 /// An MP3 of twenty silent MPEG-1 Layer III frames, 128 kbps, 44.1 kHz.
 fn mp3() -> Vec<u8> {

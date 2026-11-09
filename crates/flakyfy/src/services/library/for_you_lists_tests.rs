@@ -760,7 +760,7 @@ async fn an_outside_song_pushed_out_of_flakyfys_memory_is_made_again_with_the_sa
     let served = materialize(&built.service, &lists[0]).await;
 
     assert!(outside.iter().all(|id| built.registry.lookup(id).is_some()));
-    assert!(served.iter().all(|song| song.get("flakyfyCatalog").is_none()));
+    assert!(served.iter().all(|song| song.get("octoCatalog").is_none()));
 }
 
 #[tokio::test]
@@ -955,14 +955,14 @@ fn a_made_for_you_list_says_which_one_and_a_mix_does_not() {
     );
     let genre = builder.generated_playlist_fields(&list("genre", 10), &GeneratedPlaylistSettings::default());
 
-    assert_eq!(new_releases["flakyfyList"], "newReleases");
+    assert_eq!(new_releases["octoList"], "newReleases");
     assert!(
         new_releases["comment"]
             .as_str()
             .expect("a comment")
             .contains("new releases")
     );
-    assert!(!genre.contains_key("flakyfyList"));
+    assert!(!genre.contains_key("octoList"));
 }
 
 #[test]
@@ -970,6 +970,6 @@ fn the_lists_are_advertised() {
     assert!(
         flakyfy_subsonic::subsonic_response_builder::OWN_EXTENSIONS
             .iter()
-            .any(|(name, versions)| *name == "flakyfyLists" && versions.contains(&1))
+            .any(|(name, versions)| *name == "octoLists" && versions.contains(&1))
     );
 }

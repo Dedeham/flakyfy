@@ -41,7 +41,7 @@ impl Fixture {
     fn destination(&self) -> String {
         self.root
             .path()
-            .join(".flakyfy-incoming/lidarr/job")
+            .join(".octo-incoming/lidarr/job")
             .to_string_lossy()
             .into_owned()
     }
@@ -150,7 +150,7 @@ async fn a_lossy_copy_is_not_worth_waiting_for() {
         panic!("not found expected, got {missed:?}");
     };
     assert!(message.contains("lossless"), "{message}");
-    assert_eq!(f.files_under(".flakyfy-incoming/lidarr/job"), 0);
+    assert_eq!(f.files_under(".octo-incoming/lidarr/job"), 0);
     assert_eq!(f.lidarr.deleted().len(), 1);
 }
 

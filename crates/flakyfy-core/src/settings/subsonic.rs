@@ -252,7 +252,7 @@ pub struct SubsonicSettings {
     /// Environment variable: COVER_CACHE_MB
     pub cover_cache_mb: i32,
 
-    /// Draw the small Flakyfy flakyfypus on the covers of outside songs, albums and artists (default:
+    /// Draw the small Flakyfy snowflake on the covers of outside songs, albums and artists (default:
     /// true), so any app shows which songs are not in the library yet and that a heart downloads
     /// them. Library covers never carry it, and it is never written into a file. Flakyfy's own apps
     /// mark outside songs themselves and always get plain covers.
@@ -636,7 +636,7 @@ mod tests {
             (Some("Symfonium"), Some("okhttp/4.12"), false),
             (Some("  "), None, false),
             (None, None, false),
-            (Some("Flakyfy"), None, false),
+            (Some("Octo"), None, false),
         ];
         for (client, user_agent, expected) in cases {
             assert_eq!(

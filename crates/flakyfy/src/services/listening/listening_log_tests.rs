@@ -550,9 +550,9 @@ fn any_name_is_a_safe_file_name() {
 
 #[test]
 fn the_platform_is_read_from_the_user_agents_parentheses() {
-    assert_eq!(platform_of("Flakyfy/1.9.0 (Android)", ""), "android");
-    assert_eq!(platform_of("Flakyfy/1.9.0 (iPhone)", ""), "iphone");
-    assert_eq!(platform_of("Flakyfy/1.9.0 (Windows)", ""), "windows");
+    assert_eq!(platform_of("Octo/1.9.0 (Android)", ""), "android");
+    assert_eq!(platform_of("Octo/1.9.0 (iPhone)", ""), "iphone");
+    assert_eq!(platform_of("Octo/1.9.0 (Windows)", ""), "windows");
     assert_eq!(
         platform_of("Symfonium/12.3.0 (Linux; Android 14; Pixel 8)", ""),
         "android"
@@ -562,7 +562,7 @@ fn the_platform_is_read_from_the_user_agents_parentheses() {
         "macos"
     );
     assert_eq!(platform_of("Feishin/0.12 (X11; Linux x86_64)", ""), "linux");
-    assert_eq!(platform_of("Flakyfy", ""), UNKNOWN_PLATFORM);
+    assert_eq!(platform_of("Octo", ""), UNKNOWN_PLATFORM);
     assert_eq!(platform_of("", ""), UNKNOWN_PLATFORM);
 }
 

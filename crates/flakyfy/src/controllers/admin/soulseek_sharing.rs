@@ -2,7 +2,7 @@
 //! server gives back to the Soulseek network, read from slskd through Flakyfy's own slskd sign-in,
 //! and the switch that turns sharing on and off. Only counts, folder names and states come back;
 //! slskd's login stays inside Flakyfy. Behind the same guard as the rest of /api/admin, so the
-//! writes need X-Flakyfy-Admin.
+//! writes need X-Octo-Admin.
 
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -149,7 +149,7 @@ mod tests {
             &app,
             Method::POST,
             "/api/admin/soulseek/sharing/rescan",
-            &[("X-Flakyfy-Admin", "1")],
+            &[("X-Octo-Admin", "1")],
             None,
         )
         .await;
@@ -167,7 +167,7 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(dir.path().join("settings.json")).expect("saved"))
                 .expect("JSON")
         };
-        let guarded = [("X-Flakyfy-Admin", "1")];
+        let guarded = [("X-Octo-Admin", "1")];
 
         let on = send(
             &app,

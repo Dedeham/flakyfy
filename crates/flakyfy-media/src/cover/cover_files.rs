@@ -62,7 +62,7 @@ pub fn is_larger(candidate: &[u8], current: Option<&[u8]>) -> bool {
 /// Writes the cover as a marked JPEG, through a temporary file, so a reader never sees half of it.
 pub fn write(dir: &Path, cover: &[u8]) -> std::io::Result<()> {
     let path = dir.join(FILE_NAME);
-    let temp = dir.join(format!("{FILE_NAME}.flakyfy-tmp"));
+    let temp = dir.join(format!("{FILE_NAME}.octo-tmp"));
     std::fs::write(&temp, cover_image::mark_as_flakyfy(&cover_image::to_jpeg(cover)))?;
     // An owner's "Cover.JPG" on a case-sensitive disk is another file; should_write has
     // already refused that folder, so this only ever replaces Flakyfy's own.
@@ -99,7 +99,7 @@ mod tests {
         assert!(cover_image::is_flakyfy_cover(
             &std::fs::read(dir.path().join(FILE_NAME)).expect("reads")
         ));
-        assert!(!dir.path().join("cover.jpg.flakyfy-tmp").exists());
+        assert!(!dir.path().join("cover.jpg.octo-tmp").exists());
         assert!(should_write(dir.path(), &jpeg(600), false));
         assert!(!should_write(dir.path(), &jpeg(200), false));
 

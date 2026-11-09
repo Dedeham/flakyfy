@@ -360,11 +360,7 @@ fn an_upgrade_says_what_changed_and_what_it_passed() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let new_file = dir.path().join("Song.flac");
     std::fs::write(&new_file, flac_of(200)).expect("written");
-    let kept = dir
-        .path()
-        .join(".flakyfy-trash")
-        .join("2026-10-03")
-        .join("Song.mp3");
+    let kept = dir.path().join(".octo-trash").join("2026-10-03").join("Song.mp3");
     std::fs::create_dir_all(kept.parent().expect("a folder")).expect("created");
     std::fs::write(&kept, mp3()).expect("written");
     let settings = soulseek(SoulseekSettings {
@@ -400,7 +396,7 @@ fn an_upgrade_says_what_changed_and_what_it_passed() {
         result.before
     );
     assert_eq!(result.new_file.as_deref(), Some("Song.flac"));
-    assert_eq!(result.kept_at.as_deref(), Some(".flakyfy-trash/2026-10-03"));
+    assert_eq!(result.kept_at.as_deref(), Some(".octo-trash/2026-10-03"));
     assert_eq!(
         result.checks,
         [
@@ -494,8 +490,8 @@ fn a_full_queue_refuses_with_a_reason() {
 #[test]
 fn kept_folders_and_sizes_keep_their_text() {
     assert_eq!(
-        kept_folder("/music/.flakyfy-trash/2026-10-03/a/b.mp3"),
-        ".flakyfy-trash/2026-10-03/a"
+        kept_folder("/music/.octo-trash/2026-10-03/a/b.mp3"),
+        ".octo-trash/2026-10-03/a"
     );
     assert_eq!(kept_folder("/music/Kept/b.mp3"), "/music/Kept");
     assert_eq!(size(Some(31_457_280)), ", 30.0 MB");

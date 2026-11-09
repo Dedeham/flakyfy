@@ -259,7 +259,7 @@ Type Nested(Type outer, string name) =>
 {
     var run = new GenreBackfillRun
     {
-        RunId = "20261003-142205-7f3a", Status = GenreBackfillStatus.Cancelled, Scope = GenreBackfillScope.FlakyfyDownloads,
+        RunId = "20261003-142205-7f3a", Status = GenreBackfillStatus.Cancelled, Scope = GenreBackfillScope.OctoDownloads,
         DryRun = false, StartedUtc = U("2026-10-03T14:22:05.1234567Z"), FinishedUtc = U("2026-10-03T14:31:10.0000001Z"),
         Total = 4, Processed = 2, Changed = 1, Cleared = 0, Skipped = 1, Failed = 0, Cursor = 2,
         LastPath = "/music/Beyoncé/Lemonade/01 - Pray You Catch Me.flac",
@@ -341,7 +341,7 @@ Type Nested(Type outer, string name) =>
     {
         new("Delete|nd-8f7e6d5c|62914560:639323617251234567", LibraryAction.Delete, "nd-8f7e6d5c", "brandon",
             "Svefn-g-englar", "Sigur Rós", "Ágætis byrjun", "/music/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac",
-            "/music/.flakyfy-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac", PathSource.NativeApi,
+            "/music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac", PathSource.NativeApi,
             LibraryActionState.Applied, null, false, U("2026-10-03T15:00:00.1234567Z")),
         new("BetterQuality|nd-1a2b3c4d|8650752:639322000000000000", LibraryAction.BetterQuality, "nd-1a2b3c4d", "anh",
             "Don't Stop Me Now", "Queen", "Jazz", "/music/Queen/Jazz/12 - Don't Stop Me Now.mp3", null, PathSource.LocalMappings,
@@ -351,14 +351,14 @@ Type Nested(Type outer, string name) =>
         },
         new("Delete|nd-5e6f7a8b|9123456:639323617259999999", LibraryAction.Delete, "nd-5e6f7a8b", "brandon",
             "First Love", "宇多田ヒカル", "First Love", "/music/宇多田ヒカル/First Love/01 - First Love.m4a",
-            "/music/.flakyfy-trash/2026-10-03/宇多田ヒカル/First Love/01 - First Love.m4a", PathSource.NativeApi,
+            "/music/.octo-trash/2026-10-03/宇多田ヒカル/First Love/01 - First Love.m4a", PathSource.NativeApi,
             LibraryActionState.Applied, null, false, U("2026-10-03T16:00:00.0000000Z"))
         {
             Copy = true,
         },
         new("Delete|nd-0a1b2c3d|5000000:639323617260000000", LibraryAction.Delete, "nd-0a1b2c3d", "anh",
             "Roads", "Portishead", "Dummy", "/music/Portishead/Dummy/08 - Roads.flac",
-            "/music/.flakyfy-trash/2026-10-03/Portishead/Dummy/08 - Roads.flac", PathSource.SubsonicGetSong,
+            "/music/.octo-trash/2026-10-03/Portishead/Dummy/08 - Roads.flac", PathSource.SubsonicGetSong,
             LibraryActionState.Applied, null, false, U("2026-10-03T16:30:00.0000000Z"))
         {
             DownloadAllowed = true,
@@ -459,7 +459,7 @@ Type Nested(Type outer, string name) =>
             Result = new UpgradeResult
             {
                 Before = "MP3 320 kbps", BeforeBytes = 8650752, After = "FLAC 16-bit/44.1 kHz", AfterBytes = 31457280,
-                NewFile = "12 - Don't Stop Me Now.flac", KeptAt = ".flakyfy-trash/2026-10-03",
+                NewFile = "12 - Don't Stop Me Now.flac", KeptAt = ".octo-trash/2026-10-03",
                 Checks = ["the same length", "AcoustID: the same recording", "the spectrum: really lossless, not a converted MP3"],
                 Seconds = 269,
             },
@@ -620,7 +620,7 @@ Type Nested(Type outer, string name) =>
         LibraryAction.Delete.ToString(), "brandon", U("2026-10-03T15:00:00.2345678Z"),
         [
             new QuarantinedSidecar("/music/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.lrc",
-                "/music/.flakyfy-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.lrc"),
+                "/music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.lrc"),
         ],
         [
             new Flakyfy.Services.Local.LocalSongMapping
@@ -632,7 +632,7 @@ Type Nested(Type outer, string name) =>
                 SourceFile = "Music\\Sigur Rós\\02 Svefn-g-englar.flac",
             },
         ]);
-    Write("music/.flakyfy-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac.flakyfy-action.json",
+    Write("music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac.octo-action.json",
         JsonSerializer.Serialize(manifest));
 }
 

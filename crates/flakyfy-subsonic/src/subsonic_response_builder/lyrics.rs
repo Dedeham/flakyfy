@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::{Fields, SUBSONIC_VERSION, SubsonicReply, SubsonicResponseBuilder, envelope, subsonic_element};
 
-pub const LYRICS_EXTENSION: &str = "flakyfyLyrics";
+pub const LYRICS_EXTENSION: &str = "octoLyrics";
 pub const LYRICS_EXTENSION_VERSION: i32 = 1;
 
 /// One word of a cue line: when it starts and ends, and where it sits in the line's value
@@ -191,7 +191,7 @@ impl SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "lyricsCandidates": {
                 "id": song_id,
                 "choice": choice,
@@ -215,7 +215,7 @@ impl SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "lyricsChoice": { "id": song_id, "choice": choice },
         }))
     }

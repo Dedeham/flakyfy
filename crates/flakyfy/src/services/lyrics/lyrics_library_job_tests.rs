@@ -306,7 +306,7 @@ async fn job_by_default_only_walks_flakyfys_downloads() {
 
     walk(&worker, LyricsLibraryRequest::new(false)).await;
 
-    assert_eq!(store.current().scope, "FlakyfyDownloads");
+    assert_eq!(store.current().scope, "OctoDownloads");
     assert_eq!(source.asked(), ["Mine"]);
     assert!(!library.music.join("02 Theirs.lrc").exists());
 }

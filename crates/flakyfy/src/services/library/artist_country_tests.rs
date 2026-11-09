@@ -299,7 +299,7 @@ fn admin_auth() -> AdminAuth {
                 ("t", "token"),
                 ("s", "salt"),
                 ("v", "1.16.1"),
-                ("c", "flakyfy"),
+                ("c", "octo"),
             ]
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))

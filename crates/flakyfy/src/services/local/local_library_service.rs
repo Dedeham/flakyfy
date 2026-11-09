@@ -319,7 +319,7 @@ impl LocalLibraryService {
         let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
         let url = match &auth {
             Some((user, token, salt)) => format!(
-                "{base}/rest/startScan?f=json&c=flakyfy&v=1.16.1&u={}&t={token}&s={salt}",
+                "{base}/rest/startScan?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
                 escape_data_string(user)
             ),
             None => format!("{base}/rest/startScan?f=json"),
@@ -676,7 +676,7 @@ impl ILocalLibraryService for LocalLibraryService {
             let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
             let url = match self.nav_identity.get_scan_auth() {
                 Some((user, token, salt)) => format!(
-                    "{base}/rest/getScanStatus?f=json&c=flakyfy&v=1.16.1&u={}&t={token}&s={salt}",
+                    "{base}/rest/getScanStatus?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
                     escape_data_string(&user)
                 ),
                 None => format!("{base}/rest/getScanStatus?f=json"),
@@ -701,10 +701,10 @@ impl ILocalLibraryService for LocalLibraryService {
             let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
             let url = match self.nav_identity.get_scan_auth() {
                 Some((user, token, salt)) => format!(
-                    "{base}/rest/ping?f=json&c=flakyfy&v=1.16.1&u={}&t={token}&s={salt}",
+                    "{base}/rest/ping?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
                     escape_data_string(&user)
                 ),
-                None => format!("{base}/rest/ping?f=json&c=flakyfy&v=1.16.1"),
+                None => format!("{base}/rest/ping?f=json&c=octo&v=1.16.1"),
             };
             let content = self.http.get(&url).send().await?.bytes().await?;
             let doc: Value = serde_json::from_slice(&content)?;

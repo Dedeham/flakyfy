@@ -75,7 +75,7 @@ services:
       Subsonic__SearchLastFmWaitMs: ${SEARCH_LASTFM_WAIT_MS:-1000}
       Subsonic__StreamSizeWarmPerMinute: ${STREAM_SIZE_WARM_PER_MINUTE:-5}
       Subsonic__CoverCacheMb: ${COVER_CACHE_MB:-1024}
-      # The small flakyfypus on outside covers in other apps: it marks songs not in your
+      # The small snowflake on outside covers in other apps: it marks songs not in your
       # library yet, which a heart downloads. false shows those covers plain.
       Subsonic__CoverBadge: ${COVER_BADGE:-true}
       # Apps that hide a song with no size (Amperfy) get 1 for an outside song until its
@@ -283,7 +283,7 @@ services:
       LibraryActions__PlaylistsEnabled: ${LIBRARY_ACTIONS_PLAYLISTS:-true}
       LibraryActions__RatingsEnabled: ${LIBRARY_ACTIONS_RATINGS:-false}
       LibraryActions__DryRun: ${LIBRARY_ACTIONS_DRY_RUN:-true}
-      LibraryActions__QuarantineDirectory: ${LIBRARY_ACTIONS_TRASH_DIR:-.flakyfy-trash}
+      LibraryActions__QuarantineDirectory: ${LIBRARY_ACTIONS_TRASH_DIR:-.octo-trash}
       LibraryActions__QuarantineRetentionDays: ${LIBRARY_ACTIONS_TRASH_DAYS:-30}
       LibraryActions__PollIntervalSeconds: ${LIBRARY_ACTIONS_POLL_SECONDS:-60}
       LibraryActions__MaxActionsPerCycle: ${LIBRARY_ACTIONS_MAX_PER_CYCLE:-20}
@@ -296,7 +296,7 @@ services:
       # Also check songs already in the library, this many an hour (0 is off). Only while nothing
       # downloads, only the library keeper is asked, and at most 50 such questions wait at once.
       LibraryActions__ReviewSweepPerHour: ${LIBRARY_ACTIONS_REVIEW_SWEEP_PER_HOUR:-0}
-      LibraryActions__ReviewSweepFlakyfyDownloads: ${LIBRARY_ACTIONS_REVIEW_SWEEP_FLAKYFY_DOWNLOADS:-false}
+      LibraryActions__ReviewSweepFlakyfyDownloads: ${LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS:-false}
       # Replace a file the sweep finds is clearly another song (Wrong song) instead of asking,
       # at most this many a day. Unsure matches and other takes are still asked about.
       LibraryActions__ReviewSweepAutoReplace: ${LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE:-false}
@@ -380,7 +380,7 @@ services:
       Admin__Port: ${ADMIN_PORT:-0}
       # ----- Family -----
       # Accounts for the people you share your music with, each with a library of their
-      # own. Their music is kept next to yours, in a .flakyfy-family folder inside the music
+      # own. Their music is kept next to yours, in a .octo-family folder inside the music
       # folder, so it needs no volume of its own and stays out of your library. Off until
       # you turn it on here or on the dashboard.
       Family__Enabled: ${FAMILY_ENABLED:-false}
@@ -545,10 +545,10 @@ services:
       # SLSKD_SHARED_DIR here: slskd would share it whatever the switch says.
       # Shares come from the read-only /share mount below, so an upload can
       # never change a file. Flakyfy's own working files are never shared:
-      # partial and temporary copies, and its hidden folders (.flakyfy-incoming,
-      # .flakyfy-trash), which
+      # partial and temporary copies, and its hidden folders (.octo-incoming,
+      # .octo-trash), which
       # slskd skips anyway because their names start with a dot.
-      SLSKD_SHARE_FILTER: '[\\/]\.flakyfy-;\.flakyfy-tmp$$;\.part$$;\.tmp$$'
+      SLSKD_SHARE_FILTER: '[\\/]\.octo-;\.octo-tmp$$;\.part$$;\.tmp$$'
       # Look through the shared folders again this often, in minutes (60 or
       # more), so songs added since are shared too. A library on a cloud drive
       # may want 10080, once a week: every look reads each file's header.
@@ -640,7 +640,7 @@ services:
       TZ: ${TZ:-UTC}
       MORNYE_REGISTRIES: ${SPOTIFLAC_REGISTRIES:-}
       MORNYE_WEB_TOKEN: ${SPOTIFLAC_WEB_TOKEN:-}
-      MORNYE_DOWNLOAD_DIR: /music/.flakyfy-incoming/spotiflac
+      MORNYE_DOWNLOAD_DIR: /music/.octo-incoming/spotiflac
       MORNYE_DATA_DIR: /home/mornye/.mornye
       MORNYE_PROGRESS_BARS: "0"
     volumes:

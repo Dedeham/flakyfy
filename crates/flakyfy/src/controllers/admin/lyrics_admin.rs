@@ -362,7 +362,7 @@ async fn admin_subsonic(state: &AppState, endpoint: &str, query: &str) -> Option
     let base_url = base_url.unwrap_or_default();
     let (user, token, salt) = state.navidrome_identity.get_scan_auth()?;
     let url = format!(
-        "{}/rest/{endpoint}?f=json&c=flakyfy&v=1.16.1&{query}&u={}&t={token}&s={salt}",
+        "{}/rest/{endpoint}?f=json&c=octo&v=1.16.1&{query}&u={}&t={token}&s={salt}",
         base_url.trim_end_matches('/'),
         escape_data_string(&user)
     );

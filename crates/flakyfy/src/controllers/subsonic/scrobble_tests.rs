@@ -904,7 +904,7 @@ async fn a_now_playing_scrobble_queues_the_next_songs_ahead() {
         &format!(
             "/rest/scrobble?id={}&submission=true&f=json&{}",
             ids[0],
-            auth("alice", "good", "Flakyfy")
+            auth("alice", "good", "Octo")
         ),
     )
     .await;
@@ -920,7 +920,7 @@ async fn a_now_playing_scrobble_queues_the_next_songs_ahead() {
         &format!(
             "/rest/scrobble?id={}&submission=false&f=json&{}",
             ids[0],
-            auth("alice", "good", "Flakyfy")
+            auth("alice", "good", "Octo")
         ),
     )
     .await;
@@ -965,8 +965,8 @@ async fn as_flakyfy_app(fixture: &Fixture, query: &str) {
     let reply = send(
         &fixture.app,
         axum::http::Method::GET,
-        &format!("/rest/scrobble?u=bob&t=token&s=salt&c=Flakyfy&f=json&{query}"),
-        &[("User-Agent", "Flakyfy/1.9.0 (Android)")],
+        &format!("/rest/scrobble?u=bob&t=token&s=salt&c=Octo&f=json&{query}"),
+        &[("User-Agent", "Octo/1.9.0 (Android)")],
         "",
     )
     .await;
@@ -1005,7 +1005,7 @@ async fn a_heart_while_the_song_plays_marks_the_play() {
     let fixture = listening_only().await;
     as_flakyfy_app(&fixture, "id=lib2&submission=false").await;
     let star = fixture
-        .get("/rest/star?u=bob&t=token&s=salt&c=Flakyfy&f=json&id=lib2")
+        .get("/rest/star?u=bob&t=token&s=salt&c=Octo&f=json&id=lib2")
         .await;
     assert!(star.contains(r#""status":"ok""#), "{star}");
     as_flakyfy_app(&fixture, "id=lib2&submission=true").await;

@@ -20,7 +20,7 @@ use super::action_helpers::{SubsonicCall, int_param, is_successful_subsonic_resp
 use crate::app::AppState;
 use crate::services::last_fm::LastFmRadioTrackResolver;
 
-/// The most songs Flakyfy's own apps (`flakyfyMix=client`) may ask one radio for. The sources are
+/// The most songs Flakyfy's own apps (`octoMix=client`) may ask one radio for. The sources are
 /// asked for at most 100 too (`SongRadioService::build`).
 const MOST_FOR_FLAKYFY_APPS: i32 = 100;
 
@@ -33,10 +33,10 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
     let builder = &state.subsonic_response_builder;
     let id = call.param_or("id", "").to_string();
     let settings = state.settings.current();
-    // Flakyfy's own apps mix the radio themselves and ask for the order of fit (flakyfyMix=client);
+    // Flakyfy's own apps mix the radio themselves and ask for the order of fit (octoMix=client);
     // for every other app this order is the radio, so outside songs are placed at random at the
     // radio's own mix (last_fm_radio_placement).
-    let client_order = dotnet::eq_ignore_case(call.param_or("flakyfyMix", ""), "client");
+    let client_order = dotnet::eq_ignore_case(call.param_or("octoMix", ""), "client");
     // Flakyfy's apps may ask for up to 100 songs, whatever RadioTrackCount is: at Lots and Mostly
     // new they need more outside songs than a 50-song answer holds. Every other app gets the
     // dashboard's count at most, as before.

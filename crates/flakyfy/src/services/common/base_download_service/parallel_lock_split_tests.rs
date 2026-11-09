@@ -70,12 +70,12 @@ impl DownloadBackend for SplitBackend {
         tokio::time::sleep(Duration::from_millis(pause)).await;
         self.transfers.leave();
         let landed = format!(
-            "{}/.flakyfy-incoming/{}-{}.mp3",
+            "{}/.octo-incoming/{}-{}.mp3",
             self.root,
             download.track_id,
             uuid::Uuid::new_v4().simple()
         );
-        std::fs::create_dir_all(format!("{}/.flakyfy-incoming", self.root))?;
+        std::fs::create_dir_all(format!("{}/.octo-incoming", self.root))?;
         std::fs::write(&landed, crate::services::test_support::mp3())?;
         Ok(landed)
     }

@@ -1,4 +1,4 @@
-//! getPlace and the flakyfyPlaces extension, as the apps see them: a postal code in any spelling,
+//! getPlace and the octoPlaces extension, as the apps see them: a postal code in any spelling,
 //! a city with and without its state, the nearest place to a coordinate, a place Flakyfy does not
 //! know, a request missing what it needs, both formats, a server without place data, and a
 //! caller who is not signed in.
@@ -110,7 +110,7 @@ async fn a_postal_code_comes_back_with_its_place_in_json() {
         json!({"subsonic-response": {
             "status": "ok",
             "version": "1.16.1",
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "place": {
                 "code": "90210",
@@ -397,14 +397,14 @@ async fn a_caller_who_is_not_signed_in_is_refused() {
     assert!(answer.get("place").is_none());
 }
 
-/// The flakyfyPlaces entries of the extension list.
+/// The octoPlaces entries of the extension list.
 async fn places_listed(h: &Harness) -> Vec<Value> {
     let answer = ask(h, &format!("getOpenSubsonicExtensions?{ALICE}&f=json")).await;
     answer["openSubsonicExtensions"]
         .as_array()
         .expect("a list")
         .iter()
-        .filter(|e| e["name"] == "flakyfyPlaces")
+        .filter(|e| e["name"] == "octoPlaces")
         .cloned()
         .collect()
 }
@@ -414,7 +414,7 @@ async fn the_extension_is_listed_only_with_place_data() {
     let h = harness(true).await;
     assert_eq!(
         places_listed(&h).await,
-        vec![json!({"name": "flakyfyPlaces", "versions": [1]})]
+        vec![json!({"name": "octoPlaces", "versions": [1]})]
     );
     // Without it an app keeps to its own lookup instead of asking for places Flakyfy cannot know.
     let h = harness(false).await;

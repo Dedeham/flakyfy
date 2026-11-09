@@ -182,18 +182,16 @@ async fn an_api_key_sign_in_is_named_without_the_key_reaching_the_log() {
     let app = build_with(state.clone(), RouteSet::new());
     let key = secret();
 
-    let req = Request::get(format!(
-        "/rest/getUser.view?apiKey={key}&v=1.16.1&c=Flakyfy&f=json"
-    ))
-    .header("Host", "flakyfy.test")
-    .body(Body::empty())
-    .expect("request");
+    let req = Request::get(format!("/rest/getUser.view?apiKey={key}&v=1.16.1&c=Octo&f=json"))
+        .header("Host", "flakyfy.test")
+        .body(Body::empty())
+        .expect("request");
     let res = app.oneshot(req).await.expect("infallible");
     assert_eq!(res.status(), StatusCode::OK);
     res.into_body().collect().await.expect("body");
 
     let parameters: indexmap::IndexMap<String, String> =
-        [("apiKey", key.as_str()), ("v", "1.16.1"), ("c", "Flakyfy")]
+        [("apiKey", key.as_str()), ("v", "1.16.1"), ("c", "Octo")]
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();

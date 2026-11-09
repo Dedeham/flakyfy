@@ -1,5 +1,5 @@
-//! getArtistTopSongs and getTopChart (flakyfyTopSongs, for the Flakyfy apps), the standard getTopSongs
-//! (every Subsonic app), getCharts (flakyfyTopSongs v2: the charts a country has), and
+//! getArtistTopSongs and getTopChart (octoTopSongs, for the Flakyfy apps), the standard getTopSongs
+//! (every Subsonic app), getCharts (octoTopSongs v2: the charts a country has), and
 //! setChartCountry and pinChartCountry (v3: a listener's own chart country and pinned ones).
 
 use axum::extract::{Request, State};
@@ -156,7 +156,7 @@ fn top_songs(state: &AppState) -> Option<&TopSongsService> {
         .then_some(&state.top_songs)
 }
 
-/// flakyfyTopSongs v1: an artist's most played songs, ranked, for the apps' search. Each is marked
+/// octoTopSongs v1: an artist's most played songs, ranked, for the apps' search. Each is marked
 /// in the caller's library or not. `artist` is the name; `id` may be the artist's id from search,
 /// which names the catalog artist surely. Always JSON.
 pub async fn get_artist_top_songs(State(state): State<AppState>, req: Request) -> AppResult {
@@ -182,7 +182,7 @@ pub async fn get_artist_top_songs(State(state): State<AppState>, req: Request) -
     Ok(answer(&state, &call, &list, count).await)
 }
 
-/// flakyfyTopSongs: a chart, ranked and marked like getArtistTopSongs. `chart` (v2) is `34` (the
+/// octoTopSongs: a chart, ranked and marked like getArtistTopSongs. `chart` (v2) is `34` (the
 /// default, Popular right now), `new`, `trending` or an Apple genre id; `country` (v3) any Apple
 /// Music country, the caller's own when not sent. Always JSON.
 pub async fn get_top_chart(State(state): State<AppState>, req: Request) -> AppResult {
@@ -220,7 +220,7 @@ pub async fn get_top_chart(State(state): State<AppState>, req: Request) -> AppRe
     Ok(answer(&state, &call, &list, count).await)
 }
 
-/// flakyfyTopSongs v2: the charts a country has, Popular right now first, then Best New Songs and
+/// octoTopSongs v2: the charts a country has, Popular right now first, then Best New Songs and
 /// Trending Songs, then the genres in Apple's order, each with whether it is a playlist for
 /// everyone and, while it is one, this listener's playlist id. `country` (v3) is any Apple Music
 /// country, the caller's own when not sent. Always JSON.
@@ -257,7 +257,7 @@ fn no_charts(state: &AppState) -> Response {
         .into_response()
 }
 
-/// flakyfyTopSongs v3: saves the caller's own chart country (`country`, any Apple Music country, or
+/// octoTopSongs v3: saves the caller's own chart country (`country`, any Apple Music country, or
 /// `auto` to follow the server's) and answers like getCharts. A pinned country that is now their
 /// own is no longer pinned.
 pub async fn set_chart_country(State(state): State<AppState>, req: Request) -> AppResult {
@@ -310,7 +310,7 @@ pub async fn set_chart_country(State(state): State<AppState>, req: Request) -> A
     })
 }
 
-/// flakyfyTopSongs v3: pins one more country for the caller (`country`, `pinned=true`), whose charts
+/// octoTopSongs v3: pins one more country for the caller (`country`, `pinned=true`), whose charts
 /// they then get as playlists too, or unpins it (`pinned=false`), on the list as it is now, so
 /// two apps pinning at once never undo each other. Answers like getCharts.
 pub async fn pin_chart_country(State(state): State<AppState>, req: Request) -> AppResult {

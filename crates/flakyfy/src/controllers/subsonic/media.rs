@@ -837,7 +837,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
 
     // Stable, cached Flakyfy-branded station artwork. Deliberately static: playlist
     // requests never perform a live cover mosaic build.
-    if id.eq_ignore_ascii_case("flakyfy-radio") {
+    if id.eq_ignore_ascii_case("octo-radio") {
         return Ok(serve_placeholder(&state, true).await);
     }
 
@@ -1608,7 +1608,7 @@ pub(crate) fn draws_its_own_marks_in(parameters: &flakyfy_subsonic::Parameters) 
         .get("c")
         .map_or("", String::as_str)
         .trim()
-        .eq_ignore_ascii_case("Flakyfy")
+        .eq_ignore_ascii_case("Octo")
 }
 
 /// Returns a 200 response with the Flakyfy placeholder JPEG. Used in every code path that

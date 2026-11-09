@@ -1,4 +1,4 @@
-//! The lyrics endpoints through the app: getLyricsBySongId, choosing a song's lyrics (flakyfyLyrics
+//! The lyrics endpoints through the app: getLyricsBySongId, choosing a song's lyrics (octoLyrics
 //! v1), and what every other client sees of a choice. The choosing service on its own is tested
 //! in `services/lyrics/lyrics_choice_service_tests.rs`.
 
@@ -364,7 +364,7 @@ fn sources(list: &[Arc<dyn ILyricsSource>]) -> Vec<Arc<dyn ILyricsSource>> {
 
 /// Credentials sent with the Flakyfy app's client name.
 fn flakyfy_auth(user: &str, token: &str) -> String {
-    auth(user, token, "Flakyfy")
+    auth(user, token, "Octo")
 }
 
 fn alice() -> String {
@@ -952,10 +952,10 @@ async fn extensions_song_lyrics_two_always_flakyfy_lyrics_only_while_lookups_run
             })
             .collect();
         assert_eq!(extensions["songLyrics"], [1, 2], "fetch={fetch}");
-        assert_eq!(extensions.contains_key("flakyfyLyrics"), fetch, "fetch={fetch}");
+        assert_eq!(extensions.contains_key("octoLyrics"), fetch, "fetch={fetch}");
         if fetch {
-            assert_eq!(extensions["flakyfyLyrics"], [1]);
+            assert_eq!(extensions["octoLyrics"], [1]);
         }
-        assert_eq!(extensions["flakyfyAcquisitions"], [1, 2, 3], "fetch={fetch}");
+        assert_eq!(extensions["octoAcquisitions"], [1, 2, 3], "fetch={fetch}");
     }
 }

@@ -149,17 +149,17 @@ fn may_fix() -> LibraryActionSettings {
 
 impl Setup {
     async fn get(&self, uri: &str) -> Reply {
-        let cookie = format!("flakyfy_browse={}", self.token);
+        let cookie = format!("octo_browse={}", self.token);
         send(&self.app, Method::GET, uri, &[("Cookie", &cookie)], None).await
     }
 
     async fn post(&self, uri: &str, body: Value) -> Reply {
-        let cookie = format!("flakyfy_browse={}", self.token);
+        let cookie = format!("octo_browse={}", self.token);
         send(
             &self.app,
             Method::POST,
             uri,
-            &[("X-Flakyfy-Admin", "1"), ("Cookie", &cookie)],
+            &[("X-Octo-Admin", "1"), ("Cookie", &cookie)],
             Some(&body.to_string()),
         )
         .await
@@ -399,7 +399,7 @@ async fn the_tag_check_answers_only_a_signed_in_admin() {
         &setup.app,
         Method::POST,
         "/api/admin/health/tags/reset",
-        &[("Cookie", &format!("flakyfy_browse={}", setup.token))],
+        &[("Cookie", &format!("octo_browse={}", setup.token))],
         None,
     )
     .await;

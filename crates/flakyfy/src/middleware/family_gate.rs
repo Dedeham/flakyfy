@@ -249,8 +249,8 @@ pub(crate) fn sighting(headers: &HeaderMap, parameters: &Parameters) -> Sighting
     Sighting {
         client: parameters.get("c").cloned().unwrap_or_default(),
         user_agent: header_text(headers, "user-agent").unwrap_or_default(),
-        flakyfy_device_id: header_text(headers, "x-flakyfy-device-id"),
-        name: header_text(headers, "x-flakyfy-device-name")
+        flakyfy_device_id: header_text(headers, "x-octo-device-id"),
+        name: header_text(headers, "x-octo-device-name")
             .map(|name| decode_device_name(&name))
             .filter(|name| !name.is_empty()),
         navidrome_client_id: header_text(headers, "x-nd-client-unique-id"),

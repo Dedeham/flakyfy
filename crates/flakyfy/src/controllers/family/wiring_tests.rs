@@ -277,7 +277,7 @@ impl Wired {
             SessionKind::Member
         };
         format!(
-            "flakyfy_family={}",
+            "octo_family={}",
             self.state.browse_sessions.create_family(user, kind)
         )
     }
@@ -288,7 +288,7 @@ impl Wired {
             req = req.header("cookie", cookie);
         }
         if !matches!(method, Method::GET | Method::HEAD) {
-            req = req.header("x-flakyfy-family", "1").header("x-flakyfy-admin", "1");
+            req = req.header("x-octo-family", "1").header("x-octo-admin", "1");
         }
         let body = body.map(|b| b.to_string()).unwrap_or_default();
         if !body.is_empty() {
@@ -751,7 +751,7 @@ async fn a_removed_members_waiting_requests_are_canceled_and_cannot_be_approved(
 #[tokio::test]
 async fn turning_family_on_over_pool_records_whose_disk_is_missing_marks_nothing() {
     let w = wired(false).await;
-    let admin = format!("flakyfy_browse={}", w.state.browse_sessions.create("winters"));
+    let admin = format!("octo_browse={}", w.state.browse_sessions.create("winters"));
     let pool = &w.state.family_pool_service;
     // Family was on before and recorded a member's download; its disk is not mounted now.
     pool.record(crate::services::family::PoolFile {
@@ -789,7 +789,7 @@ async fn turning_family_on_over_pool_records_whose_disk_is_missing_marks_nothing
 #[tokio::test]
 async fn turning_family_on_probes_links_and_both_pages_show_them() {
     let w = wired(false).await;
-    let admin = format!("flakyfy_browse={}", w.state.browse_sessions.create("winters"));
+    let admin = format!("octo_browse={}", w.state.browse_sessions.create("winters"));
     let before = w.send(Method::GET, "/api/admin/family", Some(&admin), None).await;
     assert_eq!(before.json()["links"], Value::Null, "{}", before.body);
     let on = w
@@ -1230,7 +1230,7 @@ async fn no_unchecked_sign_in_reaches_the_family_api() {
         &w,
         Method::POST,
         &format!("/api/family/members/alex/reset?u=winters&jwt={forged}&{tail}"),
-        &[("x-flakyfy-family", "1".to_string())],
+        &[("x-octo-family", "1".to_string())],
     )
     .await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
@@ -1313,7 +1313,7 @@ async fn wrong_sign_ins_make_no_devices_or_notices() {
         let mut req = Request::builder()
             .method(Method::GET)
             .uri(format!("/rest/ping?u=winters&p={password}&v=1.16.1&c=x&f=json"))
-            .header("x-flakyfy-device-id", device)
+            .header("x-octo-device-id", device)
             .body(Body::empty())
             .expect("a request");
         let address: SocketAddr = "203.0.113.50:50000".parse().expect("an address");

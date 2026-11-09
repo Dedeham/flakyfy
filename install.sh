@@ -105,7 +105,7 @@ require_docker() {
 probe_navidrome() {
   local url="$1"
   local code
-  code=$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "${url%/}/rest/ping?u=probe&p=probe&v=1.16.1&c=flakyfy-installer&f=json" 2>/dev/null || echo "000")
+  code=$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "${url%/}/rest/ping?u=probe&p=probe&v=1.16.1&c=octo-installer&f=json" 2>/dev/null || echo "000")
   if [ "$code" = "200" ]; then
     green "  ✓ reached Navidrome at $url"
     return 0

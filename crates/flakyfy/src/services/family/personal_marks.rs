@@ -1,5 +1,5 @@
 //! Members' own songs, marked. In every answer to a member, a song from that member's own
-//! library carries `"flakyfyPersonal": true` (XML `flakyfyPersonal="true"`), so apps can offer
+//! library carries `"octoPersonal": true` (XML `octoPersonal="true"`), so apps can offer
 //! "Remove from my library" on it alone. Shared songs carry nothing, and so does every answer
 //! to the owner and to accounts outside the family.
 

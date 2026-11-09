@@ -248,7 +248,7 @@ pub struct LibraryActionSettings {
 
     /// Check Flakyfy's own downloads too. Off by default: those were checked when they arrived, as
     /// long as download verification was on then.
-    /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_FLAKYFY_DOWNLOADS
+    /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS
     pub review_sweep_flakyfy_downloads: bool,
 
     /// Let the sweep replace a file that clearly is another song, through Wrong song, instead
@@ -351,7 +351,7 @@ impl Default for LibraryActionSettings {
             actions: Vec::new(),
             allowed_users: Vec::new(),
             dry_run: true,
-            quarantine_directory: ".flakyfy-trash".to_string(),
+            quarantine_directory: ".octo-trash".to_string(),
             quarantine_retention_days: 30,
             poll_interval_seconds: 60,
             max_actions_per_cycle: 20,
@@ -477,7 +477,7 @@ impl LibraryActionSettings {
     pub fn effective_quarantine_directory(&self) -> String {
         let value = self.quarantine_directory.trim().trim_matches(['/', '\\']);
         if value.is_empty() || value == "." || value == ".." || value.contains("..") {
-            return ".flakyfy-trash".to_string();
+            return ".octo-trash".to_string();
         }
         value.split(['/', '\\']).next().unwrap_or(value).to_string()
     }

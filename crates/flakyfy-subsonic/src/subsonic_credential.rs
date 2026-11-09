@@ -50,7 +50,7 @@ impl SubsonicCredential {
         &self.version
     }
 
-    /// The client name the request sent as c, or "flakyfy" when it sent none.
+    /// The client name the request sent as c, or "octo" when it sent none.
     pub fn client(&self) -> &str {
         &self.client
     }
@@ -86,7 +86,7 @@ impl SubsonicCredential {
         Some(SubsonicCredential::new(
             values,
             get("v").unwrap_or("1.16.1").to_string(),
-            get("c").unwrap_or("flakyfy").to_string(),
+            get("c").unwrap_or("octo").to_string(),
         ))
     }
 
@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(sent["f"], "json");
 
         let defaults = SubsonicCredential::from(&params(&[("apiKey", "k")])).expect("a sign-in");
-        assert_eq!((defaults.version(), defaults.client()), ("1.16.1", "flakyfy"));
+        assert_eq!((defaults.version(), defaults.client()), ("1.16.1", "octo"));
         assert_eq!(defaults.user(), None);
     }
 

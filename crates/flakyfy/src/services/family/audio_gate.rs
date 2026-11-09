@@ -721,7 +721,7 @@ pub fn songs_named(endpoint: &str, sent: &Sent<'_>) -> Vec<String> {
     songs
 }
 
-/// Whether a stream marked `X-Flakyfy-Purpose: offline` comes from one of the caller's own paired
+/// Whether a stream marked `X-Octo-Purpose: offline` comes from one of the caller's own paired
 /// Flakyfy apps, the only devices that make offline copies: the caller's device is one whose app
 /// Flakyfy last saw as Flakyfy.
 fn from_flakyfy_app(state: &AppState, caller: &FamilyCaller) -> bool {
@@ -731,7 +731,7 @@ fn from_flakyfy_app(state: &AppState, caller: &FamilyCaller) -> bool {
         .and_then(|id| state.family_store.device(id))
         .is_some_and(|device| {
             eq_ignore_case(&device.username, &caller.user)
-                && (device.app == "Flakyfy" || device.app.starts_with("Flakyfy "))
+                && (device.app == "Octo" || device.app.starts_with("Octo "))
         })
 }
 
@@ -884,7 +884,7 @@ pub async fn admit(
     // Only a member's own paired Flakyfy app makes offline copies; from anything else the mark
     // is ignored and the audio counts as playing.
     let offline = headers
-        .get("x-flakyfy-purpose")
+        .get("x-octo-purpose")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|purpose| purpose.trim().eq_ignore_ascii_case("offline"))
         && (!caller.managed || from_flakyfy_app(state, caller));

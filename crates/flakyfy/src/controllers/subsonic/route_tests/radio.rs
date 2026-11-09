@@ -679,8 +679,8 @@ async fn subsonic_playlist_list_merges_ready_station_after_successful_authentica
                 .iter()
                 .find(|row| row["name"] == "Native Playlist")
                 .unwrap_or_else(|| panic!("the playlist's row: {body}"));
-            assert_eq!(station["flakyfyGroup"], "station", "{body}");
-            assert!(native.get("flakyfyGroup").is_none(), "{body}");
+            assert_eq!(station["octoGroup"], "station", "{body}");
+            assert!(native.get("octoGroup").is_none(), "{body}");
         } else {
             // A row's attributes, up to the end of its opening tag.
             let row = |marker: &str| -> &str {
@@ -691,13 +691,10 @@ async fn subsonic_playlist_list_merges_ready_station_after_successful_authentica
                     .unwrap_or_else(|| panic!("a row with {marker}: {body}"))
             };
             assert!(
-                row(&format!(r#"id="{station_id}""#)).contains(r#"flakyfyGroup="station""#),
+                row(&format!(r#"id="{station_id}""#)).contains(r#"octoGroup="station""#),
                 "{body}"
             );
-            assert!(
-                !row(r#"name="Native Playlist""#).contains("flakyfyGroup"),
-                "{body}"
-            );
+            assert!(!row(r#"name="Native Playlist""#).contains("octoGroup"), "{body}");
         }
     }
 }
@@ -720,7 +717,7 @@ async fn subsonic_playlist_detail_is_owned_read_only_stable_and_prewarmed() {
         assert!(body.contains("readonly"), "{format}");
         assert!(body.contains("validUntil"), "{format}");
         assert!(
-            body.contains(r#""flakyfyGroup":"station""#) || body.contains(r#"flakyfyGroup="station""#),
+            body.contains(r#""octoGroup":"station""#) || body.contains(r#"octoGroup="station""#),
             "{format}: {body}"
         );
         let metadata = fixture.metadata.clone();
@@ -1519,7 +1516,7 @@ async fn a_station_song_says_the_source_its_station_was_built_with() {
         .expect("entries");
     assert!(!entries.is_empty());
     for entry in entries {
-        assert_eq!(entry["flakyfySuggestedBy"], "YouTube Music", "{entry}");
+        assert_eq!(entry["octoSuggestedBy"], "YouTube Music", "{entry}");
     }
 }
 
@@ -1624,7 +1621,7 @@ async fn discovery_mix_fills_from_library_songs_when_the_reserve_runs_out() {
 }
 
 // ---------------------------------------------------------------------------------------
-// getStationSongs (flakyfyStations)
+// getStationSongs (octoStations)
 // ---------------------------------------------------------------------------------------
 
 /// Your Radio of four with two songs in reserve, and `played` songs alice played before, which the
@@ -1947,7 +1944,7 @@ async fn the_stations_extension_is_listed_while_stations_are_served_as_playlists
         fixture.state.settings.set(settings);
         let body = get_string(&fixture.app, "/rest/getOpenSubsonicExtensions?f=json").await;
         assert_eq!(
-            body.contains("flakyfyStations"),
+            body.contains("octoStations"),
             listed,
             "radio {radio}, playlists {playlists}: {body}"
         );

@@ -168,3 +168,6 @@ jobs:
 
       - name: Installer tests
         run: bash scripts/test-install.sh
+
+      - name: The Octo apps' names are intact
+        run: bash scripts/test-octo-contract.sh

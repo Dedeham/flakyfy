@@ -270,18 +270,18 @@ async fn admin_guard_refuses_writes_without_the_header() {
     assert_eq!(r.header("content-type"), Some("application/json; charset=utf-8"));
     assert_eq!(
         r.text(),
-        r#"{"error":"Admin changes must come from Flakyfy's dashboard. A script can send the X-Flakyfy-Admin header to opt in."}"#
+        r#"{"error":"Admin changes must come from Flakyfy's dashboard. A script can send the X-Octo-Admin header to opt in."}"#
     );
     assert!(!r.has_cors());
 
-    let r = send(Method::POST, "/API/Admin/Test-Dummy", &[("X-Flakyfy-Admin", "1")]).await;
+    let r = send(Method::POST, "/API/Admin/Test-Dummy", &[("X-Octo-Admin", "1")]).await;
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.text(), r#"{"saved":true}"#);
 
     let r = send(
         Method::DELETE,
         "/api/admin/nope",
-        &[("X-Flakyfy-Admin", "1"), ("Origin", "http://x")],
+        &[("X-Octo-Admin", "1"), ("Origin", "http://x")],
     )
     .await;
     assert_problem_404(&r, "unknown admin route");

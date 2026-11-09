@@ -3,7 +3,7 @@
 //! index is read from it on first use (and again when the folder setting changes), and when a
 //! song was last played is the time on its `.json`, so nothing else needs to be saved.
 //!
-//! Flakyfy deletes only in a folder it made: one that holds its `.flakyfy-prefetch` marker, written when
+//! Flakyfy deletes only in a folder it made: one that holds its `.octo-prefetch` marker, written when
 //! the folder was created or found empty. A folder with other files in it and no marker is never
 //! downloaded into, and nothing in it is ever deleted.
 
@@ -33,7 +33,7 @@ const IN_USE_FOR: Duration = Duration::minutes(15);
 const SIDECAR_EXTENSION: &str = "json";
 
 /// The file that marks a folder as Flakyfy's own, where it may delete.
-pub const FOLDER_MARKER: &str = ".flakyfy-prefetch";
+pub const FOLDER_MARKER: &str = ".octo-prefetch";
 
 /// What a download that fetched a song ahead learned, which the heart that keeps it later needs:
 /// the checks it passed, where it came from and what it was made from.

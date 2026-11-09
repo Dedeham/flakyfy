@@ -145,7 +145,7 @@ async fn remove_last_ref_trashes_file() {
     world.pool.unlink(&pooled, "alex").await.expect("unlinked");
     assert!(!Path::new(&pooled).exists());
     assert!(world.pool.store().get(&pooled).is_none());
-    let trashed: Vec<_> = walkdir(&format!("{}/.flakyfy-trash", world.members()))
+    let trashed: Vec<_> = walkdir(&format!("{}/.octo-trash", world.members()))
         .into_iter()
         .filter(|p| p.ends_with("01 Song.mp3"))
         .collect();
@@ -190,7 +190,7 @@ async fn copies_replace_links_when_navidrome_never_shows_them() {
     assert!(!is_link(&link) && Path::new(&link).is_file());
     assert_eq!(std::fs::read(&link).expect("a copy").len(), 10);
     assert!(
-        !Path::new(&format!("{link}.flakyfy-copy")).exists(),
+        !Path::new(&format!("{link}.octo-copy")).exists(),
         "the copy took the link's place"
     );
     assert_eq!(world.pool.mode(), LinkMode::Copy);
@@ -652,7 +652,7 @@ async fn unrecorded_file_is_not_trashed_while_another_member_links_it() {
 #[tokio::test]
 async fn member_named_like_the_pool_folder_never_gets_a_library() {
     use crate::services::family::family_service::valid_username;
-    for name in [".pool", "..", ".kept", ".flakyfy-trash", "-x", "_x"] {
+    for name in [".pool", "..", ".kept", ".octo-trash", "-x", "_x"] {
         assert!(!valid_username(name), "{name}");
     }
     assert!(valid_username("alex") && valid_username("dj.k-9_x"));

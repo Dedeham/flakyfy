@@ -2055,10 +2055,10 @@ impl Radio {
         acquisition: &Acquisition,
         music_brainz: &Arc<MusicBrainzClient>,
     ) -> Radio {
-        // Where radio's state files go: Flakyfy:StateDirectory when set (tests point it at their own
+        // Where radio's state files go: Octo:StateDirectory when set (tests point it at their own
         // folder), else beside the settings.
         let state_dir = settings
-            .raw("Flakyfy:StateDirectory")
+            .raw("Octo:StateDirectory")
             .filter(|dir| !dir.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| config_dir.to_path_buf());
@@ -2192,7 +2192,7 @@ impl Radio {
                         ("t", token),
                         ("s", salt),
                         ("v", "1.16.1".to_string()),
-                        ("c", "flakyfy".to_string()),
+                        ("c", "octo".to_string()),
                     ]
                     .into_iter()
                     .map(|(key, value)| (key.to_string(), value))

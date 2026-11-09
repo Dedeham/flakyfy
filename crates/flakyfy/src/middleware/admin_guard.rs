@@ -5,7 +5,7 @@
 //! the same host, or a sibling subdomain, is same-site and the browser sends it the cookie.
 //!
 //! Reads: CORS headers are stripped, so a browser on another origin cannot read the answer.
-//! Writes: must carry X-Flakyfy-Admin. A page on another origin cannot add a custom header without
+//! Writes: must carry X-Octo-Admin. A page on another origin cannot add a custom header without
 //! a preflight, and the preflight is answered without CORS approval, so the write never leaves
 //! the browser. A script (curl, Home Assistant) sends the header deliberately, with its cookie.
 
@@ -18,7 +18,7 @@ use serde_json::json;
 
 use crate::http::error::json_relaxed_response;
 
-pub const HEADER_NAME: &str = "X-Flakyfy-Admin";
+pub const HEADER_NAME: &str = "X-Octo-Admin";
 
 /// Whether a path is `/api/admin` or below it: case-insensitive, and only at a segment boundary.
 pub fn is_admin_path(path: &str) -> bool {

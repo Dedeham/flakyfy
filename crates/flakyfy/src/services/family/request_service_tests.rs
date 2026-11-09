@@ -574,7 +574,7 @@ async fn a_member_who_leaves_while_their_download_is_on_its_way_leaves_nothing_b
     assert_eq!(setup.service.close_member("alex").await, 1);
     assert_eq!(state_of(&setup, &made.id), RequestState::Cancelled);
     let pooled = format!("{}/Artist/Album/60.flac", setup.world.pool.pool_root_path());
-    let trash = format!("{}/.flakyfy-trash", setup.world.members());
+    let trash = format!("{}/.octo-trash", setup.world.members());
     let trashed = || walk(&trash).iter().any(|path| path.ends_with("/60.flac"));
     assert!(
         eventually(trashed).await,

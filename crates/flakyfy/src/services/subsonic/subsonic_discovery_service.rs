@@ -109,7 +109,7 @@ async fn probe_all(hosts: &[String], ports: &[u16], skip: &HashSet<(String, u16)
 /// Ping-probe one host:port. Returns a server only if it answers with a Subsonic envelope.
 async fn probe(client: &reqwest::Client, ip: &str, port: u16) -> Option<DiscoveredServer> {
     let base_url = format!("http://{ip}:{port}");
-    let url = format!("{base_url}/rest/ping.view?c=flakyfy&v=1.16.1&f=json");
+    let url = format!("{base_url}/rest/ping.view?c=octo&v=1.16.1&f=json");
     let response = client.get(&url).send().await.ok()?;
     let body = response.text().await.ok()?;
     if !body.to_lowercase().contains("subsonic-response") {

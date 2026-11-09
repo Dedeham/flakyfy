@@ -3,7 +3,7 @@
 //! sign-in like every admin endpoint, every call needs a Navidrome admin (the recovery code is
 //! not one, and the gate's `LIBRARY_FILE_ROUTES` refuses it first), and the writes act as that
 //! admin, refused unless they are on the library actions allowed list, exactly as the app's
-//! libraryAction is. Writes carry X-Flakyfy-Admin, as every dashboard write does.
+//! libraryAction is. Writes carry X-Octo-Admin, as every dashboard write does.
 
 use std::collections::{HashMap, HashSet};
 

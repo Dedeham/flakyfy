@@ -38,13 +38,13 @@ pub fn routes() -> RouteSet {
         .route("/api/admin/covers/upgrade/undo", post(undo))
 }
 
-const SCOPES: [&str; 2] = ["FlakyfyDownloads", "WholeLibrary"];
+const SCOPES: [&str; 2] = ["OctoDownloads", "WholeLibrary"];
 const MODES: [&str; 3] = ["Scan", "Preview", "Apply"];
 const ALREADY_RUNNING: &str = "A cover upgrade is already running.";
 
 fn scope_name(scope: CoverUpgradeScope) -> &'static str {
     match scope {
-        CoverUpgradeScope::FlakyfyDownloads => "FlakyfyDownloads",
+        CoverUpgradeScope::OctoDownloads => "OctoDownloads",
         CoverUpgradeScope::WholeLibrary => "WholeLibrary",
     }
 }
@@ -207,7 +207,7 @@ async fn start(State(state): State<AppState>, request: Request) -> Response {
     }
     let scope = match enum_try_parse(&SCOPES, request.scope.as_deref()) {
         Some(1) => CoverUpgradeScope::WholeLibrary,
-        _ => CoverUpgradeScope::FlakyfyDownloads,
+        _ => CoverUpgradeScope::OctoDownloads,
     };
     let mode = match enum_try_parse(&MODES, request.mode.as_deref()) {
         Some(1) => CoverUpgradeMode::Preview,

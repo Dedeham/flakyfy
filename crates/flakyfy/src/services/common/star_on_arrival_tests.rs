@@ -385,8 +385,8 @@ async fn holds_expire_after_a_day() {
 #[test]
 fn is_flakyfy_app() {
     let cases = [
-        (Some("Flakyfy"), true),
-        (Some("flakyfy"), true),
+        (Some("Octo"), true),
+        (Some("octo"), true),
         (Some(" Flakyfy "), true),
         (Some("flakyfy-android"), false),
         (Some("Symfonium"), false),

@@ -223,7 +223,7 @@ fn get_extension(path: &str) -> &str {
 /// The whole point of the picker is to stop a user choosing a folder Flakyfy
 /// cannot download into, and Directory.Exists says nothing about that.
 pub fn is_writable(dir: &str) -> bool {
-    let probe = Path::new(dir).join(format!(".flakyfy-write-probe-{}", uuid::Uuid::new_v4().simple()));
+    let probe = Path::new(dir).join(format!(".octo-write-probe-{}", uuid::Uuid::new_v4().simple()));
     match std::fs::OpenOptions::new()
         .write(true)
         .create(true)

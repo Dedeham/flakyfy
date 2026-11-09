@@ -271,7 +271,7 @@ impl SignInFactory {
             &self.app,
             Method::GET,
             path,
-            &[("X-Flakyfy-Browse-Token", token)],
+            &[("X-Octo-Browse-Token", token)],
             None,
         )
         .await
@@ -280,19 +280,19 @@ impl SignInFactory {
 
 /// A dashboard write with a JSON body and some headers (a cookie, say).
 async fn post_json(app: &App, path: &str, body: &Value, headers: &[(&str, &str)]) -> Reply {
-    let mut all = vec![("X-Flakyfy-Admin", "1")];
+    let mut all = vec![("X-Octo-Admin", "1")];
     all.extend_from_slice(headers);
     send(app, Method::POST, path, &all, Some(&body.to_string())).await
 }
 
-/// The `flakyfy_browse` cookie a reply set, as a request's `Cookie` header.
+/// The `octo_browse` cookie a reply set, as a request's `Cookie` header.
 fn cookie_of(reply: &Reply) -> String {
     let set = reply
         .headers
         .get_all("set-cookie")
         .iter()
         .filter_map(|v| v.to_str().ok())
-        .find(|v| v.starts_with("flakyfy_browse="))
+        .find(|v| v.starts_with("octo_browse="))
         .expect("a sign-in cookie");
     set.split(';').next().expect("a value").to_string()
 }
@@ -347,7 +347,7 @@ async fn only_the_marked_endpoints_answer_without_a_sign_in() {
                 &factory.app,
                 method.clone(),
                 &path,
-                &[("X-Flakyfy-Admin", "1")],
+                &[("X-Octo-Admin", "1")],
                 body,
             )
             .await;
@@ -379,7 +379,7 @@ async fn the_upcoming_songs_card_asks_for_a_sign_in() {
         &factory.app,
         Method::POST,
         "/api/admin/prefetch/clear",
-        &[("X-Flakyfy-Admin", "1")],
+        &[("X-Octo-Admin", "1")],
         Some("{}"),
     )
     .await;
@@ -410,7 +410,7 @@ async fn status_tells_anyone_only_whether_each_service_is_up() {
     // The shape install.sh greps for.
     assert!(reply.text().contains(r#""navidrome":{"ok":"#), "{}", reply.text());
     let document = reply.json();
-    assert!(document.get("flakyfy").is_some());
+    assert!(document.get("octo").is_some());
     for (name, service) in document["services"].as_object().expect("services") {
         let mut keys: Vec<&String> = service.as_object().expect("a service").keys().collect();
         keys.sort();
@@ -496,12 +496,7 @@ async fn a_navidrome_admin_signs_in_and_the_cookie_opens_the_dashboard() {
         .collect::<Vec<_>>()
         .join(";")
         .to_lowercase();
-    for part in [
-        "flakyfy_browse=",
-        "path=/api/admin",
-        "samesite=strict",
-        "httponly",
-    ] {
+    for part in ["octo_browse=", "path=/api/admin", "samesite=strict", "httponly"] {
         assert!(set_cookie.contains(part), "{part} in {set_cookie}");
     }
     let cookie = cookie_of(&sign_in);
@@ -1025,7 +1020,7 @@ async fn a_sign_out_answers_with_the_deletion_alone() {
             .filter_map(|v| v.to_str().ok())
             .collect();
         assert_eq!(set.len(), 1, "{path}: {set:?}");
-        assert!(set[0].starts_with("flakyfy_browse=;"), "{path}: {set:?}");
+        assert!(set[0].starts_with("octo_browse=;"), "{path}: {set:?}");
     }
 }
 
@@ -1147,7 +1142,7 @@ async fn a_recovery_session_never_reaches_a_library_file_route() {
             &factory.app,
             method.clone(),
             path,
-            &[("Cookie", &cookie), ("X-Flakyfy-Admin", "1")],
+            &[("Cookie", &cookie), ("X-Octo-Admin", "1")],
             (method == Method::POST).then_some("{}"),
         )
         .await;
@@ -1438,7 +1433,7 @@ async fn playlists_kept_ready_are_each_persons_and_hidden_while_the_sign_in_is_o
                 &app,
                 Method::PUT,
                 "/api/admin/prefetch/keep-ready",
-                &[("X-Flakyfy-Admin", "1"), ("Cookie", &cookie)],
+                &[("X-Octo-Admin", "1"), ("Cookie", &cookie)],
                 Some(&body.to_string()),
             )
             .await

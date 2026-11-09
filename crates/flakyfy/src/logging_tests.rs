@@ -118,8 +118,8 @@ fn redact_masks_only_secret_values() {
         ),
         // Names that only start or end like a secret, and empty values, are left alone.
         (
-            "?ts=1&st=2&sort=3&apiKeyId=4&tokens=5&clientId=6&api_keys=7&c=Flakyfy",
-            "?ts=1&st=2&sort=3&apiKeyId=4&tokens=5&clientId=6&api_keys=7&c=Flakyfy",
+            "?ts=1&st=2&sort=3&apiKeyId=4&tokens=5&clientId=6&api_keys=7&c=Octo",
+            "?ts=1&st=2&sort=3&apiKeyId=4&tokens=5&clientId=6&api_keys=7&c=Octo",
         ),
         ("?t=&s=", "?t=&s="),
         ("no query here, t=abc", "no query here, t=abc"),

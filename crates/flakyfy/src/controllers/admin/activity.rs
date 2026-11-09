@@ -131,7 +131,7 @@ struct ActivityAnswer {
 
 async fn get_activity(State(state): State<AppState>, request: Request) -> Response {
     let (parts, _) = request.into_parts();
-    // The cookie first, the X-Flakyfy-Browse-Token header second.
+    // The cookie first, the X-Octo-Browse-Token header second.
     let browse = request_cookie(&parts.headers, BROWSE_COOKIE_NAME)
         .or_else(|| header_value(&parts.headers, BROWSE_TOKEN_HEADER));
     let browse = browse.as_deref();

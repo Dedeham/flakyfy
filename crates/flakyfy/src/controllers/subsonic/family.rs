@@ -1,8 +1,8 @@
-//! `flakyfyFamily` v1: Flakyfy Family for the apps, on `/rest`, signed like any Subsonic call. The
+//! `octoFamily` v1: Flakyfy Family for the apps, on `/rest`, signed like any Subsonic call. The
 //! family gate has already signed members in; the owner and accounts outside the family are
 //! checked here through the gate's reading, which has Navidrome check exactly the sign-in the
 //! gate read. Every answer is a normal `subsonic-response` with
-//! `"type":"flakyfy"`, JSON or XML (XML writes scalars as attributes and lists as elements).
+//! `"type":"octo"`, JSON or XML (XML writes scalars as attributes and lists as elements).
 //! While Family is off these calls reach Navidrome as any unknown call would.
 //!
 //! Everyone signs in with their one login. `redeemFamilySignIn` and `getFamilySignInRedeem` are
@@ -108,13 +108,13 @@ pub fn routes() -> RouteSet {
 }
 
 /// The extension's name and versions, as `getOpenSubsonicExtensions` lists it.
-pub const FAMILY_EXTENSION: (&str, i32) = ("flakyfyFamily", 1);
+pub const FAMILY_EXTENSION: (&str, i32) = ("octoFamily", 1);
 
 /// The family playlists extension: rows say who made a family playlist and who may rename or
-/// delete it, and `updatePlaylist` takes `flakyfySongToRemove`.
-pub const FAMILY_PLAYLISTS_EXTENSION: (&str, i64) = ("flakyfyFamilyPlaylists", 1);
+/// delete it, and `updatePlaylist` takes `octoSongToRemove`.
+pub const FAMILY_PLAYLISTS_EXTENSION: (&str, i64) = ("octoFamilyPlaylists", 1);
 
-/// Adds `flakyfyFamily` and `flakyfyFamilyPlaylists` to a `getOpenSubsonicExtensions` answer (an ok
+/// Adds `octoFamily` and `octoFamilyPlaylists` to a `getOpenSubsonicExtensions` answer (an ok
 /// one; a failed or unreadable answer goes out as it came).
 pub fn with_family_extension(reply: SubsonicReply, format: &str) -> SubsonicReply {
     let extensions = [
@@ -183,7 +183,7 @@ pub fn flakyfy_reply(state: &AppState, format: &str, key: Option<(&str, &Value)>
         let mut body = json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
         });
         if let (Some((key, value)), Value::Object(map)) = (key, &mut body) {
@@ -197,7 +197,7 @@ pub fn flakyfy_reply(state: &AppState, format: &str, key: Option<(&str, &Value)>
     let mut envelope = XElement::ns(SUBSONIC_NAMESPACE, "subsonic-response")
         .attr("status", "ok")
         .attr("version", SUBSONIC_VERSION)
-        .attr("type", "flakyfy")
+        .attr("type", "octo")
         .attr("openSubsonic", "true");
     if let Some((key, value)) = key {
         envelope.push(json_shape_to_xml(Some(SUBSONIC_NAMESPACE), key, value));
@@ -216,7 +216,7 @@ fn family_failure(state: &AppState, format: &str, e: &FamilyError) -> Response {
     error(state, format, e.subsonic_code(), e.message())
 }
 
-/// One `flakyfyFamily` call: its parameters, its caller and the format to answer in.
+/// One `octoFamily` call: its parameters, its caller and the format to answer in.
 struct FamilyCall {
     call: SubsonicCall,
     caller: FamilyCaller,

@@ -172,7 +172,7 @@ async fn a_sign_in_with_no_client_name_is_sent_as_flakyfy() {
 
     let requests = server.received_requests().await.expect("recording");
     let query: IndexMap<String, String> = requests[0].url.query_pairs().into_owned().collect();
-    assert_eq!(query["c"], "flakyfy");
+    assert_eq!(query["c"], "octo");
     assert_eq!(query["v"], "1.16.1");
 }
 

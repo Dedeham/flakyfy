@@ -65,7 +65,7 @@ const FOR_YOU_REFRESH_DEADLINE: Duration = Duration::from_secs(6 * 60);
 pub const MAX_WALK_PAGES: i32 = 80;
 const FOR_YOU_PREFIX: &str = "for:";
 // Where a stored outside song of New Releases keeps what it is made from; never sent out.
-const SEED_FIELD: &str = "flakyfyCatalog";
+const SEED_FIELD: &str = "octoCatalog";
 const RETRY_AFTER_FAILURE: TimeDelta = TimeDelta::minutes(5);
 /// How long a listener's hearts and ratings, read once, serve every list they open.
 const MARKS_FOR: Duration = Duration::from_secs(60);

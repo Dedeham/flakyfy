@@ -44,14 +44,14 @@ fn app(state: &AppState) -> App {
     build(state.clone(), &StaticAssets::default(), 0)
 }
 
-/// A request as the dashboard sends it: writes carry `X-Flakyfy-Admin`, a body is JSON.
+/// A request as the dashboard sends it: writes carry `X-Octo-Admin`, a body is JSON.
 fn request(method: Method, uri: &str, token: Option<&str>, body: Option<Value>) -> Request<Body> {
     let mut builder = Request::builder().method(method.clone()).uri(uri);
     if method != Method::GET {
-        builder = builder.header("X-Flakyfy-Admin", "1");
+        builder = builder.header("X-Octo-Admin", "1");
     }
     if let Some(token) = token {
-        builder = builder.header("X-Flakyfy-Browse-Token", token);
+        builder = builder.header("X-Octo-Browse-Token", token);
     }
     match body {
         Some(body) => builder
@@ -95,7 +95,7 @@ async fn every_backfill_endpoint_requires_a_browse_session() {
     ];
     for (method, uri) in cases {
         // Sent so the request gets past the admin write guard and reaches the session gate.
-        let body = (method == Method::POST).then(|| json!({ "scope": "FlakyfyDownloads", "dryRun": true }));
+        let body = (method == Method::POST).then(|| json!({ "scope": "OctoDownloads", "dryRun": true }));
         let reply = send(&app, request(method.clone(), uri, None, body)).await;
         assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{method} {uri}");
         assert_eq!(
@@ -306,7 +306,7 @@ async fn a_write_from_another_site_is_refused_even_signed_in() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/api/admin/upgrades")
-        .header("X-Flakyfy-Browse-Token", token)
+        .header("X-Octo-Browse-Token", token)
         .header("Content-Type", "application/json")
         .body(Body::from(upgrade_body().to_string()))
         .unwrap();
@@ -689,7 +689,7 @@ async fn only_admin_controller_endpoints_renew_the_cookie() {
     let with_cookie = |uri: &str| {
         Request::builder()
             .uri(uri)
-            .header("Cookie", format!("flakyfy_browse={token}"))
+            .header("Cookie", format!("octo_browse={token}"))
             .body(Body::empty())
             .unwrap()
     };
@@ -699,7 +699,7 @@ async fn only_admin_controller_endpoints_renew_the_cookie() {
     assert_eq!(
         reply.header("set-cookie"),
         Some(
-            format!("flakyfy_browse={token}; max-age=7776000; path=/api/admin; samesite=strict; httponly")
+            format!("octo_browse={token}; max-age=7776000; path=/api/admin; samesite=strict; httponly")
                 .as_str()
         )
     );
@@ -717,8 +717,8 @@ async fn only_admin_controller_endpoints_renew_the_cookie() {
     // A stale cookie hides a valid header.
     let stale = Request::builder()
         .uri("/api/admin/library-actions")
-        .header("Cookie", "flakyfy_browse=stale")
-        .header("X-Flakyfy-Browse-Token", token.as_str())
+        .header("Cookie", "octo_browse=stale")
+        .header("X-Octo-Browse-Token", token.as_str())
         .body(Body::empty())
         .unwrap();
     assert_eq!(send(&app, stale).await.status, StatusCode::UNAUTHORIZED);
@@ -746,7 +746,7 @@ async fn the_idle_runs_answer_the_baselines_shape() {
     assert_eq!(
         reply.body,
         format!(
-            r#"{{"runId":"","status":"Idle","pending":false,"scope":"FlakyfyDownloads","dryRun":true,"startedUtc":null,"finishedUtc":null,"total":0,"processed":0,"changed":0,"cleared":0,"skipped":0,"failed":0,"lastPath":null,"reason":null,"errors":[],"preview":[],"canResume":false,"canUndo":false,"settingsChanged":false,"musicPath":{}}}"#,
+            r#"{{"runId":"","status":"Idle","pending":false,"scope":"OctoDownloads","dryRun":true,"startedUtc":null,"finishedUtc":null,"total":0,"processed":0,"changed":0,"cleared":0,"skipped":0,"failed":0,"lastPath":null,"reason":null,"errors":[],"preview":[],"canResume":false,"canUndo":false,"settingsChanged":false,"musicPath":{}}}"#,
             flakyfy_core::json::to_string(&music_path)
         )
     );
@@ -759,7 +759,7 @@ async fn the_idle_runs_answer_the_baselines_shape() {
     run.as_object_mut().unwrap().remove("musicPath");
     assert_eq!(
         flakyfy_core::json::to_string(&run),
-        r#"{"runId":"","status":"Idle","scope":"FlakyfyDownloads","mode":"Scan","dryRun":true,"smallerThan":1000,"picked":null,"soft":0,"folderCovers":true,"fullSize":false,"undo":false,"startedUtc":null,"finishedUtc":null,"total":0,"processed":0,"upgraded":0,"kept":0,"files":0,"failed":0,"lastFolder":null,"reason":null,"songsTotal":0,"songsRead":0,"albumsTotal":0,"albumsDone":0,"errors":[],"preview":[],"canResume":false,"busy":false,"canUndo":false}"#
+        r#"{"runId":"","status":"Idle","scope":"OctoDownloads","mode":"Scan","dryRun":true,"smallerThan":1000,"picked":null,"soft":0,"folderCovers":true,"fullSize":false,"undo":false,"startedUtc":null,"finishedUtc":null,"total":0,"processed":0,"upgraded":0,"kept":0,"files":0,"failed":0,"lastFolder":null,"reason":null,"songsTotal":0,"songsRead":0,"albumsTotal":0,"albumsDone":0,"errors":[],"preview":[],"canResume":false,"busy":false,"canUndo":false}"#
     );
 }
 
@@ -883,7 +883,7 @@ async fn a_body_that_cannot_be_read_is_refused_as_each_endpoint_record_read_it()
         let request = Request::builder()
             .method(Method::POST)
             .uri(uri)
-            .header("X-Flakyfy-Admin", "1")
+            .header("X-Octo-Admin", "1")
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
@@ -963,7 +963,7 @@ async fn binding_failures_come_before_the_session() {
     let empty = Request::builder()
         .method(Method::POST)
         .uri("/api/admin/genre/backfill")
-        .header("X-Flakyfy-Admin", "1")
+        .header("X-Octo-Admin", "1")
         .header("Content-Type", "application/json")
         .body(Body::empty())
         .unwrap();
@@ -977,7 +977,7 @@ async fn binding_failures_come_before_the_session() {
     let plain = Request::builder()
         .method(Method::POST)
         .uri("/api/admin/update")
-        .header("X-Flakyfy-Admin", "1")
+        .header("X-Octo-Admin", "1")
         .header("Content-Type", "text/plain")
         .body(Body::from("{}"))
         .unwrap();
@@ -1031,7 +1031,7 @@ async fn the_refusals_match_the_baseline() {
         ),
         (
             Method::POST,
-            "/api/admin/review-sweep/recheck-flakyfy",
+            "/api/admin/review-sweep/recheck-octo",
             None,
             StatusCode::BAD_REQUEST,
             r#"{"error":"Turn on library actions and Review first."}"#,
@@ -1135,7 +1135,7 @@ async fn a_genre_apply_waits_for_another_library_job() {
             Method::POST,
             "/api/admin/genre/backfill",
             Some(&token),
-            Some(json!({ "scope": "FlakyfyDownloads", "dryRun": false })),
+            Some(json!({ "scope": "OctoDownloads", "dryRun": false })),
         ),
     )
     .await;
@@ -1152,7 +1152,7 @@ async fn a_genre_apply_waits_for_another_library_job() {
             Method::POST,
             "/api/admin/genre/backfill",
             Some(&token),
-            Some(json!({ "scope": "FlakyfyDownloads", "dryRun": true })),
+            Some(json!({ "scope": "OctoDownloads", "dryRun": true })),
         ),
     )
     .await;

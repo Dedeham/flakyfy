@@ -110,8 +110,8 @@ impl Rig {
         let request = Request::builder()
             .method(Method::POST)
             .uri("/api/admin/imports/file")
-            .header("X-Flakyfy-Admin", "1")
-            .header("X-Flakyfy-Browse-Token", token)
+            .header("X-Octo-Admin", "1")
+            .header("X-Octo-Browse-Token", token)
             .header(
                 "content-type",
                 format!("multipart/form-data; boundary={boundary}"),
@@ -142,7 +142,7 @@ async fn every_dashboard_endpoint_needs_the_sign_in() {
     ];
     for (verb, uri) in cases {
         let body = (verb == Method::POST).then_some(r#"{"on":true}"#);
-        let reply = send(&rig.app, verb.clone(), uri, &[("X-Flakyfy-Admin", "1")], body).await;
+        let reply = send(&rig.app, verb.clone(), uri, &[("X-Octo-Admin", "1")], body).await;
         assert_eq!(
             reply.status,
             StatusCode::UNAUTHORIZED,
@@ -165,10 +165,7 @@ async fn the_dashboard_and_subsonic_import_actions_toggle_the_same_streaming_sna
         .await
         .json();
     let id = uploaded["listId"].as_str().unwrap();
-    let auth = [
-        ("X-Flakyfy-Browse-Token", token.as_str()),
-        ("X-Flakyfy-Admin", "1"),
-    ];
+    let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     let enabled = send(
         &rig.app,
         Method::POST,
@@ -227,10 +224,7 @@ async fn the_dashboard_shows_the_signed_in_persons_lists_and_adds_a_file() {
     assert_eq!(added["message"], "Added Gym, 2 songs.");
     let list_id = added["listId"].as_str().expect("an id").to_string();
 
-    let auth = [
-        ("X-Flakyfy-Browse-Token", token.as_str()),
-        ("X-Flakyfy-Admin", "1"),
-    ];
+    let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     let page = send(&rig.app, Method::GET, "/api/admin/imports", &auth, None)
         .await
         .json();
@@ -279,7 +273,7 @@ async fn a_write_without_the_admin_header_is_refused() {
         &rig.app,
         Method::POST,
         "/api/admin/imports/link",
-        &[("X-Flakyfy-Browse-Token", token.as_str())],
+        &[("X-Octo-Browse-Token", token.as_str())],
         Some(r#"{"url":"https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"}"#),
     )
     .await;
@@ -290,10 +284,7 @@ async fn a_write_without_the_admin_header_is_refused() {
 async fn there_is_no_spotify_sign_in() {
     let rig = rig().await;
     let token = rig.sign_in("alice");
-    let auth = [
-        ("X-Flakyfy-Browse-Token", token.as_str()),
-        ("X-Flakyfy-Admin", "1"),
-    ];
+    let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     for uri in [
         "/api/admin/imports/spotify/connect",
         "/api/admin/imports/spotify/finish",
@@ -312,7 +303,7 @@ async fn there_is_no_spotify_sign_in() {
     );
 }
 
-const AUTH: &str = "u=alice&t=good&s=salt&v=1.16.1&c=Flakyfy&f=json";
+const AUTH: &str = "u=alice&t=good&s=salt&v=1.16.1&c=Octo&f=json";
 
 #[tokio::test]
 async fn the_apps_see_the_same_lists_as_whoever_they_signed_in_as() {
@@ -348,7 +339,7 @@ async fn the_apps_see_the_same_lists_as_whoever_they_signed_in_as() {
 
     let bob = get(
         &rig.app,
-        "/rest/getImports?u=bob&t=good&s=salt&v=1.16.1&c=Flakyfy&f=json",
+        "/rest/getImports?u=bob&t=good&s=salt&v=1.16.1&c=Octo&f=json",
     )
     .await
     .json();
@@ -387,7 +378,7 @@ async fn an_app_action_answers_in_words_and_a_wrong_password_is_refused() {
 
     let wrong = get(
         &rig.app,
-        "/rest/getImports?u=alice&t=bad&s=salt&v=1.16.1&c=Flakyfy&f=json",
+        "/rest/getImports?u=alice&t=bad&s=salt&v=1.16.1&c=Octo&f=json",
     )
     .await
     .json();
@@ -399,7 +390,7 @@ async fn the_apps_are_told_imports_are_here() {
     let rig = rig().await;
     let doc = get(
         &rig.app,
-        "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=Flakyfy",
+        "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=Octo",
     )
     .await
     .json();
@@ -409,7 +400,7 @@ async fn the_apps_are_told_imports_are_here() {
         .iter()
         .map(|e| e["name"].as_str().unwrap_or_default())
         .collect();
-    assert!(names.contains(&"flakyfyImports"), "{names:?}");
+    assert!(names.contains(&"octoImports"), "{names:?}");
 }
 
 // ---- The binder's recorded answers ------------------------------------------------------------
@@ -418,10 +409,7 @@ async fn the_apps_are_told_imports_are_here() {
 async fn a_member_of_the_wrong_type_is_refused_with_the_reference_message() {
     let rig = rig().await;
     let token = rig.sign_in("alice");
-    let auth = [
-        ("X-Flakyfy-Browse-Token", token.as_str()),
-        ("X-Flakyfy-Admin", "1"),
-    ];
+    let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     let reply = send(
         &rig.app,
         Method::POST,
@@ -450,10 +438,7 @@ async fn a_member_of_the_wrong_type_is_refused_with_the_reference_message() {
 async fn a_file_sent_as_json_finds_no_action_and_an_empty_one_is_asked_for() {
     let rig = rig().await;
     let token = rig.sign_in("alice");
-    let auth = [
-        ("X-Flakyfy-Browse-Token", token.as_str()),
-        ("X-Flakyfy-Admin", "1"),
-    ];
+    let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     let json = send(
         &rig.app,
         Method::POST,
@@ -468,7 +453,7 @@ async fn a_file_sent_as_json_finds_no_action_and_an_empty_one_is_asked_for() {
     assert_eq!(empty.json()["message"], "Choose a file first.");
 }
 
-// ---- flakyfyImports version 2 ------------------------------------------------------------------
+// ---- octoImports version 2 ------------------------------------------------------------------
 
 impl Rig {
     /// A multipart POST to `uri` with one part named `field`, and text fields after it.
@@ -519,7 +504,7 @@ async fn the_apps_get_the_export_services() {
         .json();
     let envelope = &answer["subsonic-response"];
     assert_eq!(envelope["status"], "ok");
-    assert_eq!(envelope["type"], "flakyfy");
+    assert_eq!(envelope["type"], "octo");
     let services = envelope["importServices"]["services"]
         .as_array()
         .expect("services");
@@ -537,7 +522,7 @@ async fn the_apps_get_the_export_services() {
 
     let wrong = get(
         &rig.app,
-        "/rest/getImportServices?u=alice&t=bad&s=salt&v=1.16.1&c=Flakyfy&f=json",
+        "/rest/getImportServices?u=alice&t=bad&s=salt&v=1.16.1&c=Octo&f=json",
     )
     .await
     .json();
@@ -651,7 +636,7 @@ async fn an_app_uploads_a_file_as_a_multipart_form() {
 
     let wrong = rig
         .post_form(
-            "/rest/importFile?u=alice&t=bad&s=salt&v=1.16.1&c=Flakyfy&f=json",
+            "/rest/importFile?u=alice&t=bad&s=salt&v=1.16.1&c=Octo&f=json",
             "file",
             Some("Other.csv"),
             "Track Name,Artist Name(s)\nTeardrop,Massive Attack\n",
@@ -668,10 +653,7 @@ async fn an_app_uploads_a_file_as_a_multipart_form() {
 async fn the_dashboard_pastes_a_list_and_lists_the_export_services() {
     let rig = rig().await;
     let token = rig.sign_in("alice");
-    let auth = [
-        ("X-Flakyfy-Browse-Token", token.as_str()),
-        ("X-Flakyfy-Admin", "1"),
-    ];
+    let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     let pasted = send(
         &rig.app,
         Method::POST,
@@ -705,7 +687,7 @@ async fn the_dashboard_pastes_a_list_and_lists_the_export_services() {
         (Method::POST, "/api/admin/imports/text"),
     ] {
         let body = (verb == Method::POST).then_some(r#"{"text":"A - B"}"#);
-        let reply = send(&rig.app, verb.clone(), uri, &[("X-Flakyfy-Admin", "1")], body).await;
+        let reply = send(&rig.app, verb.clone(), uri, &[("X-Octo-Admin", "1")], body).await;
         assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{verb} {uri}");
     }
 }
@@ -715,7 +697,7 @@ async fn the_apps_are_told_imports_are_at_versions_one_and_two() {
     let rig = rig().await;
     let doc = get(
         &rig.app,
-        "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=Flakyfy",
+        "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=Octo",
     )
     .await
     .json();
@@ -723,9 +705,9 @@ async fn the_apps_are_told_imports_are_at_versions_one_and_two() {
         .as_array()
         .expect("extensions")
         .iter()
-        .find(|e| e["name"] == "flakyfyImports")
+        .find(|e| e["name"] == "octoImports")
         .cloned()
-        .expect("flakyfyImports");
+        .expect("octoImports");
     assert_eq!(imports["versions"], serde_json::json!([1, 2]));
 }
 
@@ -736,7 +718,7 @@ const TWO_SONGS: &str = r#"{"name":"Gym","text":"Massive Attack - Teardrop\nNobo
 
 impl Rig {
     fn auth(token: &str) -> [(&'static str, &str); 2] {
-        [("X-Flakyfy-Browse-Token", token), ("X-Flakyfy-Admin", "1")]
+        [("X-Octo-Browse-Token", token), ("X-Octo-Admin", "1")]
     }
 
     /// The names of the lists `user` has.
@@ -922,8 +904,8 @@ async fn a_file_uploaded_for_someone_else_is_theirs() {
         Request::builder()
             .method(Method::POST)
             .uri(format!("/api/admin/imports/file?for={name}"))
-            .header("X-Flakyfy-Admin", "1")
-            .header("X-Flakyfy-Browse-Token", token.as_str())
+            .header("X-Octo-Admin", "1")
+            .header("X-Octo-Browse-Token", token.as_str())
             .header(
                 "content-type",
                 format!("multipart/form-data; boundary={boundary}"),
@@ -1126,7 +1108,7 @@ async fn the_page_lists_who_it_can_import_for() {
         &rig.app,
         Method::GET,
         "/api/admin/imports/people",
-        &[("X-Flakyfy-Admin", "1")],
+        &[("X-Octo-Admin", "1")],
         None,
     )
     .await;

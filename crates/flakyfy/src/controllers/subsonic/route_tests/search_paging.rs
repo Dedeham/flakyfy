@@ -545,7 +545,7 @@ async fn skip_covers_and_instrumentals_leaves_those_takes_out_of_search() {
     let named = "ph-Karaoke Queen".to_string();
 
     for format in ["json", "xml"] {
-        let skipped = page(app, 0, 40, "search3", format, "alice", "Flakyfy").await;
+        let skipped = page(app, 0, 40, "search3", format, "alice", "Octo").await;
         for take in &takes {
             assert!(!skipped.contains(take), "{format}: {take} in {skipped:?}");
         }
@@ -556,13 +556,13 @@ async fn skip_covers_and_instrumentals_leaves_those_takes_out_of_search() {
         );
     }
     // A later page carries on from the same, skipped, outside songs.
-    let later = page(app, 20, 20, "search3", "json", "alice", "Flakyfy").await;
+    let later = page(app, 20, 20, "search3", "json", "alice", "Octo").await;
     assert!(takes.iter().all(|take| !later.contains(take)), "{later:?}");
 
     let mut off = fixture.state.settings.current().as_ref().clone();
     off.soulseek.skip_covers_and_instrumentals = false;
     fixture.state.settings.set(off);
-    let listed = page(app, 0, 40, "search3", "json", "alice", "Flakyfy").await;
+    let listed = page(app, 0, 40, "search3", "json", "alice", "Octo").await;
     for take in &takes {
         assert!(listed.contains(take), "{take} in {listed:?}");
     }
@@ -575,8 +575,8 @@ async fn skip_covers_and_instrumentals_leaves_those_takes_out_of_search() {
 async fn flakyfy_apps_keep_outside_songs_on_page_one() {
     let fixture = fixture(true).await;
     let app = &fixture.app;
-    let first = page(app, 0, 20, "search3", "json", "alice", "Flakyfy").await;
-    let second = page(app, 20, 20, "search3", "json", "alice", "Flakyfy").await;
+    let first = page(app, 0, 20, "search3", "json", "alice", "Octo").await;
+    let second = page(app, 20, 20, "search3", "json", "alice", "Octo").await;
 
     let whole = flakyfy_app_search();
     assert_eq!(first, whole[..19]);

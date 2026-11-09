@@ -33,7 +33,7 @@ impl IStartupValidator for SubsonicStartupValidator {
         BaseStartupValidator::write_status("Subsonic URL", subsonic_url, ConsoleColor::Cyan);
 
         let ping_url = format!(
-            "{}/rest/ping.view?v=1.16.1&c=flakyfy&f=json",
+            "{}/rest/ping.view?v=1.16.1&c=octo&f=json",
             subsonic_url.trim_end_matches('/')
         );
         let outcome = async {
@@ -123,7 +123,7 @@ mod tests {
             let server = MockServer::start().await;
             Mock::given(method("GET"))
                 .and(path("/rest/ping.view"))
-                .and(query_param("c", "flakyfy"))
+                .and(query_param("c", "octo"))
                 .respond_with(ResponseTemplate::new(200).set_body_string(body))
                 .mount(&server)
                 .await;

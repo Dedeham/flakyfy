@@ -9,11 +9,11 @@
   var F = (window.FlakyfyFamily = {});
 
   // ── Calls ────────────────────────────────────────────────────────────────────────────
-  // Every write carries X-Flakyfy-Family: 1. Answers { ok, status, data } and never throws.
+  // Every write carries X-Octo-Family: 1. Answers { ok, status, data } and never throws.
   F.api = async function (method, path, body) {
     var options = { method: method, credentials: 'same-origin', headers: {} };
     if (method !== 'GET') {
-      options.headers['X-Flakyfy-Family'] = '1';
+      options.headers['X-Octo-Family'] = '1';
     }
     if (body !== undefined) {
       options.headers['Content-Type'] = 'application/json';
@@ -400,18 +400,18 @@
     return server + '/family/join#invite=' + encodeURIComponent(token);
   };
 
-  // Opens the Flakyfy app at its sign-in screen with the server, home address and username filled
-  // in: `flakyfy://signin?server=..&home=..&username=..`.
+  // Opens the Octo app at its sign-in screen with the server, home address and username filled
+  // in: `octo://signin?server=..&home=..&username=..`.
   F.signInLink = function (server, username, home) {
-    return 'flakyfy://signin?server=' + encodeURIComponent(server) +
+    return 'octo://signin?server=' + encodeURIComponent(server) +
       (home && home !== server ? '&home=' + encodeURIComponent(home) : '') +
       '&username=' + encodeURIComponent(username);
   };
 
-  // `flakyfy://<path>?<query>` as an Android intent link that comes back to `fallback` when the app
+  // `octo://<path>?<query>` as an Android intent link that comes back to `fallback` when the app
   // is not installed.
   F.intentLink = function (path, query, fallback) {
-    return 'intent://' + path + '?' + query + '#Intent;scheme=flakyfy;package=app.winters.flakyfy;S.browser_fallback_url=' +
+    return 'intent://' + path + '?' + query + '#Intent;scheme=octo;package=app.winters.octo;S.browser_fallback_url=' +
       encodeURIComponent(fallback) + ';end';
   };
 
@@ -559,27 +559,27 @@
     return hint;
   };
 
-  // Where to get Flakyfy, for this device.
+  // Where to get the Octo apps, for this device.
   F.FDROID_REPO = 'https://winters27.github.io/octo/fdroid/repo';
-  F.RELEASES = 'https://github.com/Dedeham/flakyfy/releases';
+  F.RELEASES = 'https://github.com/winters27/octo/releases';
 
   F.getFlakyfy = function () {
     var platform = F.platform();
     var android = F.el('div', { class: 'fam-get' },
-      F.el('h3', { class: 'fam-get-title' }, 'Flakyfy for Android'),
+      F.el('h3', { class: 'fam-get-title' }, 'Octo for Android'),
       F.el('ol', { class: 'fam-steps' },
         F.el('li', null, 'In F-Droid, open Settings, then Repositories, and add the address below.'),
-        F.el('li', null, 'Search for Flakyfy and install it.')),
+        F.el('li', null, 'Search for Octo and install it.')),
       F.secret('F-Droid repository', F.FDROID_REPO),
       F.el('p', { class: 'fam-help' }, 'No F-Droid? ', F.el('a', { href: F.RELEASES, target: '_blank', rel: 'noopener' }, 'Download the app from GitHub'), ' and allow your browser to install it.'));
     var desktop = F.el('div', { class: 'fam-get' },
-      F.el('h3', { class: 'fam-get-title' }, 'Flakyfy for Windows, macOS and Linux'),
+      F.el('h3', { class: 'fam-get-title' }, 'Octo for Windows, macOS and Linux'),
       F.el('p', { class: 'fam-help' }, 'Download the installer for your computer, open it, then come back to this page.'),
-      F.el('div', null, F.el('a', { class: 'btn btn-primary fam-big', href: F.RELEASES, target: '_blank', rel: 'noopener' }, F.icon('tray'), 'Download Flakyfy')));
+      F.el('div', null, F.el('a', { class: 'btn btn-primary fam-big', href: F.RELEASES, target: '_blank', rel: 'noopener' }, F.icon('tray'), 'Download Octo')));
     if (platform === 'android') return F.el('div', { class: 'fam-stack' }, android, desktop);
     if (platform === 'ios') {
       return F.el('div', { class: 'fam-stack' },
-        F.el('p', { class: 'fam-help' }, 'Flakyfy has no iPhone download yet, so use another app on this phone. Amperfy and Substreamer both work.'),
+        F.el('p', { class: 'fam-help' }, 'Octo has no iPhone download yet, so use another app on this phone. Amperfy and Substreamer both work.'),
         desktop, android);
     }
     return F.el('div', { class: 'fam-stack' }, desktop, android);

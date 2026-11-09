@@ -1,4 +1,4 @@
-//! The Family page's API, the dashboard's Family entry and the `flakyfyFamily` calls, through the
+//! The Family page's API, the dashboard's Family entry and the `octoFamily` calls, through the
 //! whole pipeline. Navidrome's accounts and libraries, the members' folders and files,
 //! requests, storage, the personal library, live streams and the explicit marks are fakes
 //! installed as hooks; a wiremock Navidrome answers sign-ins and pings.
@@ -400,10 +400,10 @@ impl Reply {
             .get_all("set-cookie")
             .iter()
             .filter_map(|v| v.to_str().ok())
-            .find(|v| v.starts_with("flakyfy_family="))
+            .find(|v| v.starts_with("octo_family="))
             .expect("a family cookie")
             .to_string();
-        cookie["flakyfy_family=".len()..]
+        cookie["octo_family=".len()..]
             .split(';')
             .next()
             .unwrap_or("")
@@ -633,7 +633,7 @@ async fn fam_on(change: impl FnOnce(&mut AppSettings), sign_in: Option<&str>, sh
 impl Fam {
     fn member_cookie(&self, user: &str) -> String {
         format!(
-            "flakyfy_family={}",
+            "octo_family={}",
             self.state
                 .browse_sessions
                 .create_family(user, SessionKind::Member)
@@ -642,7 +642,7 @@ impl Fam {
 
     fn owner_cookie(&self) -> String {
         format!(
-            "flakyfy_family={}",
+            "octo_family={}",
             self.state
                 .browse_sessions
                 .create_family("winters", SessionKind::FamilyNavidrome)
@@ -673,8 +673,8 @@ impl Fam {
             headers.push(("cookie", cookie.to_string()));
         }
         if write {
-            headers.push(("x-flakyfy-family", "1".into()));
-            headers.push(("x-flakyfy-admin", "1".into()));
+            headers.push(("x-octo-family", "1".into()));
+            headers.push(("x-octo-admin", "1".into()));
         }
         let body = body.map(|b| b.to_string()).unwrap_or_default();
         if !body.is_empty() {
@@ -799,7 +799,7 @@ async fn auth_signs_a_member_in_and_refuses_a_wrong_password() {
     let session = f
         .get(
             "/api/family/session",
-            Some(&format!("flakyfy_family={}", right.cookie_token())),
+            Some(&format!("octo_family={}", right.cookie_token())),
         )
         .await;
     assert_eq!(session.json()["username"], "alex");
@@ -820,7 +820,7 @@ async fn auth_signs_the_owner_in_through_navidrome() {
     let session = f
         .get(
             "/api/family/session",
-            Some(&format!("flakyfy_family={}", owner.cookie_token())),
+            Some(&format!("octo_family={}", owner.cookie_token())),
         )
         .await;
     assert_eq!(session.json()["manager"], true);
@@ -892,7 +892,7 @@ async fn sign_out_ends_the_session() {
         r.headers
             .get("set-cookie")
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|c| c.starts_with("flakyfy_family=;"))
+            .is_some_and(|c| c.starts_with("octo_family=;"))
     );
     assert_eq!(
         f.get("/api/family/session", Some(&cookie)).await.status,
@@ -955,7 +955,7 @@ async fn invite_flow_end_to_end() {
         .await;
     assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
     assert_eq!(joined.json(), json!({ "username": "kim" }));
-    let cookie = format!("flakyfy_family={}", joined.cookie_token());
+    let cookie = format!("octo_family={}", joined.cookie_token());
     let me = f.get("/api/family/me", Some(&cookie)).await.json();
     assert_eq!(me["displayName"], "Kimberly");
     assert_eq!(me["role"], "Kid");
@@ -1220,7 +1220,7 @@ async fn my_password_changes_with_the_current_one_only_and_signs_out_everywhere(
         .await;
     assert_eq!(right.status, StatusCode::NO_CONTENT, "{}", right.body);
     // The page that changed it stays signed in with a fresh cookie.
-    let fresh = format!("flakyfy_family={}", right.cookie_token());
+    let fresh = format!("octo_family={}", right.cookie_token());
     assert_eq!(
         f.get("/api/family/session", Some(&fresh)).await.status,
         StatusCode::OK
@@ -2120,7 +2120,7 @@ fn usernames_are_checked() {
 }
 
 // ------------------------------------------------------------------------------------------
-// flakyfyFamily
+// octoFamily
 // ------------------------------------------------------------------------------------------
 
 #[tokio::test]
@@ -2128,7 +2128,7 @@ async fn get_family_answers_me_and_the_manager_view() {
     let f = fam().await;
     let alex = f.rest_as_alex("getFamily", "").await.subsonic();
     assert_eq!(alex["status"], "ok");
-    assert_eq!(alex["type"], "flakyfy");
+    assert_eq!(alex["type"], "octo");
     assert_eq!(alex["family"]["me"]["deviceId"], app_id("alex", "test").as_str());
     assert_eq!(alex["family"]["me"]["role"], "Listener");
     assert!(alex["family"].get("manager").is_none());
@@ -2162,7 +2162,7 @@ async fn get_family_answers_xml() {
     let f = fam().await;
     let uri = format!("/rest/getFamily.view?u=alex&p={ALEX_APP}&v=1.16.1&c=test");
     let r = raw(&f.app, Method::GET, &uri, &[], String::new(), HOME).await;
-    assert!(r.body.contains(r#"type="flakyfy""#), "{}", r.body);
+    assert!(r.body.contains(r#"type="octo""#), "{}", r.body);
     assert!(
         r.body.contains("<family>") || r.body.contains("<family "),
         "{}",
@@ -2193,7 +2193,7 @@ async fn signed_request_reaches_member_routes() {
     let f = fam().await;
     // The Flakyfy app signs Family API calls like any Subsonic call: no cookie, no header.
     let token = flakyfy_core::family::codes::subsonic_token(ALEX_SECRET, "c19b2d");
-    let auth = format!("u=alex&t={token}&s=c19b2d&v=1.16.1&c=Flakyfy");
+    let auth = format!("u=alex&t={token}&s=c19b2d&v=1.16.1&c=Octo");
     let me = raw(
         &f.app,
         Method::GET,
@@ -2205,7 +2205,7 @@ async fn signed_request_reaches_member_routes() {
     .await;
     assert_eq!(me.status, StatusCode::OK, "{}", me.body);
     assert_eq!(me.json()["username"], "alex");
-    let flakyfy = app_id("alex", "Flakyfy");
+    let flakyfy = app_id("alex", "Octo");
     assert_eq!(me.json()["deviceId"], flakyfy.as_str());
     let devices = raw(
         &f.app,
@@ -2241,7 +2241,7 @@ async fn signed_request_reaches_member_routes() {
     let wrong = raw(
         &f.app,
         Method::GET,
-        "/api/family/me?u=alex&t=00000000000000000000000000000000&s=c19b2d&v=1.16.1&c=Flakyfy",
+        "/api/family/me?u=alex&t=00000000000000000000000000000000&s=c19b2d&v=1.16.1&c=Octo",
         &[],
         String::new(),
         HOME,
@@ -2266,7 +2266,7 @@ async fn signed_manager_can_edit_members() {
     let r = raw(
         &f.app,
         Method::PUT,
-        &format!("/api/family/members/alex?u=sam&p={SAM_APP}&v=1.16.1&c=Flakyfy"),
+        &format!("/api/family/members/alex?u=sam&p={SAM_APP}&v=1.16.1&c=Octo"),
         &[("content-type", "application/json".to_string())],
         json!({ "edits": { "awayCap": 96 } }).to_string(),
         HOME,
@@ -2278,7 +2278,7 @@ async fn signed_manager_can_edit_members() {
     let owner = raw(
         &f.app,
         Method::GET,
-        "/api/family/members?u=winters&p=owner%20pass&v=1.16.1&c=Flakyfy",
+        "/api/family/members?u=winters&p=owner%20pass&v=1.16.1&c=Octo",
         &[],
         String::new(),
         HOME,
@@ -2499,7 +2499,7 @@ async fn family_extension_only_when_on() {
             .await;
         let r = f.rest_as_owner("getOpenSubsonicExtensions", "").await;
         assert_eq!(
-            r.body.contains(r#"{"name":"flakyfyFamily","versions":[1]}"#),
+            r.body.contains(r#"{"name":"octoFamily","versions":[1]}"#),
             on,
             "{}",
             r.body
@@ -2512,7 +2512,7 @@ async fn flakyfy_family_calls_reach_navidrome_while_family_is_off() {
     let f = fam_with(|s| s.family.enabled = false, None).await;
     let r = f.rest_as_owner("getFamily", "").await;
     assert!(
-        r.body.is_empty() || !r.body.contains("\"type\":\"flakyfy\""),
+        r.body.is_empty() || !r.body.contains("\"type\":\"octo\""),
         "{}",
         r.body
     );
@@ -2530,8 +2530,8 @@ async fn member_session_cannot_reach_admin_api() {
     let token = f.state.browse_sessions.create_family("alex", SessionKind::Member);
     // The family token in the dashboard's cookie or header is refused outright.
     for headers in [
-        vec![("cookie", format!("flakyfy_browse={token}"))],
-        vec![("x-flakyfy-browse-token", token.clone())],
+        vec![("cookie", format!("octo_browse={token}"))],
+        vec![("x-octo-browse-token", token.clone())],
     ] {
         let r = raw(
             &f.app,
@@ -2550,7 +2550,7 @@ async fn member_session_cannot_reach_admin_api() {
         .state
         .browse_sessions
         .create_family("winters", SessionKind::FamilyNavidrome);
-    let headers = vec![("cookie", format!("flakyfy_browse={owner}"))];
+    let headers = vec![("cookie", format!("octo_browse={owner}"))];
     let r = raw(
         &f.app,
         Method::GET,
@@ -2562,7 +2562,7 @@ async fn member_session_cannot_reach_admin_api() {
     .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     // And the family cookie alone opens nothing there.
-    let headers = vec![("cookie", format!("flakyfy_family={token}"))];
+    let headers = vec![("cookie", format!("octo_family={token}"))];
     let r = raw(
         &f.app,
         Method::GET,
@@ -2650,7 +2650,7 @@ async fn cors_never_on_api_family() {
     let preflight = vec![
         ("origin", "https://elsewhere.example".to_string()),
         ("access-control-request-method", "PUT".to_string()),
-        ("access-control-request-headers", "x-flakyfy-family".to_string()),
+        ("access-control-request-headers", "x-octo-family".to_string()),
     ];
     let r = raw(
         &f.app,
@@ -2701,7 +2701,7 @@ async fn admin_family_entry_summarizes_and_turns_family_on() {
         f.get("/api/admin/family", None).await.status,
         StatusCode::UNAUTHORIZED
     );
-    let admin = format!("flakyfy_browse={}", f.state.browse_sessions.create("winters"));
+    let admin = format!("octo_browse={}", f.state.browse_sessions.create("winters"));
     let summary = f.get("/api/admin/family", Some(&admin)).await;
     assert_eq!(summary.status, StatusCode::OK, "{}", summary.body);
     let summary = summary.json();
@@ -2722,7 +2722,7 @@ async fn admin_family_entry_summarizes_and_turns_family_on() {
     assert_eq!(on.json()["enabled"], true);
     assert_eq!(on.json()["links"], "Copy");
     // Another Navidrome admin is not the family's owner.
-    let other = format!("flakyfy_browse={}", f.state.browse_sessions.create("other-admin"));
+    let other = format!("octo_browse={}", f.state.browse_sessions.create("other-admin"));
     let refused = f
         .post(
             "/api/admin/family/enable",
@@ -2737,7 +2737,7 @@ async fn admin_family_entry_summarizes_and_turns_family_on() {
 #[tokio::test]
 async fn admin_family_notifications_switch() {
     let f = fam_with(|_| {}, Some("required")).await;
-    let admin = format!("flakyfy_browse={}", f.state.browse_sessions.create("winters"));
+    let admin = format!("octo_browse={}", f.state.browse_sessions.create("winters"));
     let r = f
         .put(
             "/api/admin/family/notifications",
@@ -2752,7 +2752,7 @@ async fn admin_family_notifications_switch() {
     );
     assert!(!f.state.settings.current().notifications.notify_family_devices);
     let member = format!(
-        "flakyfy_browse={}",
+        "octo_browse={}",
         f.state.browse_sessions.create_family("alex", SessionKind::Member)
     );
     let refused = f
@@ -2776,7 +2776,7 @@ async fn family_off_keeps_the_owner_able_to_sign_in_and_turn_it_on() {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let cookie = format!("flakyfy_family={}", r.cookie_token());
+    let cookie = format!("octo_family={}", r.cookie_token());
     let session = f.get("/api/family/session", Some(&cookie)).await.json();
     assert_eq!(session["familyEnabled"], false);
     assert_eq!(session["owner"], true);
@@ -2978,7 +2978,7 @@ async fn auth_tries_naming_new_forwarded_hops_count_against_the_peer() {
             Method::POST,
             "/api/family/auth",
             &[
-                ("x-flakyfy-family", "1".into()),
+                ("x-octo-family", "1".into()),
                 ("content-type", "application/json".into()),
                 ("x-forwarded-for", hop),
             ],
@@ -2994,7 +2994,7 @@ async fn auth_tries_naming_new_forwarded_hops_count_against_the_peer() {
         Method::POST,
         "/api/family/auth",
         &[
-            ("x-flakyfy-family", "1".into()),
+            ("x-octo-family", "1".into()),
             ("content-type", "application/json".into()),
             ("x-forwarded-for", "198.51.100.200".into()),
         ],
@@ -3056,7 +3056,7 @@ async fn write_from(
 ) -> Reply {
     let mut headers = vec![
         ("cookie", cookie.to_string()),
-        ("x-flakyfy-family", "1".to_string()),
+        ("x-octo-family", "1".to_string()),
         ("content-type", "application/json".to_string()),
         ("host", host.to_string()),
     ];
@@ -3252,7 +3252,7 @@ async fn check_reports_reachable() {
         .and(path("/flakyfy/family/hello"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({ "flakyfy": "family", "instance": f.state.family.instance() })),
+                .set_body_json(json!({ "octo":"family", "instance": f.state.family.instance() })),
         )
         .mount(&this)
         .await;
@@ -3260,7 +3260,7 @@ async fn check_reports_reachable() {
     Mock::given(method("GET"))
         .and(path("/family/hello"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "flakyfy": "family", "instance": "another" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "octo":"family", "instance": "another" })),
         )
         .mount(&other)
         .await;
@@ -3488,7 +3488,7 @@ async fn member_without_away_defaults_home() {
 #[tokio::test]
 async fn handoff_signs_the_owner_in_once() {
     let f = fam_with(|_| {}, Some("required")).await;
-    let admin = format!("flakyfy_browse={}", f.state.browse_sessions.create("winters"));
+    let admin = format!("octo_browse={}", f.state.browse_sessions.create("winters"));
     let open = f.post("/api/admin/family/open", Some(&admin), json!({})).await;
     assert_eq!(open.status, StatusCode::OK, "{}", open.body);
     let token = open.json()["token"].as_str().expect("a token").to_string();
@@ -3497,7 +3497,7 @@ async fn handoff_signs_the_owner_in_once() {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(r.json()["username"], "winters");
-    let cookie = format!("flakyfy_family={}", r.cookie_token());
+    let cookie = format!("octo_family={}", r.cookie_token());
     let session = f.get("/api/family/session", Some(&cookie)).await.json();
     assert_eq!(session["owner"], true, "{session}");
     assert_eq!(session["username"], "winters");
@@ -3536,7 +3536,7 @@ async fn handoff_refused_for_non_admin_sessions() {
         StatusCode::UNAUTHORIZED
     );
     let member = format!(
-        "flakyfy_browse={}",
+        "octo_browse={}",
         f.state.browse_sessions.create_family("alex", SessionKind::Member)
     );
     let r = f.post("/api/admin/family/open", Some(&member), json!({})).await;
@@ -3641,10 +3641,10 @@ async fn devices_are_recorded_per_app_and_per_flakyfy_install_after_a_verified_s
     let mut ids = Vec::new();
     for install in ["install-1", "install-2"] {
         let headers = vec![
-            ("x-flakyfy-device-id", install.to_string()),
-            ("user-agent", "Flakyfy/1.6 (Android)".to_string()),
+            ("x-octo-device-id", install.to_string()),
+            ("user-agent", "Octo/1.6 (Android)".to_string()),
         ];
-        let uri = format!("/rest/getFamily?u=alex&p={ALEX_PASSWORD}&v=1.16.1&c=Flakyfy&f=json");
+        let uri = format!("/rest/getFamily?u=alex&p={ALEX_PASSWORD}&v=1.16.1&c=Octo&f=json");
         let r = raw(&f.app, Method::GET, &uri, &headers, String::new(), HOME).await;
         assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
         let id = detected_device_id(
@@ -3655,7 +3655,7 @@ async fn devices_are_recorded_per_app_and_per_flakyfy_install_after_a_verified_s
             },
         );
         let device = store.device(&id).expect("recorded");
-        assert_eq!(device.app, "Flakyfy 1.6 (Android)");
+        assert_eq!(device.app, "Octo 1.6 (Android)");
         ids.push(id);
     }
     assert_ne!(ids[0], ids[1]);
@@ -3800,7 +3800,7 @@ async fn hand_over_wrong_tokens_are_throttled_per_peer() {
     assert_eq!(redeem_from(&f, &token, HOME).await.status, StatusCode::OK);
 }
 
-/// The apps' flakyfyFamily calls make the same hand-over.
+/// The apps' octoFamily calls make the same hand-over.
 #[tokio::test]
 async fn hand_over_through_flakyfy_family_calls() {
     let f = fam().await;
@@ -3811,7 +3811,7 @@ async fn hand_over_through_flakyfy_family_calls() {
         .to_string();
     // Redeeming is open: the new device has no sign-in yet.
     let uri = format!(
-        "/rest/redeemFamilySignIn?token={token}&deviceName=Pixel%209&platform=Android&v=1.16.1&c=Flakyfy&f=json"
+        "/rest/redeemFamilySignIn?token={token}&deviceName=Pixel%209&platform=Android&v=1.16.1&c=Octo&f=json"
     );
     let redeemed = raw(&f.app, Method::GET, &uri, &[], String::new(), AWAY)
         .await
@@ -3823,7 +3823,7 @@ async fn hand_over_through_flakyfy_family_calls() {
     let wrong = raw(
         &f.app,
         Method::GET,
-        "/rest/redeemFamilySignIn?token=wrong&v=1.16.1&c=Flakyfy&f=json",
+        "/rest/redeemFamilySignIn?token=wrong&v=1.16.1&c=Octo&f=json",
         &[],
         String::new(),
         AWAY,
@@ -3849,7 +3849,7 @@ async fn hand_over_through_flakyfy_family_calls() {
         .await
         .subsonic();
     assert_eq!(put["status"], "ok", "{put}");
-    let fetch = format!("/rest/getFamilySignInRedeem?id={id}&v=1.16.1&c=Flakyfy&f=json");
+    let fetch = format!("/rest/getFamilySignInRedeem?id={id}&v=1.16.1&c=Octo&f=json");
     let fetched = raw(&f.app, Method::GET, &fetch, &[], String::new(), AWAY)
         .await
         .subsonic();
@@ -3874,7 +3874,7 @@ async fn upload_list(f: &Fam, cookie: &str, text: &str) -> Reply {
     );
     let headers = [
         ("cookie", cookie.to_string()),
-        ("x-flakyfy-family", "1".to_string()),
+        ("x-octo-family", "1".to_string()),
         (
             "content-type",
             format!("multipart/form-data; boundary={boundary}"),

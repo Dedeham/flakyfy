@@ -152,7 +152,7 @@ pub const REST_ENDPOINTS: &[(&str, EndpointClass)] = &[
     ("setChartCountry", Read),
     ("setLyricsChoice", LibraryWrite),
     ("testPing", Read),
-    // Flakyfy Family (`flakyfyFamily`): each checks the caller's own rights.
+    // Flakyfy Family (`octoFamily`): each checks the caller's own rights.
     ("getFamily", Read),
     ("setFamilyQuality", Read),
     ("setFamilyDeviceQuality", Read),

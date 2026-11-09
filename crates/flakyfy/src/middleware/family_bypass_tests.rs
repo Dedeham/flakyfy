@@ -63,12 +63,12 @@ impl Alex {
     }
 }
 
-/// The id Flakyfy gives Alex's Flakyfy app ([`ALEX`], `c=Flakyfy`).
+/// The id Flakyfy gives Alex's Flakyfy app ([`ALEX`], `c=Octo`).
 fn d_app() -> String {
     detected_device_id(
         "alex",
         &Sighting {
-            client: "Flakyfy".into(),
+            client: "Octo".into(),
             ..Default::default()
         },
     )
@@ -128,7 +128,7 @@ async fn family(enabled: bool, alex: Alex, configure: impl FnOnce(&mut AppSettin
     sam.personal_library_id = Some(7);
     store.upsert_member(sam);
     for (id, name, app) in [
-        (d_app(), "Alex's phone", "Flakyfy"),
+        (d_app(), "Alex's phone", "Octo"),
         (d_sub(), "Pixel 9", "Symfonium"),
     ] {
         store.add_device(Device {
@@ -300,7 +300,7 @@ fn value<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
     pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
-const ALEX: &str = "u=alex&p=app-secret-1&v=1.16.1&c=Flakyfy&f=json";
+const ALEX: &str = "u=alex&p=app-secret-1&v=1.16.1&c=Octo&f=json";
 const ALEX_SUB: &str = "u=alex&p=app-secret-1&v=1.16.1&c=Symfonium&f=json";
 const OWNER: &str = "u=winters&t=abc&s=def&v=1.16.1&c=Feishin&f=json";
 
@@ -914,7 +914,7 @@ async fn the_newest_device_wins_and_the_other_is_told() {
     let _pixel = open_stream(
         &f,
         &format!("{ALEX_SUB}&id=lib-2"),
-        &[("X-Flakyfy-Device-Name", "Pixel 9")],
+        &[("X-Octo-Device-Name", "Pixel 9")],
     )
     .await;
     // The phone's stream was ended.
@@ -935,12 +935,7 @@ async fn the_newest_device_wins_and_the_other_is_told() {
 async fn offline_purpose_never_counts() {
     let f = family(true, Alex::with(json!({ "devicesAtOnce": 1 })), |_| {}).await;
     let _pixel = open_stream(&f, &format!("{ALEX_SUB}&id=lib-1"), &[]).await;
-    let _copy = open_stream(
-        &f,
-        &format!("{ALEX}&id=lib-2"),
-        &[("X-Flakyfy-Purpose", "offline")],
-    )
-    .await;
+    let _copy = open_stream(&f, &format!("{ALEX}&id=lib-2"), &[("X-Octo-Purpose", "offline")]).await;
     // The Pixel keeps playing next to the Flakyfy app's offline copy.
     let live = f.state.family_audio.tracker().live();
     let devices: Vec<Option<&str>> = live.iter().map(|s| s.device_id.as_deref()).collect();
@@ -958,7 +953,7 @@ async fn offline_purpose_never_counts() {
         &f,
         Method::GET,
         &format!("/rest/stream?{ALEX}&id=lib-1"),
-        &[("X-Flakyfy-Purpose", "offline")],
+        &[("X-Octo-Purpose", "offline")],
         HOME,
     )
     .await;
@@ -1291,7 +1286,7 @@ async fn offline_purpose_counts_only_from_a_paired_flakyfy_app() {
     let _pixel = open_stream(
         &f,
         &format!("{ALEX_SUB}&id=lib-2"),
-        &[("X-Flakyfy-Purpose", "offline")],
+        &[("X-Octo-Purpose", "offline")],
     )
     .await;
     assert_eq!(
@@ -1317,7 +1312,7 @@ async fn offline_purpose_counts_only_from_a_paired_flakyfy_app() {
         &f,
         Method::GET,
         &format!("/rest/stream?{ALEX_SUB}&id=lib-1"),
-        &[("X-Flakyfy-Purpose", "offline")],
+        &[("X-Octo-Purpose", "offline")],
         HOME,
     )
     .await;
@@ -1793,7 +1788,7 @@ async fn a_wrong_owner_password_beside_an_outside_id_notes_no_device() {
             &f,
             Method::GET,
             "/rest/getSomethingNew?u=winters&p=wrong&v=1.16.1&c=Spoof&f=json&id=ext-deezer-song-1",
-            &[("X-Flakyfy-Device-Id", device.as_str())],
+            &[("X-Octo-Device-Id", device.as_str())],
             HOME,
         )
         .await;
@@ -1815,7 +1810,7 @@ async fn a_right_owner_sign_in_notes_its_device_once_navidrome_takes_it() {
         &f,
         Method::GET,
         &format!("/rest/getSomethingNew?{OWNER}&id=ext-deezer-song-1"),
-        &[("X-Flakyfy-Device-Id", "owner-phone")],
+        &[("X-Octo-Device-Id", "owner-phone")],
         HOME,
     )
     .await;
@@ -1829,7 +1824,7 @@ async fn a_right_owner_sign_in_notes_its_device_once_navidrome_takes_it() {
         &f,
         Method::GET,
         &format!("/rest/getSomethingNew?{OWNER}&id=ext-deezer-song-1"),
-        &[("X-Flakyfy-Device-Id", "owner-phone")],
+        &[("X-Octo-Device-Id", "owner-phone")],
         HOME,
     )
     .await;

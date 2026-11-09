@@ -164,12 +164,9 @@ fn try_enqueue_refuses_while_a_request_is_waiting() {
     let store = Arc::new(GenreBackfillStore::new(None));
     let worker = worker(&store, &Arc::new(GenreBackfillJournal::new(None)));
 
-    assert!(worker.try_enqueue(GenreBackfillRequest::new(
-        GenreBackfillScope::FlakyfyDownloads,
-        true
-    )));
+    assert!(worker.try_enqueue(GenreBackfillRequest::new(GenreBackfillScope::OctoDownloads, true)));
     assert!(!worker.try_enqueue(GenreBackfillRequest::new(
-        GenreBackfillScope::FlakyfyDownloads,
+        GenreBackfillScope::OctoDownloads,
         false
     )));
 }
@@ -516,7 +513,7 @@ async fn flakyfy_downloads_walks_the_mappings_and_fails_without_a_library() {
     run_until_idle(
         &worker,
         &store,
-        GenreBackfillRequest::new(GenreBackfillScope::FlakyfyDownloads, true),
+        GenreBackfillRequest::new(GenreBackfillScope::OctoDownloads, true),
     )
     .await;
     assert_eq!(store.current().queue, [song]);
@@ -527,7 +524,7 @@ async fn flakyfy_downloads_walks_the_mappings_and_fails_without_a_library() {
     run_until_idle(
         &worker,
         &store,
-        GenreBackfillRequest::new(GenreBackfillScope::FlakyfyDownloads, true),
+        GenreBackfillRequest::new(GenreBackfillScope::OctoDownloads, true),
     )
     .await;
     let run = store.current();

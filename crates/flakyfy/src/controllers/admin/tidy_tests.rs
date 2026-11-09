@@ -28,10 +28,10 @@ fn request(
 ) -> Request<Body> {
     let mut builder = Request::builder().method(method).uri(uri);
     if admin_header {
-        builder = builder.header("X-Flakyfy-Admin", "1");
+        builder = builder.header("X-Octo-Admin", "1");
     }
     if let Some(token) = token {
-        builder = builder.header("X-Flakyfy-Browse-Token", token);
+        builder = builder.header("X-Octo-Browse-Token", token);
     }
     match body {
         Some(body) => builder
@@ -106,7 +106,7 @@ async fn every_tidy_endpoint_requires_a_navidrome_sign_in() {
         (Method::POST, "/api/admin/tidy/cancel"),
         (Method::POST, "/api/admin/tidy/undo"),
     ] {
-        let body = (method == Method::POST).then(|| json!({ "scope": "FlakyfyDownloads" }));
+        let body = (method == Method::POST).then(|| json!({ "scope": "OctoDownloads" }));
         let reply = send(&state, request(method.clone(), uri, None, true, body)).await;
         assert_eq!(
             reply.status,
@@ -133,7 +133,7 @@ async fn writes_without_the_admin_header_are_forbidden() {
                 uri,
                 Some(&token),
                 false,
-                Some(json!({ "scope": "FlakyfyDownloads" })),
+                Some(json!({ "scope": "OctoDownloads" })),
             ),
         )
         .await;
@@ -151,7 +151,7 @@ async fn a_second_run_while_one_is_waiting_is_409() {
         &state,
         &token,
         "/api/admin/tidy/preview",
-        json!({ "scope": "FlakyfyDownloads" }),
+        json!({ "scope": "OctoDownloads" }),
     )
     .await;
     let second = post(
@@ -197,7 +197,7 @@ async fn apply_without_a_finished_preview_is_refused() {
         &state,
         &token,
         "/api/admin/tidy/apply",
-        json!({ "scope": "FlakyfyDownloads" }),
+        json!({ "scope": "OctoDownloads" }),
     )
     .await;
 
@@ -211,13 +211,13 @@ async fn apply_without_a_finished_preview_is_refused() {
 async fn apply_without_a_confirmed_navidrome_version_is_refused() {
     let state = AppState::for_tests(AppSettings::default());
     let token = state.browse_sessions.create("admin");
-    previewed(&state, TidyScope::FlakyfyDownloads);
+    previewed(&state, TidyScope::OctoDownloads);
 
     let reply = post(
         &state,
         &token,
         "/api/admin/tidy/apply",
-        json!({ "scope": "FlakyfyDownloads" }),
+        json!({ "scope": "OctoDownloads" }),
     )
     .await;
     let status = send(
@@ -243,7 +243,7 @@ async fn apply_without_a_confirmed_navidrome_version_is_refused() {
 async fn apply_while_another_library_job_writes_is_409() {
     let state = AppState::for_tests(AppSettings::default());
     let token = state.browse_sessions.create("admin");
-    previewed(&state, TidyScope::FlakyfyDownloads);
+    previewed(&state, TidyScope::OctoDownloads);
     let genre = state
         .library_write_gate
         .begin_job("The genre re-tag")
@@ -254,7 +254,7 @@ async fn apply_while_another_library_job_writes_is_409() {
         &state,
         &token,
         "/api/admin/tidy/apply",
-        json!({ "scope": "FlakyfyDownloads" }),
+        json!({ "scope": "OctoDownloads" }),
     )
     .await;
 
@@ -292,7 +292,7 @@ async fn resume_with_nothing_stopped_is_refused() {
 async fn the_preview_is_paged_with_true_totals() {
     let state = AppState::for_tests(AppSettings::default());
     let token = state.browse_sessions.create("admin");
-    previewed(&state, TidyScope::FlakyfyDownloads);
+    previewed(&state, TidyScope::OctoDownloads);
 
     let page = send(
         &state,

@@ -199,7 +199,7 @@ impl NavidromeSongPathResolver {
         let target = get_full_path(absolute_path);
         let result: Result<Option<String>, String> = async {
             let url = format!(
-                "{}/rest/search3?f=json&c=flakyfy&v=1.16.1&query={}&songCount=20&albumCount=0&artistCount=0&u={}&t={token}&s={salt}",
+                "{}/rest/search3?f=json&c=octo&v=1.16.1&query={}&songCount=20&albumCount=0&artistCount=0&u={}&t={token}&s={salt}",
                 base_url.trim_end_matches('/'),
                 escape_data_string(format!("{artist} {title}").trim()),
                 escape_data_string(&user),
@@ -275,7 +275,7 @@ impl NavidromeSongPathResolver {
 
         let result: Result<Option<Candidate>, String> = async {
             let url = format!(
-                "{}/rest/getSong?f=json&c=flakyfy&v=1.16.1&id={}&u={}&t={token}&s={salt}",
+                "{}/rest/getSong?f=json&c=octo&v=1.16.1&id={}&u={}&t={token}&s={salt}",
                 base_url.trim_end_matches('/'),
                 escape_data_string(id),
                 escape_data_string(&user),

@@ -422,7 +422,7 @@ async fn a_member_password_is_never_in_an_answer_a_device_or_session_record_or_a
         replies.last().expect("a reply").body
     );
     let cookie = format!(
-        "flakyfy_family={}",
+        "octo_family={}",
         f.post(
             "/api/family/auth",
             None,
@@ -865,7 +865,7 @@ async fn unchecked_callers_never_act_as_a_member_or_a_manager_on_the_new_routes(
                 format!("{path}?{sign_in}&v=1.16.1&c=evil")
             };
             let mut sent = headers.clone();
-            sent.push(("x-flakyfy-family", "1".to_string()));
+            sent.push(("x-octo-family", "1".to_string()));
             let text = body.map(|b| b.to_string()).unwrap_or_default();
             if !text.is_empty() {
                 sent.push(("content-type", "application/json".to_string()));
@@ -913,7 +913,7 @@ async fn changing_the_password_ends_every_other_session_at_once() {
         )
         .await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
-    let fresh = format!("flakyfy_family={}", r.cookie_token());
+    let fresh = format!("octo_family={}", r.cookie_token());
     all_ended(&f, &before, ALEX_PASSWORD, &fresh).await;
     assert!(ok(&rest_with(&f, "alex", "a-new-password", "test", HOME).await));
     assert!(ok(
@@ -1076,8 +1076,8 @@ async fn a_flood_of_wrong_sign_ins_under_made_up_devices_records_nothing() {
     for n in 0..60 {
         let from = format!("10.60.{}.{}", n / 200, n % 200 + 1);
         let headers = vec![
-            ("x-flakyfy-device-id", format!("made-up-install-{n}")),
-            ("x-flakyfy-device-name", format!("Phone {n}")),
+            ("x-octo-device-id", format!("made-up-install-{n}")),
+            ("x-octo-device-name", format!("Phone {n}")),
             ("user-agent", format!("App{n}/1.0")),
         ];
         for user in ["alex", "winters", "nobody"] {
@@ -1118,8 +1118,8 @@ async fn a_members_device_list_stays_bounded_however_many_installs_sign_in() {
     let f = fam().await;
     let installs = MEMBER_DEVICE_LIMIT + 20;
     for n in 0..installs {
-        let headers = vec![("x-flakyfy-device-id", format!("install-{n}"))];
-        let uri = format!("/rest/getFamily?u=alex&p={ALEX_PASSWORD}&v=1.16.1&c=Flakyfy&f=json");
+        let headers = vec![("x-octo-device-id", format!("install-{n}"))];
+        let uri = format!("/rest/getFamily?u=alex&p={ALEX_PASSWORD}&v=1.16.1&c=Octo&f=json");
         let r = raw(&f.app, Method::GET, &uri, &headers, String::new(), HOME).await;
         assert!(ok(&r), "{}", r.body);
     }
@@ -1470,7 +1470,7 @@ async fn many_redemptions_of_one_token_at_once_leave_exactly_one_waiting() {
                 "/api/family/signin/redeem",
                 &[
                     ("content-type", "application/json".to_string()),
-                    ("x-flakyfy-family", "1".to_string()),
+                    ("x-octo-family", "1".to_string()),
                 ],
                 json!({ "token": token, "deviceName": format!("Device {n}"), "platform": "Android" })
                     .to_string(),
@@ -1513,7 +1513,7 @@ async fn starting_a_hand_over_needs_a_checked_sign_in_and_works_for_the_owner_an
             )
             .await;
         assert_eq!(signed.status, StatusCode::OK, "{user}: {}", signed.body);
-        let cookie = format!("flakyfy_family={}", signed.cookie_token());
+        let cookie = format!("octo_family={}", signed.cookie_token());
         let start = start_hand_over(&f, &cookie).await;
         let token = token_of(&start);
         assert!(
@@ -1612,9 +1612,9 @@ async fn the_pairing_and_app_password_routes_are_gone() {
     let f = fam().await;
     let devices = f.state.family_store.devices();
     for call in [
-        "flakyfyFamilyPair?username=alex&code=123456&deviceName=x",
+        "octoFamilyPair?username=alex&code=123456&deviceName=x",
         "addFamilyDevice?name=x&kind=SubsonicApp",
-        "addFamilyDevice?name=x&kind=FlakyfyApp&username=alex",
+        "addFamilyDevice?name=x&kind=OctoApp&username=alex",
         "signOutFamilyDevice?id=d_app",
     ] {
         for sign_in in [
@@ -1627,7 +1627,7 @@ async fn the_pairing_and_app_password_routes_are_gone() {
             let uri = format!("/rest/{endpoint}?{sign_in}{query}&v=1.16.1&c=test&f=json");
             let r = raw(&f.app, Method::GET, &uri, &[], String::new(), HOME).await;
             assert!(!ok(&r), "{uri}: {}", r.body);
-            assert!(!r.body.contains("\"type\":\"flakyfy\""), "{uri}: {}", r.body);
+            assert!(!r.body.contains("\"type\":\"octo\""), "{uri}: {}", r.body);
             for word in ["password", "secret", "familyDevice", "familyPair"] {
                 assert!(!r.body.contains(word), "{uri}: {}", r.body);
             }
@@ -1732,7 +1732,7 @@ async fn old_stored_device_secrets_sign_nothing_in() {
             "/api/family/auth",
             &[
                 ("content-type", "application/json".to_string()),
-                ("x-flakyfy-family", "1".to_string()),
+                ("x-octo-family", "1".to_string()),
             ],
             json!({ "username": user, "password": secret }).to_string(),
             HOME,
@@ -1826,7 +1826,7 @@ async fn with_family_off_the_new_routes_answer_family_off_and_make_nothing() {
     ] {
         let (endpoint, rest) = call.split_once('&').unwrap_or((call, ""));
         let r = f.rest_as_owner(endpoint, rest).await;
-        assert!(!r.body.contains("\"type\":\"flakyfy\""), "{call}: {}", r.body);
+        assert!(!r.body.contains("\"type\":\"octo\""), "{call}: {}", r.body);
         let relayed = f.nd.received_requests().await.unwrap_or_default();
         assert!(
             relayed
@@ -1910,7 +1910,7 @@ async fn the_sign_in_page_sends_nothing_from_its_fragment() {
 
 /// The page, run with a stand-in browser: on Android it opens Flakyfy at once through an intent
 /// link carrying the whole hand-over (and coming back here with `back=1`), on a computer it
-/// offers an `flakyfy://handover` link, and nothing it asks the network for carries the token or
+/// offers an `octo://handover` link, and nothing it asks the network for carries the token or
 /// the key. Skipped where Node.js is not installed.
 #[test]
 fn the_sign_in_page_hands_over_through_intent_and_flakyfy_links() {
@@ -1963,7 +1963,7 @@ fn the_sign_in_page_hands_over_through_intent_and_flakyfy_links() {
     let query = "t=Tok_en-123&k=KeyAbc_-987&s=https%3A%2F%2Fmusic.example.com&h=http%3A%2F%2F192.168.1.20%3A5274&u=alex";
     let fallback = format!("http://192.168.1.20:5274/family/signin#{query}&back=1");
     let intent = format!(
-        "intent://handover?{query}#Intent;scheme=flakyfy;package=app.winters.flakyfy;S.browser_fallback_url={};end",
+        "intent://handover?{query}#Intent;scheme=octo;package=app.winters.octo;S.browser_fallback_url={};end",
         url::form_urlencoded::byte_serialize(fallback.as_bytes())
             .collect::<String>()
             .replace('+', "%20")
@@ -1980,7 +1980,7 @@ fn the_sign_in_page_hands_over_through_intent_and_flakyfy_links() {
         desktop["links"]
             .as_array()
             .expect("links")
-            .contains(&json!(format!("flakyfy://handover?{query}"))),
+            .contains(&json!(format!("octo://handover?{query}"))),
         "{desktop}"
     );
     // Back from an intent that found no app: the page stays, with the same link to press.

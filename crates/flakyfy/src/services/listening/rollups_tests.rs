@@ -85,7 +85,7 @@ fn a_play_written_with_no_platform_takes_its_apps() {
         [
             ("Amperfy", "iphone", 2),
             ("DSub", "android", 1),
-            ("Flakyfy for Android", "android", 1),
+            ("Octo for Android", "android", 1),
             (UNKNOWN_APP, UNKNOWN_PLATFORM, 1),
         ]
     );
@@ -273,7 +273,7 @@ fn apps_are_grouped_by_name_and_platform_without_versions() {
     for (app, platform) in [
         ("Flakyfy 1.9.0 (Android)", "android"),
         ("Flakyfy 1.9.1 (Android)", "android"),
-        ("Flakyfy", "iphone"),
+        ("Octo", "iphone"),
         ("Symfonium 12.3.0", "android"),
     ] {
         let mut p = play("A", app, at(19, 10, 0), 60);
@@ -285,15 +285,11 @@ fn apps_are_grouped_by_name_and_platform_without_versions() {
     let names: Vec<(&str, usize)> = r.apps.iter().map(|a| (a.name.as_str(), a.plays)).collect();
     assert_eq!(
         names,
-        [
-            ("Flakyfy for Android", 2),
-            ("Flakyfy for iPhone", 1),
-            ("Symfonium", 1)
-        ]
+        [("Octo for Android", 2), ("Octo for iPhone", 1), ("Symfonium", 1)]
     );
     assert_eq!(r.apps[0].share, 0.5);
     assert_eq!(app_name("", "unknown"), UNKNOWN_APP);
-    assert_eq!(app_name("Flakyfy 1.9.0", "unknown"), "Flakyfy");
+    assert_eq!(app_name("Flakyfy 1.9.0", "unknown"), "Octo");
 }
 
 #[test]

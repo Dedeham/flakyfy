@@ -1,5 +1,5 @@
 //! Where the words of a cover go and how big, as the Flakyfy apps and the design's reference set
-//! them (app.winters.flakyfy.covers; tools/cover-art/reference.py). The background and the veil
+//! them (app.winters.octo.covers; tools/cover-art/reference.py). The background and the veil
 //! under the words are `cover_backgrounds`' and `cover_veil`'s.
 
 use std::sync::LazyLock;

@@ -461,15 +461,12 @@ mod response {
                 ..mix()
             };
             let fields = builder().generated_playlist_fields(&row, &settings);
-            assert_eq!(fields["flakyfyGroup"], group, "{key}");
-            assert_eq!(fields.get("flakyfyList").and_then(Value::as_str), list, "{key}");
+            assert_eq!(fields["octoGroup"], group, "{key}");
+            assert_eq!(fields.get("octoList").and_then(Value::as_str), list, "{key}");
 
             let reply = builder().create_generated_playlist_response("xml", &row, &settings, &[entry()]);
             let xml = reply.text();
-            assert!(
-                xml.contains(&format!(r#"flakyfyGroup="{group}""#)),
-                "{key}: {xml}"
-            );
+            assert!(xml.contains(&format!(r#"octoGroup="{group}""#)), "{key}: {xml}");
         }
         // An artist mix's row counts the songs stored for it, as a Made for you list does.
         let artist = GeneratedPlaylist {
@@ -709,7 +706,7 @@ fn country_service(
                     ("t", "t"),
                     ("s", "s"),
                     ("v", "1.16.1"),
-                    ("c", "flakyfy"),
+                    ("c", "octo"),
                 ]
                 .into_iter()
                 .map(|(key, value)| (key.to_string(), value.to_string()))

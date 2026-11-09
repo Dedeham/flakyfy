@@ -108,7 +108,7 @@ pub async fn check_public_address(State(state): State<AppState>, web: Web, body:
 /// `GET /family/hello`: this running Flakyfy's id, for the reachability check. Open to anyone,
 /// whether or not Family is on.
 pub async fn hello(State(state): State<AppState>) -> Response {
-    let mut res = ok(&json!({ "flakyfy": "family", "instance": state.family.instance() }));
+    let mut res = ok(&json!({ "octo":"family", "instance": state.family.instance() }));
     res.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     res

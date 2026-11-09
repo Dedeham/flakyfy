@@ -280,7 +280,7 @@ async fn the_sweep_replaces_a_song_its_preview_says_is_another_and_put_back_rest
     assert_eq!(download.source_override, Some(DownloadSource::Soulseek));
 
     // The download service's reveal: the check, then the right copy into the song's place.
-    let incoming = root.join(".flakyfy-incoming");
+    let incoming = root.join(".octo-incoming");
     std::fs::create_dir_all(&incoming).expect("the incoming folder");
     let staged = incoming.join("replacement.mp3");
     teardrop_mp3(&staged, 30);
@@ -304,7 +304,7 @@ async fn the_sweep_replaces_a_song_its_preview_says_is_another_and_put_back_rest
 
     // The right copy is at the song's path, and the original sits in the trash.
     assert_eq!(std::fs::read(&song).expect("the song"), right_bytes);
-    let trashed = mp3s_under(&root.join(".flakyfy-trash"));
+    let trashed = mp3s_under(&root.join(".octo-trash"));
     assert_eq!(trashed.len(), 1, "{trashed:?}");
     assert_eq!(
         std::fs::read(&trashed[0]).expect("the trashed file"),

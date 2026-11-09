@@ -1,4 +1,4 @@
-//! getStationSongs (flakyfyStations): a radio station's songs a page at a time. The station's own
+//! getStationSongs (octoStations): a radio station's songs a page at a time. The station's own
 //! songs come first; after them the station goes on with new songs of its kind for as long as a
 //! client keeps asking, never one the client already queued.
 
@@ -52,7 +52,7 @@ pub fn routes() -> RouteSet {
     RouteSet::new().subsonic("getStationSongs", get(get_station_songs).post(get_station_songs))
 }
 
-/// Whether flakyfyStations is listed: while radio is on and its stations are served as playlists,
+/// Whether octoStations is listed: while radio is on and its stations are served as playlists,
 /// the ids getStationSongs takes.
 pub fn offered(state: &AppState) -> bool {
     let settings = state.settings.current();

@@ -21,10 +21,10 @@ pub const SECRET_PLACEHOLDER: &str = "(saved, not shown)";
 
 /// Cookie carrying the browse session. Scoped to /api/admin so it is never sent with the
 /// Subsonic traffic Flakyfy proxies.
-pub const BROWSE_COOKIE_NAME: &str = "flakyfy_browse";
+pub const BROWSE_COOKIE_NAME: &str = "octo_browse";
 
 /// The header a script signs in with instead of the cookie.
-pub const BROWSE_TOKEN_HEADER: &str = "X-Flakyfy-Browse-Token";
+pub const BROWSE_TOKEN_HEADER: &str = "X-Octo-Browse-Token";
 
 /// The placeholder for a saved secret, `""` for none.
 pub fn mask_secret(value: Option<&str>) -> String {
@@ -100,12 +100,12 @@ pub fn browse_cookie_for(token: &str, https: bool, max_age: chrono::TimeDelta) -
         "{BROWSE_COOKIE_NAME}={}; max-age={max_age}; path=/api/admin{secure}; samesite=strict; httponly",
         escape_cookie_value(token)
     );
-    HeaderValue::from_str(&text).unwrap_or_else(|_| HeaderValue::from_static("flakyfy_browse="))
+    HeaderValue::from_str(&text).unwrap_or_else(|_| HeaderValue::from_static("octo_browse="))
 }
 
 /// The sign-in cookie's deletion, on the same path.
 pub fn browse_cookie_deleted() -> HeaderValue {
-    HeaderValue::from_static("flakyfy_browse=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/api/admin")
+    HeaderValue::from_static("octo_browse=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/api/admin")
 }
 
 /// A cookie value percent-encoded (everything but unreserved characters).
@@ -322,12 +322,9 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("a=1; flakyfy_browse=AB%2BC; flakyfy_browse=x"),
+            HeaderValue::from_static("a=1; octo_browse=AB%2BC; octo_browse=x"),
         );
-        assert_eq!(
-            request_cookie(&headers, "flakyfy_browse").as_deref(),
-            Some("AB+C")
-        );
+        assert_eq!(request_cookie(&headers, "octo_browse").as_deref(), Some("AB+C"));
         assert_eq!(request_cookie(&headers, "missing"), None);
     }
 
@@ -335,11 +332,11 @@ mod tests {
     fn the_cookie_is_written_in_set_cookie_header_value_order() {
         assert_eq!(
             browse_cookie("ABC", false).to_str().unwrap(),
-            "flakyfy_browse=ABC; max-age=7776000; path=/api/admin; samesite=strict; httponly"
+            "octo_browse=ABC; max-age=7776000; path=/api/admin; samesite=strict; httponly"
         );
         assert_eq!(
             browse_cookie("ABC", true).to_str().unwrap(),
-            "flakyfy_browse=ABC; max-age=7776000; path=/api/admin; secure; samesite=strict; httponly"
+            "octo_browse=ABC; max-age=7776000; path=/api/admin; secure; samesite=strict; httponly"
         );
     }
 }

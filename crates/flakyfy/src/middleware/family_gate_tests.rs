@@ -352,8 +352,8 @@ async fn member_token_is_rewritten() {
     let r = send(
         &f.app,
         Method::GET,
-        &format!("/rest/getThing?u=alex&t={t}&s=c19b2d&v=1.16.1&c=Flakyfy&f=json&id=A&id=B"),
-        &[("User-Agent", "Flakyfy/1.6 (Android)")],
+        &format!("/rest/getThing?u=alex&t={t}&s=c19b2d&v=1.16.1&c=Octo&f=json&id=A&id=B"),
+        &[("User-Agent", "Octo/1.6 (Android)")],
         "",
     )
     .await;
@@ -363,7 +363,7 @@ async fn member_token_is_rewritten() {
     let query = sent[0].url.query().expect("a query");
     // Everything else as the client wrote it, in its order, then the hidden sign-in.
     assert!(
-        query.starts_with("v=1.16.1&c=Flakyfy&f=json&id=A&id=B&u=alex&t="),
+        query.starts_with("v=1.16.1&c=Octo&f=json&id=A&id=B&u=alex&t="),
         "{query}"
     );
     assert!(signed_with(&pairs(query), HIDDEN), "{query}");
@@ -386,10 +386,10 @@ async fn member_token_is_rewritten() {
         .family_store
         .devices_of("alex")
         .into_iter()
-        .find(|d| d.seen_apps.iter().any(|a| a == "Flakyfy 1.6 (Android)"))
+        .find(|d| d.seen_apps.iter().any(|a| a == "Octo 1.6 (Android)"))
         .expect("recorded");
     assert!(
-        device.seen_apps.iter().any(|a| a == "Flakyfy 1.6 (Android)"),
+        device.seen_apps.iter().any(|a| a == "Octo 1.6 (Android)"),
         "{:?}",
         device.seen_apps
     );
@@ -519,7 +519,7 @@ async fn owner_passes_untouched() {
         &f.app,
         Method::GET,
         &format!("/rest/testEcho?{query}"),
-        &[("X-Flakyfy-Device-Id", "install-1")],
+        &[("X-Octo-Device-Id", "install-1")],
         "",
     )
     .await;
@@ -962,7 +962,7 @@ async fn utf8_device_name_is_decoded() {
         &f.app,
         Method::GET,
         "/rest/testEcho?u=alex&p=app-secret-1",
-        &[("X-Flakyfy-Device-Name", "Sam%E2%80%99s%20Caf%C3%A9")],
+        &[("X-Octo-Device-Name", "Sam%E2%80%99s%20Caf%C3%A9")],
         "",
     )
     .await;
@@ -990,8 +990,8 @@ async fn utf8_device_name_is_decoded() {
         Method::GET,
         "/rest/testEcho?u=winters&t=a&s=b",
         &[
-            ("X-Flakyfy-Device-Name", long.as_str()),
-            ("X-Flakyfy-Device-Id", "install-9"),
+            ("X-Octo-Device-Name", long.as_str()),
+            ("X-Octo-Device-Id", "install-9"),
         ],
         "",
     )
@@ -1237,7 +1237,7 @@ async fn native_paths_skip_the_family_pages_and_name_the_owner() {
     assert!(skipped("/api/family/me"));
     assert!(skipped("/family/join"));
     // Pairing is read by the gate like any `/rest` call, though nobody is named on it.
-    assert!(!skipped("/rest/flakyfyFamilyPair.view"));
+    assert!(!skipped("/rest/octoFamilyPair.view"));
     assert!(!skipped("/radio/stream/abc"));
     // A Navidrome token of the owner names the owner and goes on untouched.
     Mock::given(method("GET"))
@@ -1777,7 +1777,7 @@ async fn a_member_looks_up_a_place() {
     let r = send(
         &app,
         Method::GET,
-        &format!("/rest/getPlace?u=alex&t={t}&s=c19b2d&v=1.16.1&c=Flakyfy&f=json&code=90210&country=US"),
+        &format!("/rest/getPlace?u=alex&t={t}&s=c19b2d&v=1.16.1&c=Octo&f=json&code=90210&country=US"),
         &[],
         "",
     )
@@ -1791,7 +1791,7 @@ async fn a_member_looks_up_a_place() {
     let wrong = send(
         &app,
         Method::GET,
-        "/rest/getPlace?u=alex&p=not-it&v=1.16.1&c=Flakyfy&f=json&code=90210&country=US",
+        "/rest/getPlace?u=alex&p=not-it&v=1.16.1&c=Octo&f=json&code=90210&country=US",
         &[],
         "",
     )

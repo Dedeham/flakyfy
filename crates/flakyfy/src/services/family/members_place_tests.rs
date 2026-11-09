@@ -24,8 +24,8 @@ fn files_in(dir: &Path) -> Vec<String> {
 fn auto_path_is_next_to_the_music_folder() {
     let settings = AppSettings::default();
     assert!(settings.family.members_path_is_auto());
-    assert_eq!(resolve_in(&settings, "/srv/music/"), "/srv/music/.flakyfy-family");
-    assert_eq!(mode_of("/srv/music/.flakyfy-family"), PlaceMode::NextToMusic);
+    assert_eq!(resolve_in(&settings, "/srv/music/"), "/srv/music/.octo-family");
+    assert_eq!(mode_of("/srv/music/.octo-family"), PlaceMode::NextToMusic);
     assert_eq!(mode_of("/members"), PlaceMode::Custom);
 
     // The same folder downloads go to: Library:DownloadPath when Navidrome's is not detected.
@@ -44,7 +44,7 @@ fn auto_path_is_next_to_the_music_folder() {
         crate::services::http_client_factory::default_client(),
     );
     assert_eq!(music_root(&store, &identity), root);
-    assert_eq!(resolve(&store, &identity), format!("{root}/.flakyfy-family"));
+    assert_eq!(resolve(&store, &identity), format!("{root}/.octo-family"));
 
     // A folder written in the setting is used as it is.
     let mut chosen = AppSettings::default();
@@ -60,7 +60,7 @@ fn ndignore_line_added_once_and_other_lines_kept() {
     assert!(ensure_ndignore(music.path()).expect("added"));
     assert_eq!(
         std::fs::read_to_string(&file).expect("read"),
-        "# kept out\nlive/\n*.tmp\n.flakyfy-family/\n"
+        "# kept out\nlive/\n*.tmp\n.octo-family/\n"
     );
     assert!(
         !ensure_ndignore(music.path()).expect("checked"),
@@ -68,7 +68,7 @@ fn ndignore_line_added_once_and_other_lines_kept() {
     );
     assert_eq!(
         std::fs::read_to_string(&file).expect("read"),
-        "# kept out\nlive/\n*.tmp\n.flakyfy-family/\n"
+        "# kept out\nlive/\n*.tmp\n.octo-family/\n"
     );
     assert_eq!(
         files_in(music.path()),
@@ -77,13 +77,13 @@ fn ndignore_line_added_once_and_other_lines_kept() {
     );
 
     // A line the owner wrote another way counts, and Windows line endings stay.
-    std::fs::write(&file, "/.flakyfy-family\r\n").expect("written");
+    std::fs::write(&file, "/.octo-family\r\n").expect("written");
     assert!(!ensure_ndignore(music.path()).expect("checked"));
     std::fs::write(&file, "a\r\nb\r\n").expect("written");
     assert!(ensure_ndignore(music.path()).expect("added"));
     assert_eq!(
         std::fs::read_to_string(&file).expect("read"),
-        "a\r\nb\r\n.flakyfy-family/\r\n"
+        "a\r\nb\r\n.octo-family/\r\n"
     );
 }
 
@@ -93,15 +93,15 @@ fn ndignore_created_when_missing() {
     assert!(ensure_ndignore(music.path()).expect("made"));
     assert_eq!(
         std::fs::read_to_string(music.path().join(".ndignore")).expect("read"),
-        ".flakyfy-family/\n"
+        ".octo-family/\n"
     );
     assert_eq!(files_in(music.path()), vec![".ndignore"]);
     // The page says to add the line by hand only while it is missing.
-    let path = format!("{}/.flakyfy-family", music.path().to_string_lossy());
+    let path = format!("{}/.octo-family", music.path().to_string_lossy());
     assert!(!next_to_music_message(&path, None).contains("Add the line"));
     let bare = tempfile::tempdir().expect("a temp dir");
-    let path = format!("{}/.flakyfy-family", bare.path().to_string_lossy());
-    assert!(next_to_music_message(&path, None).contains("Add the line .flakyfy-family/"));
+    let path = format!("{}/.octo-family", bare.path().to_string_lossy());
+    assert!(next_to_music_message(&path, None).contains("Add the line .octo-family/"));
 }
 
 const MOUNTS: &str = "\
@@ -116,10 +116,10 @@ host:/srv /mnt/ssh fuse.sshfs rw 0 0
 #[test]
 fn rclone_mount_names_the_links_flag() {
     assert_eq!(
-        mount_type(MOUNTS, Path::new("/music/.flakyfy-family")).as_deref(),
+        mount_type(MOUNTS, Path::new("/music/.octo-family")).as_deref(),
         Some("fuse.rclone")
     );
-    let hint = link_hint_from(MOUNTS, "/music/.flakyfy-family");
+    let hint = link_hint_from(MOUNTS, "/music/.octo-family");
     assert!(
         hint.message.contains(
             "Add --vfs-links to the rclone mount that holds your music, then turn Family off and on to check again."
@@ -137,7 +137,7 @@ fn rclone_mount_names_the_links_flag() {
 
 #[test]
 fn cifs_mount_names_mfsymlinks() {
-    let hint = link_hint_from(MOUNTS, "/mnt/my music/.flakyfy-family");
+    let hint = link_hint_from(MOUNTS, "/mnt/my music/.octo-family");
     assert!(
         hint.message.starts_with("Your music is on a network share."),
         "{hint:?}"

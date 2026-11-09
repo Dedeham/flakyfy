@@ -1,9 +1,7 @@
-"""Keeps a short "The Flakyfy apps" block at the end of the Latest release's notes.
+"""Keeps a short "The Octo apps" block at the end of the Latest release's notes.
 
-The Android and desktop apps publish their releases here too, but never as
-Latest (the server keeps that badge), so on the repository's front page and
-at the top of the Releases page only the server shows. The block links the
-newest app releases from there. It is rewritten in the Latest release on
+Flakyfy is only the server. Its apps are Octo's, published at winters27/octo,
+so the block links the newest app releases from there. It is rewritten in the Latest release on
 every run and taken out of any other release, so it is only ever in one
 place and never goes stale.
 
@@ -19,11 +17,12 @@ import subprocess
 import sys
 
 REPO = os.environ.get("GH_REPO", "dedeham/flakyfy")
-START = "<!-- flakyfy-apps: kept up to date by .github/workflows/release-links.yml -->"
-END = "<!-- /flakyfy-apps -->"
+APPS_REPO = "winters27/octo"
+START = "<!-- octo-apps: kept up to date by .github/workflows/release-links.yml -->"
+END = "<!-- /octo-apps -->"
 BLOCK = re.compile(r"\s*" + re.escape(START) + r".*?" + re.escape(END) + r"\s*", re.S)
 FDROID = "https://winters27.github.io/octo/fdroid/"
-APPS = [("android-v", "Flakyfy for Android"), ("desktop-v", "Flakyfy for Windows and Linux")]
+APPS = [("android-v", "Octo for Android"), ("desktop-v", "Octo for Windows and Linux")]
 
 
 def gh(*args, body=None):
@@ -48,15 +47,15 @@ def block(releases):
             links.append(f"[{newest['name'] or fallback}]({newest['html_url']})")
     if not links:
         return None
-    links.append(f"[Flakyfy's F-Droid repository]({FDROID})")
-    return f"{START}\n\n---\n\n**The Flakyfy apps:** " + " · ".join(links) + f"\n\n{END}"
+    links.append(f"[Octo's F-Droid repository]({FDROID})")
+    return f"{START}\n\n---\n\n**The Octo apps:** " + " · ".join(links) + f"\n\n{END}"
 
 
 def main():
     dry = "--dry-run" in sys.argv
     releases = gh(f"repos/{REPO}/releases?per_page=100")
     latest = gh(f"repos/{REPO}/releases/latest")
-    apps = block(releases)
+    apps = block(gh(f"repos/{APPS_REPO}/releases?per_page=100"))
     for release in releases:
         is_latest = release["id"] == latest["id"]
         old = release["body"] or ""

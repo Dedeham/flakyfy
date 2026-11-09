@@ -1,14 +1,9 @@
 name: Release app links
 
-# The app releases (android-v*, desktop-v*) are published here but never as
-# Latest, so only the server shows on the front page. After any release is
-# published, server or app, this links the newest app releases at the end of
-# the Latest release's notes (.github/scripts/app_links.py).
-#
-# The app releases are published with a personal token, so they do start this
-# workflow; its own edits use GITHUB_TOKEN and start nothing, so it cannot loop.
-# A server release that docker.yml publishes once its images are up starts nothing
-# either, so docker.yml calls this itself.
+# Flakyfy is only the server; its apps are published at winters27/octo. After a release is
+# published here, this links the newest app releases at the end of the Latest release's notes
+# (.github/scripts/app_links.py). Its own edits use GITHUB_TOKEN and start nothing, so it cannot
+# loop. A server release that docker.yml publishes starts nothing either, so docker.yml calls this.
 on:
   release:
     types: [published]

@@ -1,0 +1,15 @@
+# Installed by scripts/updater/install-updater.sh. Updates Flakyfy to the release
+# the dashboard asked for: fetch, pull, restart. See flakyfy-updater.sh.
+[Unit]
+Description=Update Flakyfy to the release asked for on the dashboard
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment="FLAKYFY_DIR=@FLAKYFY_DIR@"
+Environment="FLAKYFY_UPDATE_DIR=@UPDATE_DIR@"
+Environment="FLAKYFY_UPDATER_DRYRUN=@DRYRUN@"
+ExecStart=@LIB_DIR@/flakyfy-updater.sh
+TimeoutStartSec=30min
+Nice=10

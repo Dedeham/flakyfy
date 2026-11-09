@@ -247,7 +247,7 @@
    }
   },
   {
-   "name": "playlist-octo-station-id-xml",
+   "name": "playlist-flakyfy-station-id-xml",
    "request": {
     "method": "GET",
     "target": "/rest/getPlaylist.view?u=admin&p=parity-admin&v=1.16.1&c=parity&id=or00000000000000000000",
@@ -282,7 +282,7 @@
    }
   },
   {
-   "name": "playlist-octo-mix-id-json",
+   "name": "playlist-flakyfy-mix-id-json",
    "request": {
     "method": "GET",
     "target": "/rest/getPlaylist?u=admin&p=parity-admin&v=1.16.1&c=parity&f=json&id=og00000000000000000000",
@@ -317,7 +317,7 @@
    }
   },
   {
-   "name": "create-playlist-octo-id-readonly-json",
+   "name": "create-playlist-flakyfy-id-readonly-json",
    "request": {
     "method": "GET",
     "target": "/rest/createPlaylist?u=admin&p=parity-admin&v=1.16.1&c=parity&f=json&playlistId=og00000000000000000000&songId=2A1r2OKTiTVuvPfmtePIIe",
@@ -346,13 +346,13 @@
    ],
    "body": {
     "kind": "json",
-    "size": 138,
-    "sha256": "177846d6834ee44294d5c683a988e5f52618f000b67693fa98b860cf5c1923ca",
-    "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Octo\\u0027s generated playlists are read-only\"}}}"
+    "size": 141,
+    "sha256": "e1df565106f6dfb0ab3056d9a5c820d663b16a950ccf9ad6cbaca8a5dfdcae63",
+    "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Flakyfy\\u0027s generated playlists are read-only\"}}}"
    }
   },
   {
-   "name": "update-playlist-octo-id-readonly-xml",
+   "name": "update-playlist-flakyfy-id-readonly-xml",
    "request": {
     "method": "GET",
     "target": "/rest/updatePlaylist.view?u=admin&p=parity-admin&v=1.16.1&c=parity&playlistId=or00000000000000000000",
@@ -364,7 +364,7 @@
    "headers": [
     [
      "Content-Length",
-     "182"
+     "185"
     ],
     [
      "Content-Type",
@@ -381,13 +381,13 @@
    ],
    "body": {
     "kind": "xml",
-    "size": 182,
-    "sha256": "610d713f407c41dc65e1f9232d058ed041cb45de17eb7d122c254c45eb043b35",
-    "text": "<subsonic-response status=\"failed\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  <error code=\"70\" message=\"Octo's generated playlists are read-only\" />\n</subsonic-response>"
+    "size": 185,
+    "sha256": "7e0c640e078c0114b5b875f78c8953db34c2fbd3127ee51d8aec612711327a33",
+    "text": "<subsonic-response status=\"failed\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  <error code=\"70\" message=\"Flakyfy's generated playlists are read-only\" />\n</subsonic-response>"
    }
   },
   {
-   "name": "delete-playlist-octo-id-readonly-json",
+   "name": "delete-playlist-flakyfy-id-readonly-json",
    "request": {
     "method": "GET",
     "target": "/rest/deletePlaylist?u=admin&p=parity-admin&v=1.16.1&c=parity&f=json&id=og00000000000000000000",
@@ -416,9 +416,9 @@
    ],
    "body": {
     "kind": "json",
-    "size": 138,
-    "sha256": "177846d6834ee44294d5c683a988e5f52618f000b67693fa98b860cf5c1923ca",
-    "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Octo\\u0027s generated playlists are read-only\"}}}"
+    "size": 141,
+    "sha256": "e1df565106f6dfb0ab3056d9a5c820d663b16a950ccf9ad6cbaca8a5dfdcae63",
+    "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Flakyfy\\u0027s generated playlists are read-only\"}}}"
    }
   },
   {
@@ -562,7 +562,7 @@
    }
   },
   {
-   "name": "create-station-octo-id-readonly-json",
+   "name": "create-station-flakyfy-id-readonly-json",
    "request": {
     "method": "GET",
     "target": "/rest/createInternetRadioStation?u=admin&p=parity-admin&v=1.16.1&c=parity&f=json&id=or00000000000000000000",
@@ -591,13 +591,13 @@
    ],
    "body": {
     "kind": "json",
-    "size": 138,
-    "sha256": "177846d6834ee44294d5c683a988e5f52618f000b67693fa98b860cf5c1923ca",
-    "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Octo\\u0027s generated playlists are read-only\"}}}"
+    "size": 141,
+    "sha256": "e1df565106f6dfb0ab3056d9a5c820d663b16a950ccf9ad6cbaca8a5dfdcae63",
+    "text": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Flakyfy\\u0027s generated playlists are read-only\"}}}"
    }
   },
   {
-   "name": "delete-station-octo-id-readonly-xml",
+   "name": "delete-station-flakyfy-id-readonly-xml",
    "request": {
     "method": "GET",
     "target": "/rest/deleteInternetRadioStation.view?u=admin&p=parity-admin&v=1.16.1&c=parity&id=og00000000000000000000",
@@ -609,7 +609,7 @@
    "headers": [
     [
      "Content-Length",
-     "182"
+     "185"
     ],
     [
      "Content-Type",
@@ -626,9 +626,9 @@
    ],
    "body": {
     "kind": "xml",
-    "size": 182,
-    "sha256": "610d713f407c41dc65e1f9232d058ed041cb45de17eb7d122c254c45eb043b35",
-    "text": "<subsonic-response status=\"failed\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  <error code=\"70\" message=\"Octo's generated playlists are read-only\" />\n</subsonic-response>"
+    "size": 185,
+    "sha256": "7e0c640e078c0114b5b875f78c8953db34c2fbd3127ee51d8aec612711327a33",
+    "text": "<subsonic-response status=\"failed\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  <error code=\"70\" message=\"Flakyfy's generated playlists are read-only\" />\n</subsonic-response>"
    }
   },
   {

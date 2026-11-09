@@ -1,6 +1,6 @@
 {
   "about": [
-    "Reference values for crates/octo-core/src/common/fuzzy.rs, made with the rapidfuzz Python package 3.9.7 (fuzz.ratio, fuzz.token_sort_ratio, fuzz.token_set_ratio divided by 100, and JaroWinkler.normalized_similarity with prefix weight 0.1).",
+    "Reference values for crates/flakyfy-core/src/common/fuzzy.rs, made with the rapidfuzz Python package 3.9.7 (fuzz.ratio, fuzz.token_sort_ratio, fuzz.token_set_ratio divided by 100, and JaroWinkler.normalized_similarity with prefix weight 0.1).",
     "Inputs are compared as given, with no processor. The Rust functions must agree within 0.001."
   ],
   "pairs": [

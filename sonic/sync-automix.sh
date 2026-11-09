@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Copies the transition analysis from the Octo apps' audio engine into
+# Copies the transition analysis from the Flakyfy apps' audio engine into
 # src/automix, with the shared test vectors and the profile fixture the
-# apps read, so octo-sonic analyzes songs exactly as the players do.
+# apps read, so flakyfy-sonic analyzes songs exactly as the players do.
 #
-#   ./sync-automix.sh [path to the OctoPlayer checkout]
+#   ./sync-automix.sh [path to the FlakyfyPlayer checkout]
 #
-# The default is OCTOPLAYER, else ../../OctoPlayer beside this repo. Run
+# The default is FLAKYFYPLAYER, else ../../FlakyfyPlayer beside this repo. Run
 # `cargo test` afterwards: the parity test checks the copy against the
 # vectors, and the fixture test against the apps' profile fixture.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-apps="${1:-${OCTOPLAYER:-$here/../../OctoPlayer}}"
+apps="${1:-${FLAKYFYPLAYER:-$here/../../FlakyfyPlayer}}"
 engine="$apps/audio-engine/src/automix"
 resources="$apps/shared/core/src/commonTest/resources"
 

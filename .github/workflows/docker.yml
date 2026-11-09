@@ -1,14 +1,14 @@
 name: Docker Build & Push
 
-# Publishes Octo's three images (Octo, the yt-dlp shim, octo-sonic) for amd64 and arm64:
+# Publishes Flakyfy's three images (Flakyfy, the yt-dlp shim, flakyfy-sonic) for amd64 and arm64:
 # on every push to main (tagged main and the commit), and on every release tag (tagged with
 # the release, and latest for a dated release). A release tag on a commit main already built
-# reuses main's images: it only adds its own tags to them, without checking or building again. Octo is the Rust server (Dockerfile; the C#
-# app in octo/ is in no image). Installs pull all three at their own release's tag, and the
+# reuses main's images: it only adds its own tags to them, without checking or building again. Flakyfy is the Rust server (Dockerfile; the C#
+# app in flakyfy/ is in no image). Installs pull all three at their own release's tag, and the
 # update helper pulls them on Update now, so they must be on ghcr.io before anyone can see
 # the release.
 #
-# Octo's update check reads GitHub releases, not tags. So, to cut a release:
+# Flakyfy's update check reads GitHub releases, not tags. So, to cut a release:
 #   1. Make the release on GitHub as a draft (gh release create <tag> --draft ...). A draft
 #      is invisible to the update check.
 #   2. Push the tag. This workflow builds and publishes every image of it.
@@ -18,7 +18,7 @@ name: Docker Build & Push
 #      cannot be pulled without signing in: a new package on ghcr.io starts private, so the
 #      first time, make it public on GitHub and re-run the release job.
 # Never publish the release before this workflow is green: an install that updates first
-# would find no images for it (it then builds them from source, Octo's Rust included, which
+# would find no images for it (it then builds them from source, Flakyfy's Rust included, which
 # takes many minutes and gigabytes of memory, or fails without ghcr.io).
 
 on:
@@ -53,8 +53,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # The release number is the VERSION file (the Rust build reads it; octo/octo.csproj names
-  # the last C# release and is not read once VERSION exists).
+  # The release number is the VERSION file (the Rust build reads it).
   versions:
     runs-on: ubuntu-latest
 
@@ -62,7 +61,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # A dated release must carry its own number in VERSION. Octo reports that number, and
+      # A dated release must carry its own number in VERSION. Flakyfy reports that number, and
       # the dashboard's update check compares it with the newest tag, so a tag on a commit
       # that was not bumped would leave every updated server offering the same update forever.
       - name: Release tag matches the version
@@ -74,21 +73,21 @@ jobs:
             exit 1
           fi
 
-      # docker-compose.yml pulls Octo and its sidecars at Octo's own version unless
-      # OCTO_IMAGE_TAG says otherwise, so a release bump that missed it would leave
-      # installs pulling the last release, Octo included. Checked on main too, so a
+      # docker-compose.yml pulls Flakyfy and its sidecars at Flakyfy's own version unless
+      # FLAKYFY_IMAGE_TAG says otherwise, so a release bump that missed it would leave
+      # installs pulling the last release, Flakyfy included. Checked on main too, so a
       # missed bump shows up before anyone tags it.
       - name: Compose pulls this version's images
         run: |
           version="$(tr -d ' \r\n' < VERSION)"
-          stale="$(grep -o 'OCTO_IMAGE_TAG:-[^}]*' docker-compose.yml | sed 's/^OCTO_IMAGE_TAG:-//' | grep -Fvx "$version" | paste -sd ' ' || true)"
+          stale="$(grep -o 'FLAKYFY_IMAGE_TAG:-[^}]*' docker-compose.yml | sed 's/^FLAKYFY_IMAGE_TAG:-//' | grep -Fvx "$version" | paste -sd ' ' || true)"
           if [ -n "$stale" ]; then
-            echo "::error::docker-compose.yml pulls images tagged $stale, but VERSION says $version. Bump the OCTO_IMAGE_TAG defaults with it."
+            echo "::error::docker-compose.yml pulls images tagged $stale, but VERSION says $version. Bump the FLAKYFY_IMAGE_TAG defaults with it."
             exit 1
           fi
-          for image in octo octo-yt-dlp-shim octo-sonic; do
-            if ! grep -Fq "image: ghcr.io/winters27/$image:\${OCTO_IMAGE_TAG:-$version}" docker-compose.yml; then
-              echo "::error::docker-compose.yml does not pull ghcr.io/winters27/$image at \${OCTO_IMAGE_TAG:-$version}."
+          for image in flakyfy flakyfy-yt-dlp-shim flakyfy-sonic; do
+            if ! grep -Fq "image: ghcr.io/dedeham/$image:\${FLAKYFY_IMAGE_TAG:-$version}" docker-compose.yml; then
+              echo "::error::docker-compose.yml does not pull ghcr.io/dedeham/$image at \${FLAKYFY_IMAGE_TAG:-$version}."
               exit 1
             fi
           done
@@ -128,16 +127,14 @@ jobs:
           echo "built=$built" >> "$GITHUB_OUTPUT"
           echo "::notice::Images of ${GITHUB_SHA::7} already built: $built"
 
-  # Every check in ci.yml (the Rust server, the shim, octo-sonic, the helper and the
-  # installer) before anything is published. The C# app's job is left out: no image holds it.
+  # Every check in ci.yml (the Rust server, the shim, flakyfy-sonic, the helper and the
+  # installer) before anything is published.
   checks:
     needs: reuse
     if: needs.reuse.outputs.built != 'true'
     uses: ./.github/workflows/ci.yml
-    with:
-      csharp: false
 
-  # GeoNames' postal codes for the octo image's place data, downloaded once per run so the amd64
+  # GeoNames' postal codes for the flakyfy image's place data, downloaded once per run so the amd64
   # and arm64 images are built from the same files. The Dockerfile takes them from places-data/
   # in the build context, keyed by their content, so a run on main takes the data as GeoNames
   # has it that day and converts it again only when it changed.
@@ -166,7 +163,7 @@ jobs:
 
   # Each image for each platform, built on a runner of that platform: arm64 on GitHub's own
   # arm64 runners (free for public repositories) rather than under QEMU, where compiling
-  # octo-sonic (Rust and FFmpeg) took many times longer. Each pushes its image by digest
+  # flakyfy-sonic (Rust and FFmpeg) took many times longer. Each pushes its image by digest
   # only; the merge job below puts the two platforms under the real tags.
   build:
     needs: [versions, checks, places]
@@ -182,7 +179,7 @@ jobs:
           # The Rust server (Dockerfile at the top of the repo). Its Rust compile is most of
           # this workflow's time; the cargo-chef layer of third-party crates is cached.
           # Only its build takes the place data, and it fails without it.
-          - name: octo
+          - name: flakyfy
             context: .
             suffix: ""
             places: true
@@ -193,7 +190,7 @@ jobs:
             places: false
             build_args: ""
           # The Sounds alike reader (Rust).
-          - name: octo-sonic
+          - name: flakyfy-sonic
             context: ./sonic
             suffix: -sonic
             places: false
@@ -253,7 +250,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.image.suffix }}
           # Every image would otherwise be titled after the repo.
           labels: |
-            org.opencontainers.image.title=octo${{ matrix.image.suffix }}
+            org.opencontainers.image.title=flakyfy${{ matrix.image.suffix }}
 
       - name: Build and push by digest
         id: build
@@ -281,7 +278,7 @@ jobs:
       - name: Upload the digest
         uses: actions/upload-artifact@v7
         with:
-          # Platform first, image name last: "digests-*-octo" must not also match octo-sonic.
+          # Platform first, image name last: "digests-*-flakyfy" must not also match flakyfy-sonic.
           name: digests-${{ matrix.platform.arch }}-${{ matrix.image.name }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
@@ -297,11 +294,11 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: octo
+          - name: flakyfy
             suffix: ""
           - name: yt-dlp-shim
             suffix: -yt-dlp-shim
-          - name: octo-sonic
+          - name: flakyfy-sonic
             suffix: -sonic
 
     permissions:
@@ -378,11 +375,11 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: octo
+          - name: flakyfy
             suffix: ""
           - name: yt-dlp-shim
             suffix: -yt-dlp-shim
-          - name: octo-sonic
+          - name: flakyfy-sonic
             suffix: -sonic
 
     permissions:
@@ -430,7 +427,7 @@ jobs:
         run: docker buildx imagetools inspect "$IMAGE:$VERSION"
 
   # Publishes the release's draft once all three images of the tag are on ghcr.io (see the
-  # order at the top). Only for dated releases, the ones Octo's update check offers.
+  # order at the top). Only for dated releases, the ones Flakyfy's update check offers.
   release:
     needs: [merge, retag]
     if: >-

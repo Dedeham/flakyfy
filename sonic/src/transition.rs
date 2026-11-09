@@ -1,4 +1,4 @@
-//! A song's transition profile as Octo keeps it and the apps read it: the
+//! A song's transition profile as Flakyfy keeps it and the apps read it: the
 //! features of its first 30 s and last 60 s, its level there every 100 ms,
 //! and the whole song's level and tempo. Made from the same decoded sound
 //! as the Sounds alike reading.
@@ -38,7 +38,7 @@ use crate::automix::profile::{
 /// to pick that octave.
 pub const PUBLISHED_WITHIN: f64 = 0.02;
 
-/// The profile version this octo-sonic writes.
+/// The profile version this flakyfy-sonic writes.
 pub fn version() -> u32 {
     PROFILE_VERSION
 }
@@ -308,12 +308,12 @@ mod tests {
 
     /// The fixture the apps read their profile parsing against
     /// (`transition-profile.json`, copied into their tests by
-    /// `sync-automix.sh`). `OCTO_WRITE_FIXTURE=1 cargo test` writes it again
+    /// `sync-automix.sh`). `FLAKYFY_WRITE_FIXTURE=1 cargo test` writes it again
     /// after a change to the form.
     #[test]
     fn the_profile_is_the_one_the_apps_read() {
         let got = fixture_profile();
-        if std::env::var("OCTO_WRITE_FIXTURE").is_ok_and(|v| v == "1") {
+        if std::env::var("FLAKYFY_WRITE_FIXTURE").is_ok_and(|v| v == "1") {
             let text = serde_json::to_string_pretty(&got).expect("JSON") + "\n";
             std::fs::write(FIXTURE, text).expect("the fixture is written");
         }

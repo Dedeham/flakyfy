@@ -8,15 +8,15 @@ x-logging: &logging
     max-file: "${LOG_MAX_FILES:-3}"
 
 services:
-  # Pulled, not built: Octo is published with every release, for amd64 and arm64, so no
+  # Pulled, not built: Flakyfy is published with every release, for amd64 and arm64, so no
   # install compiles it. The default tag is this release's own number (bumped with the
-  # VERSION file; CI checks it); OCTO_IMAGE_TAG in .env picks another, such as latest.
-  # To run Octo built from this folder instead (changes of your own, or no access to
-  # ghcr.io), build octo-source, at the end of this file. Octo is written in Rust; the
-  # environment below and the config folder are the ones the C# Octo read, unchanged.
-  octo:
-    image: ghcr.io/winters27/octo:${OCTO_IMAGE_TAG:-2026.10.28}
-    container_name: octo
+  # VERSION file; CI checks it); FLAKYFY_IMAGE_TAG in .env picks another, such as latest.
+  # To run Flakyfy built from this folder instead (changes of your own, or no access to
+  # ghcr.io), build flakyfy-source, at the end of this file. Flakyfy is written in Rust; the
+  # environment below and the config folder are the ones the C# Flakyfy read, unchanged.
+  flakyfy:
+    image: ghcr.io/dedeham/flakyfy:${FLAKYFY_IMAGE_TAG:-2026.10.28}
+    container_name: flakyfy
     restart: unless-stopped
     logging: *logging
     ports:
@@ -33,16 +33,16 @@ services:
       # ----- Subsonic / Navidrome upstream -----
       # Your Navidrome server, reachable from THIS container (a LAN IP or service
       # name, not localhost). With the navidrome profile below (the starter stack)
-      # this is http://navidrome:4533. Left blank, Octo looks for a server on the
+      # this is http://navidrome:4533. Left blank, Flakyfy looks for a server on the
       # network at first start and reports clearly if it finds none.
       Subsonic__Url: ${SUBSONIC_URL:-}
-      # Optional Navidrome admin login. Lets Octo detect the music folder and run
-      # authenticated rescans on its own. Leave blank to have Octo learn an admin
+      # Optional Navidrome admin login. Lets Flakyfy detect the music folder and run
+      # authenticated rescans on its own. Leave blank to have Flakyfy learn an admin
       # token from a client sign-in instead.
       Subsonic__AdminUsername: ${SUBSONIC_ADMIN_USERNAME:-}
       Subsonic__AdminPassword: ${SUBSONIC_ADMIN_PASSWORD:-}
       # Auto-detect the download folder from Navidrome so downloads land where it
-      # scans. Only adopts a path Octo can actually see; otherwise falls back to
+      # scans. Only adopts a path Flakyfy can actually see; otherwise falls back to
       # Library__DownloadPath below. Set false to always use that path verbatim.
       Subsonic__AutoDetectDownloadPath: ${AUTO_DETECT_DOWNLOAD_PATH:-true}
       Subsonic__StorageMode: ${STORAGE_MODE:-Stream}
@@ -75,7 +75,7 @@ services:
       Subsonic__SearchLastFmWaitMs: ${SEARCH_LASTFM_WAIT_MS:-1000}
       Subsonic__StreamSizeWarmPerMinute: ${STREAM_SIZE_WARM_PER_MINUTE:-5}
       Subsonic__CoverCacheMb: ${COVER_CACHE_MB:-1024}
-      # The small octopus on outside covers in other apps: it marks songs not in your
+      # The small flakyfypus on outside covers in other apps: it marks songs not in your
       # library yet, which a heart downloads. false shows those covers plain.
       Subsonic__CoverBadge: ${COVER_BADGE:-true}
       # Apps that hide a song with no size (Amperfy) get 1 for an outside song until its
@@ -127,7 +127,7 @@ services:
       Soulseek__MinMatchScore: ${SLSKD_MIN_MATCH_SCORE:-85}
       Soulseek__TagFromMusicBrainz: ${SLSKD_TAG_FROM_MUSICBRAINZ:-false}
       # Name the file from the matched recording too (artist folder, title, album,
-      # track). Off by default; only files Octo downloads and confirms are named this way.
+      # track). Off by default; only files Flakyfy downloads and confirms are named this way.
       Soulseek__NameFromMatch: ${NAME_FROM_MATCH:-false}
       Soulseek__RejectedPeerTtlDays: ${SLSKD_REJECTED_PEER_DAYS:-30}
       Soulseek__FingerprintSeconds: ${SLSKD_FINGERPRINT_SECONDS:-120}
@@ -136,7 +136,7 @@ services:
       # Hours a heart waits while slskd is up but not logged in to Soulseek (server
       # maintenance), before it uses the next source. 0 means do not wait.
       Soulseek__OutageHoldHours: ${SLSKD_OUTAGE_HOLD_HOURS:-6}
-      # Downloads that may transfer at once (1 to 6). Each lands in its own folder, and Octo
+      # Downloads that may transfer at once (1 to 6). Each lands in its own folder, and Flakyfy
       # keeps to one at a time until slskd has proven it. 1 is the old behaviour.
       Soulseek__ParallelDownloads: ${SLSKD_PARALLEL_DOWNLOADS:-3}
       # An album heart takes one peer's folder of the album in one batch, then searches song
@@ -157,7 +157,7 @@ services:
       Lidarr__ImportTimeoutSeconds: ${LIDARR_IMPORT_TIMEOUT_SECONDS:-1800}
 
       # ----- your own Mornye, formerly SpotiFLAC (optional download source, off by default) -----
-      # Octo includes no Mornye and no extensions: see the spotiflac service below and
+      # Flakyfy includes no Mornye and no extensions: see the spotiflac service below and
       # the dashboard's Mornye page for what to bring. With that service, the address is
       # http://spotiflac:8000.
       Spotiflac__Enabled: ${SPOTIFLAC_ENABLED:-false}
@@ -172,7 +172,7 @@ services:
 
       # ----- get upcoming songs ahead (off by default) -----
       # The next songs of what is playing, downloaded as FLAC before they play, into a folder
-      # outside the music folder (blank: prefetch beside settings.json). Octo's apps play them;
+      # outside the music folder (blank: prefetch beside settings.json). Flakyfy's apps play them;
       # other apps need Subsonic__WaitForLosslessOnPlay.
       Prefetch__Enabled: ${PREFETCH_ENABLED:-false}
       Prefetch__Scope: ${PREFETCH_SCOPE:-RadioOnly}
@@ -186,7 +186,7 @@ services:
       Prefetch__KeepMixesReady: ${PREFETCH_KEEP_MIXES_READY:-false}
       Prefetch__KeepReadyCount: ${PREFETCH_KEEP_READY_COUNT:-5}
 
-      # ----- Last.fm radio (core Octo feature; no separate Radio service) -----
+      # ----- Last.fm radio (core Flakyfy feature; no separate Radio service) -----
       LastFm__ApiKey: ${LASTFM_API_KEY:-}
       LastFm__ApiSecret: ${LASTFM_API_SECRET:-}
       LastFm__EnableRadio: ${LASTFM_ENABLE_RADIO:-true}
@@ -211,7 +211,7 @@ services:
       RadioSources__ListenBrainzAlgorithm: ${RADIO_LISTENBRAINZ_ALGORITHM:-session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30}
       RadioSources__ListenBrainzRadioMode: ${RADIO_LISTENBRAINZ_RADIO_MODE:-easy}
       RadioSources__SoundsAlike: ${RADIO_SOUNDS_ALIKE:-true}
-      RadioSources__SonicUrl: ${RADIO_SONIC_URL:-http://octo-sonic:8080}
+      RadioSources__SonicUrl: ${RADIO_SONIC_URL:-http://flakyfy-sonic:8080}
       RadioSources__SonicPauseSeconds: ${RADIO_SONIC_PAUSE_SECONDS:-2}
       RadioSources__LearnFromListening: ${RADIO_LEARN_FROM_LISTENING:-true}
 
@@ -222,7 +222,7 @@ services:
       GeneratedPlaylists__ChartCountry: ${CHART_COUNTRY:-auto}
 
       # ----- Mixes: genre and decade playlists drawn from your own library -----
-      # Served by Octo per listener, like the radio stations; nothing is written to Navidrome.
+      # Served by Flakyfy per listener, like the radio stations; nothing is written to Navidrome.
       GeneratedPlaylists__Enabled: ${MIXES_ENABLED:-false}
       GeneratedPlaylists__Genres: ${MIXES_GENRES:-true}
       GeneratedPlaylists__Decades: ${MIXES_DECADES:-true}
@@ -277,26 +277,26 @@ services:
       Genre__BackfillMaxConsecutiveFailures: ${GENRE_BACKFILL_MAX_FAILURES:-25}
 
       # ----- Library actions (fix a wrong download from any client) -----
-      # Off by default: these actions remove files Octo did not create. The action
+      # Off by default: these actions remove files Flakyfy did not create. The action
       # names, the star mapping and who may trigger them live in the dashboard.
       LibraryActions__Enabled: ${LIBRARY_ACTIONS_ENABLED:-false}
       LibraryActions__PlaylistsEnabled: ${LIBRARY_ACTIONS_PLAYLISTS:-true}
       LibraryActions__RatingsEnabled: ${LIBRARY_ACTIONS_RATINGS:-false}
       LibraryActions__DryRun: ${LIBRARY_ACTIONS_DRY_RUN:-true}
-      LibraryActions__QuarantineDirectory: ${LIBRARY_ACTIONS_TRASH_DIR:-.octo-trash}
+      LibraryActions__QuarantineDirectory: ${LIBRARY_ACTIONS_TRASH_DIR:-.flakyfy-trash}
       LibraryActions__QuarantineRetentionDays: ${LIBRARY_ACTIONS_TRASH_DAYS:-30}
       LibraryActions__PollIntervalSeconds: ${LIBRARY_ACTIONS_POLL_SECONDS:-60}
       LibraryActions__MaxActionsPerCycle: ${LIBRARY_ACTIONS_MAX_PER_CYCLE:-20}
       LibraryActions__KeepReplacedOriginals: ${LIBRARY_ACTIONS_KEEP_REPLACED:-true}
       LibraryActions__PlaylistPrefix: ${LIBRARY_ACTIONS_PREFIX:-🛠 }
-      # Octo's own questions: a Review playlist it fills with downloads AcoustID could not
+      # Flakyfy's own questions: a Review playlist it fills with downloads AcoustID could not
       # settle. Answer with Keep (5 stars) or an action; removing a track answers too.
       LibraryActions__NoticePrefix: ${LIBRARY_ACTIONS_NOTICE_PREFIX:-▸ }
       LibraryActions__ReviewEnabled: ${LIBRARY_ACTIONS_REVIEW:-false}
       # Also check songs already in the library, this many an hour (0 is off). Only while nothing
       # downloads, only the library keeper is asked, and at most 50 such questions wait at once.
       LibraryActions__ReviewSweepPerHour: ${LIBRARY_ACTIONS_REVIEW_SWEEP_PER_HOUR:-0}
-      LibraryActions__ReviewSweepOctoDownloads: ${LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS:-false}
+      LibraryActions__ReviewSweepFlakyfyDownloads: ${LIBRARY_ACTIONS_REVIEW_SWEEP_FLAKYFY_DOWNLOADS:-false}
       # Replace a file the sweep finds is clearly another song (Wrong song) instead of asking,
       # at most this many a day. Unsure matches and other takes are still asked about.
       LibraryActions__ReviewSweepAutoReplace: ${LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE:-false}
@@ -309,15 +309,18 @@ services:
       LibraryActions__TagCheckPerHour: ${LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR:-60}
       # Songs an hour the one-time YouTube check compares, once started from the dashboard. 0 is off.
       LibraryActions__YoutubeCheckPerHour: ${LIBRARY_ACTIONS_YOUTUBE_CHECK_PER_HOUR:-30}
+      # Let that check replace what it clearly hears as another song, by the sweep's preview rule
+      # and within the same daily limit. Off by default.
+      LibraryActions__YoutubeCheckAutoReplace: ${LIBRARY_ACTIONS_YOUTUBE_CHECK_AUTO_REPLACE:-false}
       # Recordings the library holds more than once, side by side, the copy worth keeping first.
-      # Octo only points them out; nothing is removed unless you remove it.
+      # Flakyfy only points them out; nothing is removed unless you remove it.
       LibraryActions__DuplicatesEnabled: ${LIBRARY_ACTIONS_DUPLICATES:-false}
       LibraryActions__DuplicatesScanHours: ${LIBRARY_ACTIONS_DUPLICATES_SCAN_HOURS:-24}
       LibraryActions__UpgradePerWeek: ${LIBRARY_ACTIONS_UPGRADE_PER_WEEK:-0}
       # Where Better quality looks: Auto (Soulseek, then Lidarr), Soulseek or Lidarr.
       LibraryActions__UpgradeSource: ${LIBRARY_ACTIONS_UPGRADE_SOURCE:-Auto}
       LibraryActions__NoticeMaxTracks: ${LIBRARY_ACTIONS_NOTICE_MAX:-100}
-      # Auto: stars only act on tracks in Octo's playlists while Review or Duplicates is on.
+      # Auto: stars only act on tracks in Flakyfy's playlists while Review or Duplicates is on.
       LibraryActions__RatingsScope: ${LIBRARY_ACTIONS_RATINGS_SCOPE:-Auto}
 
       # ----- Metadata language (genre tags etc. from Deezer / Last.fm) -----
@@ -343,8 +346,8 @@ services:
       Metadata__ReplayGain: ${REPLAYGAIN:-true}
       Metadata__ReplayGainTimeoutSeconds: ${REPLAYGAIN_TIMEOUT_SECONDS:-45}
       Metadata__TagRehearsal: ${TAG_REHEARSAL:-false}
-      # Apple Music's animated album art in the Octo apps: direct (from Apple's video
-      # network), relay (through Octo) or off.
+      # Apple Music's animated album art in the Flakyfy apps: direct (from Apple's video
+      # network), relay (through Flakyfy) or off.
       Metadata__AnimatedArt: ${ANIMATED_ART:-direct}
       # Lyrics: a .lrc (synced) or .txt (plain) beside each download, and live lyrics
       # for songs as they play. kugou and netease are unofficial APIs; netease only
@@ -365,11 +368,11 @@ services:
       Notifications__NotifyDownloadFailed: ${NOTIFY_DOWNLOAD_FAILED:-true}
       Notifications__NotifyAlbumCompleted: ${NOTIFY_ALBUM_COMPLETED:-true}
       # ----- Updates -----
-      # Ask GitHub every 6 hours whether a newer Octo release is out, and say so on
+      # Ask GitHub every 6 hours whether a newer Flakyfy release is out, and say so on
       # the dashboard. With the update helper on the host, the dashboard can also
       # install it (see "Updating" in the README).
       Updates__Check: ${UPDATES_CHECK:-true}
-      Updates__Repo: ${UPDATES_REPO:-winters27/octo}
+      Updates__Repo: ${UPDATES_REPO:-dedeham/flakyfy}
       # ----- Dashboard sign-in -----
       # A Navidrome admin account signs in to the dashboard. off only behind a proxy
       # that signs people in itself. ADMIN_PORT gives the dashboard a port of its own.
@@ -377,15 +380,15 @@ services:
       Admin__Port: ${ADMIN_PORT:-0}
       # ----- Family -----
       # Accounts for the people you share your music with, each with a library of their
-      # own. Their music is kept next to yours, in a .octo-family folder inside the music
+      # own. Their music is kept next to yours, in a .flakyfy-family folder inside the music
       # folder, so it needs no volume of its own and stays out of your library. Off until
       # you turn it on here or on the dashboard.
       Family__Enabled: ${FAMILY_ENABLED:-false}
       # ----- Logging -----
-      # The two lines for every request and those for every call Octo makes to another
-      # service are left out (Warning), so the log holds Octo's own lines and costs less
+      # The two lines for every request and those for every call Flakyfy makes to another
+      # service are left out (Warning), so the log holds Flakyfy's own lines and costs less
       # CPU. Information brings the request lines back, for example to watch what an app
-      # asks for. Octo leaves them out by itself too; these keep the names older .env
+      # asks for. Flakyfy leaves them out by itself too; these keep the names older .env
       # files use.
       Logging__LogLevel__Microsoft.AspNetCore: ${LOG_LEVEL_ASPNETCORE:-Warning}
       Logging__LogLevel__System.Net.Http.HttpClient: ${LOG_LEVEL_HTTPCLIENT:-Warning}
@@ -395,11 +398,11 @@ services:
       # that folder here and on navidrome at the same path, then choose "Somewhere else"
       # with that path when you turn Family on.
       # - ${MEMBERS_DIR:-./members}:/members
-      # Editable settings file: the admin UI writes here, Octo reloads it on
+      # Editable settings file: the admin UI writes here, Flakyfy reloads it on
       # change. Bind-mounted to host so values survive `docker compose up`. The
       # update helper watches its update/ folder.
-      - ${OCTO_CONFIG_DIR:-./octo-config}:/app/config
-    # Not octo-sonic: Octo runs without it, and waits for it on its own.
+      - ${FLAKYFY_CONFIG_DIR:-./flakyfy-config}:/app/config
+    # Not flakyfy-sonic: Flakyfy runs without it, and waits for it on its own.
     depends_on:
       - yt-dlp-shim
       - slskd
@@ -408,10 +411,10 @@ services:
   # in its own container keeps its process-management quirks from wedging
   # the parent (see Brain/projects/Flaccy.md, 2026-04-29 LXC wedge note).
   #
-  # Pulled, not built, like Octo, and at the same tag, so the two always match.
+  # Pulled, not built, like Flakyfy, and at the same tag, so the two always match.
   # Without access to ghcr.io, build it from this folder with yt-dlp-shim-source (below).
   yt-dlp-shim:
-    image: ghcr.io/winters27/octo-yt-dlp-shim:${OCTO_IMAGE_TAG:-2026.10.28}
+    image: ghcr.io/dedeham/flakyfy-yt-dlp-shim:${FLAKYFY_IMAGE_TAG:-2026.10.28}
     container_name: yt-dlp-shim
     restart: unless-stopped
     logging: *logging
@@ -453,7 +456,7 @@ services:
       # Persistent duration cache DB (see META_DB_PATH above).
       - ytshim-cache:/var/lib/ytshim
       # Shared music root so YouTube-MP3 downloads (DownloadSource=YouTube) land
-      # where Navidrome scans; same host dir Octo and slskd mount, so dest paths
+      # where Navidrome scans; same host dir Flakyfy and slskd mount, so dest paths
       # line up across containers.
       - ${DOWNLOAD_PATH:-./downloads}:/music
       # Writable home for the yt-dlp binary. YouTube rotates its player on its
@@ -463,17 +466,17 @@ services:
       # update outlive the next `docker compose up -d`.
       - ytdlp-bin:/opt/ytdlp
 
-  # Reads each song once: its transition profile, for the Octo apps' blends, and how it
+  # Reads each song once: its transition profile, for the Flakyfy apps' blends, and how it
   # sounds, for Sounds alike radio. Read-only on the music; each file is read by a child
   # process, so a damaged one costs only itself. Always started, so an update brings it with
-  # no change to .env. RADIO_SOUNDS_ALIKE=false turns Sounds alike radio off: octo-sonic
+  # no change to .env. RADIO_SOUNDS_ALIKE=false turns Sounds alike radio off: flakyfy-sonic
   # still makes transition profiles, and no longer works out how songs sound.
   # An older .env with COMPOSE_PROFILES=sonic still works; the profile is simply not needed.
   # Pulled, not built, like the shim: compiling it (Rust and FFmpeg) takes minutes and more
-  # memory than a small machine has. octo-sonic-source (below) builds it from this folder.
-  octo-sonic:
-    image: ghcr.io/winters27/octo-sonic:${OCTO_IMAGE_TAG:-2026.10.28}
-    container_name: octo-sonic
+  # memory than a small machine has. flakyfy-sonic-source (below) builds it from this folder.
+  flakyfy-sonic:
+    image: ghcr.io/dedeham/flakyfy-sonic:${FLAKYFY_IMAGE_TAG:-2026.10.28}
+    container_name: flakyfy-sonic
     restart: unless-stopped
     logging: *logging
     # Passes docker stop's SIGTERM on and reaps the reader processes.
@@ -504,7 +507,7 @@ services:
   # Soulseek client (slskd). Web UI on 5030, peer port 50300.
   # State (config, db, downloads-in-progress) persisted to ./slskd-state so the
   # account survives recreate. SLSKD_DOWNLOADS_DIR below sends finished files
-  # to the same /music mount Octo watches.
+  # to the same /music mount Flakyfy watches.
   #
   # Peer port 50300 is the one other Soulseek users connect to, to download what
   # you share. Forward TCP 50300 on your router to this machine. Port 5030 is
@@ -518,12 +521,12 @@ services:
       - "5030:5030"
       - "50300:50300"
     environment:
-      # Lets slskd's administrator (Octo signs in as it) change slskd.yml through
+      # Lets slskd's administrator (Flakyfy signs in as it) change slskd.yml through
       # slskd's API. The dashboard's Share my library switch needs it.
       SLSKD_REMOTE_CONFIGURATION: "true"
-      # Completed downloads go to the shared /music mount so Octo can see and
+      # Completed downloads go to the shared /music mount so Flakyfy can see and
       # relocate them. Without this slskd defaults to <app>/downloads, which the
-      # slskd-state mount turns into ./slskd-state/downloads, a directory Octo
+      # slskd-state mount turns into ./slskd-state/downloads, a directory Flakyfy
       # does not mount (issue #17). Incomplete transfers stay at the default
       # /app/incomplete (inside slskd-state) so partial files never enter the
       # library Navidrome scans.
@@ -537,15 +540,15 @@ services:
       # ----- Sharing: give back to the people you download from -----
       # Whether slskd shares your library is the Share my library switch on
       # the dashboard's Soulseek page (SLSKD_SHARE_LIBRARY sets where it starts).
-      # Octo applies it by writing the share list into slskd.yml through slskd's
+      # Flakyfy applies it by writing the share list into slskd.yml through slskd's
       # API, which is what remote configuration above allows, so do not set
       # SLSKD_SHARED_DIR here: slskd would share it whatever the switch says.
       # Shares come from the read-only /share mount below, so an upload can
-      # never change a file. Octo's own working files are never shared:
-      # partial and temporary copies, and its hidden folders (.octo-incoming,
-      # .octo-trash), which
+      # never change a file. Flakyfy's own working files are never shared:
+      # partial and temporary copies, and its hidden folders (.flakyfy-incoming,
+      # .flakyfy-trash), which
       # slskd skips anyway because their names start with a dot.
-      SLSKD_SHARE_FILTER: '[\\/]\.octo-;\.octo-tmp$$;\.part$$;\.tmp$$'
+      SLSKD_SHARE_FILTER: '[\\/]\.flakyfy-;\.flakyfy-tmp$$;\.part$$;\.tmp$$'
       # Look through the shared folders again this often, in minutes (60 or
       # more), so songs added since are shared too. A library on a cloud drive
       # may want 10080, once a week: every look reads each file's header.
@@ -564,11 +567,11 @@ services:
   # The starter stack's music server, for anyone without a Navidrome of their own.
   # Off unless the navidrome profile is on: install.sh turns it on by writing
   # COMPOSE_PROFILES=navidrome to .env, or run `docker compose --profile navidrome up -d`.
-  # It reads the same music folder Octo writes to, so a kept song shows up in the
-  # library as soon as Octo asks for a scan.
+  # It reads the same music folder Flakyfy writes to, so a kept song shows up in the
+  # library as soon as Flakyfy asks for a scan.
   # Named navidrome-starter, not navidrome: a Navidrome of your own defined in an
   # override file as "navidrome" would otherwise merge with this one, take on its
-  # profile, and leave nothing for Octo to start. Octo still reaches it as
+  # profile, and leave nothing for Flakyfy to start. Flakyfy still reaches it as
   # http://navidrome:4533 through the alias below.
   navidrome-starter:
     image: deluan/navidrome:latest
@@ -581,7 +584,7 @@ services:
         aliases: [navidrome]
     ports:
       # Navidrome's own pages: add the people who listen, change passwords, and
-      # its web player. Music apps go to Octo on 5274, never here.
+      # its web player. Music apps go to Flakyfy on 5274, never here.
       - "${NAVIDROME_PORT:-4533}:4533"
     environment:
       ND_MUSICFOLDER: /music
@@ -590,12 +593,12 @@ services:
       # Creates the user "admin" with this password the first time Navidrome
       # starts, so there is no setup page to click through. Navidrome runs this
       # only once, on an empty data folder, and never changes an existing
-      # password. Octo signs in with the same login (SUBSONIC_ADMIN_* above).
+      # password. Flakyfy signs in with the same login (SUBSONIC_ADMIN_* above).
       ND_DEVAUTOCREATEADMINPASSWORD: ${NAVIDROME_ADMIN_PASSWORD:-}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/music
       # Only for keeping members' music somewhere other than next to your library: the
-      # same folder octo mounts, at the same path.
+      # same folder flakyfy mounts, at the same path.
       # - ${MEMBERS_DIR:-./members}:/members
       - ${NAVIDROME_DATA_DIR:-./navidrome-data}:/data
 
@@ -603,16 +606,16 @@ services:
   # download source. It starts only with spotiflac in COMPOSE_PROFILES (.env).
   # Compose builds Mornye here from its own repository at SPOTIFLAC_BUILD_REF (a pinned
   # commit, so every install runs the same Mornye) and never pulls it: the first build takes
-  # a few minutes and about 2 GB, later ones are cached. Octo includes no Mornye, no
+  # a few minutes and about 2 GB, later ones are cached. Flakyfy includes no Mornye, no
   # extensions and no places to download from.
   # Mornye downloads nothing until you give it the extension registry you choose
   # (SPOTIFLAC_REGISTRIES); it installs every extension the registry lists by itself, when
   # it starts and again every hour. Its own page is on the port below. It
-  # saves into a hidden folder of the music folder Octo uses, mounted at the same path, so
-  # Octo checks the file and files it like any download. Then set SPOTIFLAC_ENABLED=true
+  # saves into a hidden folder of the music folder Flakyfy uses, mounted at the same path, so
+  # Flakyfy checks the file and files it like any download. Then set SPOTIFLAC_ENABLED=true
   # and SPOTIFLAC_URL=http://spotiflac:8000, or use the dashboard's Mornye page.
   spotiflac:
-    image: octo-mornye:${SPOTIFLAC_BUILD_REF:-5660533bf12592e9de68508cef506f173f58d14f}
+    image: flakyfy-mornye:${SPOTIFLAC_BUILD_REF:-5660533bf12592e9de68508cef506f173f58d14f}
     pull_policy: never
     # 5660533b is Mornye 1.0.3. The image is built here and never pulled.
     build:
@@ -637,7 +640,7 @@ services:
       TZ: ${TZ:-UTC}
       MORNYE_REGISTRIES: ${SPOTIFLAC_REGISTRIES:-}
       MORNYE_WEB_TOKEN: ${SPOTIFLAC_WEB_TOKEN:-}
-      MORNYE_DOWNLOAD_DIR: /music/.octo-incoming/spotiflac
+      MORNYE_DOWNLOAD_DIR: /music/.flakyfy-incoming/spotiflac
       MORNYE_DATA_DIR: /home/mornye/.mornye
       MORNYE_PROGRESS_BARS: "0"
     volumes:
@@ -645,17 +648,17 @@ services:
       # Mornye's state, in a folder of its own: it reads nothing SpotiFLAC left.
       - ${SPOTIFLAC_DATA_DIR:-./spotiflac-data}/mornye:/home/mornye/.mornye
 
-  # Octo and the sidecars built from this folder instead of pulled: for changes of your own,
+  # Flakyfy and the sidecars built from this folder instead of pulled: for changes of your own,
   # or a machine that cannot reach ghcr.io. They never run; a build gives the image the name
   # the service above runs, so `docker compose up -d` then uses it:
-  #   docker compose --profile source build octo-source && docker compose up -d
+  #   docker compose --profile source build flakyfy-source && docker compose up -d
   # A later `docker compose pull` puts the published image back. The update helper and
   # install.sh build them by themselves when a pull fails, and install.sh also when the
   # folder changed since its release. In a profile so a plain `docker compose build` builds
   # nothing, which is what an older update helper runs; that keeps even the update to this
   # release from compiling anything.
-  octo-source:
-    image: ghcr.io/winters27/octo:${OCTO_IMAGE_TAG:-2026.10.28}
+  flakyfy-source:
+    image: ghcr.io/dedeham/flakyfy:${FLAKYFY_IMAGE_TAG:-2026.10.28}
     build:
       context: .
       args:
@@ -664,11 +667,11 @@ services:
         PLACES_REFRESH: ${PLACES_REFRESH:-}
     profiles: ["source"]
   yt-dlp-shim-source:
-    image: ghcr.io/winters27/octo-yt-dlp-shim:${OCTO_IMAGE_TAG:-2026.10.28}
+    image: ghcr.io/dedeham/flakyfy-yt-dlp-shim:${FLAKYFY_IMAGE_TAG:-2026.10.28}
     build: ./yt-dlp-shim
     profiles: ["source"]
-  octo-sonic-source:
-    image: ghcr.io/winters27/octo-sonic:${OCTO_IMAGE_TAG:-2026.10.28}
+  flakyfy-sonic-source:
+    image: ghcr.io/dedeham/flakyfy-sonic:${FLAKYFY_IMAGE_TAG:-2026.10.28}
     build: ./sonic
     profiles: ["source"]
 

@@ -1,0 +1,12 @@
+# Installed by scripts/updater/install-updater.sh. Starts flakyfy-updater.service
+# when Flakyfy's dashboard writes an update request into Flakyfy's config folder.
+[Unit]
+Description=Watch for Flakyfy update requests from the dashboard
+
+[Path]
+PathExists=@UPDATE_DIR@/request
+MakeDirectory=yes
+Unit=flakyfy-updater.service
+
+[Install]
+WantedBy=multi-user.target

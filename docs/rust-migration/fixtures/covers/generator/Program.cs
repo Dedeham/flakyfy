@@ -3,7 +3,7 @@
 // Rust renderer can be compared with the C# one and not only with the design's Pillow goldens.
 // The fallback fonts are whatever the container sees under /usr/share/fonts, so mount the
 // host's, read-only, and both builds set the same files. From the repo root, with no .NET SDK
-// on the host (it compiles against octo/octo.csproj as octo.Tests, for the internal types; since
+// on the host (it compiles against flakyfy/flakyfy.csproj as flakyfy.Tests, for the internal types; since
 // the cutover, restore that tree from csharp-final first, see state-files.md "Regenerating"):
 //
 //   docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e DOTNET_CLI_HOME=/tmp \
@@ -13,11 +13,11 @@
 //
 // It writes reference.json (layouts, advances, font choices) and images/ (lossless WebP of the
 // painted covers before JPEG, the goldens' veiled backgrounds, and one served JPEG). Building
-// leaves bin/ and obj/ here and under octo/, which are git-ignored.
+// leaves bin/ and obj/ here and under flakyfy/, which are git-ignored.
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
-using Octo.Services.CoverArt;
+using Flakyfy.Services.CoverArt;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Drawing.Processing;
@@ -25,7 +25,7 @@ using SixLabors.ImageSharp.Formats.Webp;
 using SixLabors.ImageSharp.PixelFormats;
 
 var outDir = args.Length > 0 ? args[0] : "/repo/docs/rust-migration/fixtures/covers";
-var goldenPath = args.Length > 1 ? args[1] : "/repo/octo.Tests/CoverGolden/samples.json";
+var goldenPath = args.Length > 1 ? args[1] : "/repo/docs/rust-migration/fixtures/covers/samples.json";
 Directory.CreateDirectory(Path.Combine(outDir, "images"));
 
 var book = CoverBook.Default;

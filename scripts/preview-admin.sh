@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-container_name=octo-ui-preview
-image_name=octo:ui-preview
+container_name=flakyfy-ui-preview
+image_name=flakyfy:ui-preview
 
 if [[ "${1:-}" == stop ]]; then
   docker stop "$container_name" >/dev/null 2>&1 || true

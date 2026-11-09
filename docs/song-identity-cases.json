@@ -1,7 +1,7 @@
 {
   "about": [
     "Shared test cases for reading song titles and artist credits, and for deciding whether two songs are the same recording.",
-    "The Octo server (octo/Services/Common/SongIdentity.cs) and the Octo Android app implement the same rules and both run every case in this file, so the two cannot drift apart.",
+    "The Flakyfy server (flakyfy/Services/Common/SongIdentity.cs) and the Flakyfy Android app implement the same rules and both run every case in this file, so the two cannot drift apart.",
     "Change a rule in both places and in this file together. Every note says why a case expects what it does."
   ],
   "rules": {

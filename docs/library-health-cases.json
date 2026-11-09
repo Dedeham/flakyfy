@@ -1,5 +1,5 @@
 {
- "about": "Library health cases, shared by Octo's server (octo.Tests/LibraryHealthCasesTests.cs) and the Octo app (shared/core health tests). Songs and albums are written as Subsonic answers them, so each side reads them with its own song type. 'facts' gives each album id a release, release group, barcode or record label; 'places' puts songs in another place; 'seen' limits the tags the reader keeps. An expectation left out is not checked. Duplicates and split albums are listed in the order the report gives them.",
+ "about": "Library health cases, shared by Flakyfy's server (flakyfy.Tests/LibraryHealthCasesTests.cs) and the Flakyfy app (shared/core health tests). Songs and albums are written as Subsonic answers them, so each side reads them with its own song type. 'facts' gives each album id a release, release group, barcode or record label; 'places' puts songs in another place; 'seen' limits the tags the reader keeps. An expectation left out is not checked. Duplicates and split albums are listed in the order the report gives them.",
  "cases": [
   {
    "name": "Two copies of one song are a set with the lossless one first",

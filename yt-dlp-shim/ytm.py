@@ -1,4 +1,4 @@
-"""YouTube Music search and radio for Octo's radio, through ytmusicapi (no sign-in)."""
+"""YouTube Music search and radio for Flakyfy's radio, through ytmusicapi (no sign-in)."""
 import threading
 
 from ytmusicapi import YTMusic

@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Tests octo-updater.sh against a throwaway git origin, with docker, flock and sleep
+# Tests flakyfy-updater.sh against a throwaway git origin, with docker, flock and sleep
 # faked, so it runs anywhere bash and git do (CI runs it beside shellcheck).
 #   scripts/updater/test-updater.sh
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-script="$here/octo-updater.sh"
+script="$here/flakyfy-updater.sh"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/bin" "$work/origin-src/octo"
+mkdir -p "$work/bin" "$work/origin-src/flakyfy"
 failures=0
 
-# docker logs what it was asked. Its compose file is shaped like the real one: Octo and its
+# docker logs what it was asked. Its compose file is shaped like the real one: Flakyfy and its
 # sidecars are pulled, at the tag the checked out release names (its VERSION file, or its
-# octo.csproj version in a release from before VERSION), or FAKE_IMAGE_TAG (OCTO_IMAGE_TAG in .env). FAKE_REGISTRY is where they come from,
-# FAKE_OCTO=build is an override that builds Octo from the folder, DOCKER_FAIL makes one
+# flakyfy.csproj version in a release from before VERSION), or FAKE_IMAGE_TAG (FLAKYFY_IMAGE_TAG in .env). FAKE_REGISTRY is where they come from,
+# FAKE_FLAKYFY=build is an override that builds Flakyfy from the folder, DOCKER_FAIL makes one
 # compose verb fail, FAKE_NO_IMAGE names services whose pull fails (no network to ghcr.io),
-# FAKE_NO_SONIC leaves octo-sonic out, and FAKE_BAD_VERSION is a release whose container
+# FAKE_NO_SONIC leaves flakyfy-sonic out, and FAKE_BAD_VERSION is a release whose container
 # never stays up. FAKE_SPOTIFLAC=1 turns on the optional spotiflac service (Mornye),
 # FAKE_NO_BUILD names services whose build fails, and FAKE_NO_LOCAL=1 has no image here.
 cat > "$work/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_LOG"
 release() {
-  if [ -f "$OCTO_DIR/VERSION" ]; then tr -d ' \r\n' < "$OCTO_DIR/VERSION"
-  else sed -n 's:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p' "$OCTO_DIR/octo/octo.csproj" | head -n 1; fi
+  if [ -f "$FLAKYFY_DIR/VERSION" ]; then tr -d ' \r\n' < "$FLAKYFY_DIR/VERSION"
+  else sed -n 's:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p' "$FLAKYFY_DIR/flakyfy/flakyfy.csproj" | head -n 1; fi
 }
 if [ "$1" = compose ]; then
   shift
@@ -32,28 +32,28 @@ if [ "$1" = compose ]; then
   case "$1" in
     config)
       if [ "${2:-}" = --services ]; then
-        printf 'octo\n'
-        [ -n "${FAKE_NO_SONIC:-}" ] || echo octo-sonic
+        printf 'flakyfy\n'
+        [ -n "${FAKE_NO_SONIC:-}" ] || echo flakyfy-sonic
         printf 'slskd\n'
         [ -z "${FAKE_SPOTIFLAC:-}" ] || echo spotiflac
         printf 'unrelated\nyt-dlp-shim\n'
       elif [ "${2:-}" = --images ]; then
         [ "${3:-}" = spotiflac ] && echo ghcr.io/mornyeapp/mornye-python:latest
       else
-        # As docker compose config prints it: services in name order, octo-sonic's image
+        # As docker compose config prints it: services in name order, flakyfy-sonic's image
         # quoted and the shim's not, slskd someone else's image, a volume list after. The
         # -source services are in a profile that is off, so they are absent.
-        r="${FAKE_REGISTRY:-ghcr.io/winters27}"
+        r="${FAKE_REGISTRY:-ghcr.io/dedeham}"
         t="${FAKE_IMAGE_TAG:-$(release)}"
-        printf 'name: octo\nservices:\n'
-        printf '  octo:\n'
-        [ "${FAKE_OCTO:-pull}" = build ] && printf '    build:\n      context: %s\n' "$OCTO_DIR"
-        printf '    image: %s/octo:%s\n    depends_on:\n      slskd:\n        condition: service_started\n' "$r" "$t"
-        [ -n "${FAKE_NO_SONIC:-}" ] || printf '  octo-sonic:\n    image: "%s/octo-sonic:%s"\n' "$r" "$t"
+        printf 'name: flakyfy\nservices:\n'
+        printf '  flakyfy:\n'
+        [ "${FAKE_FLAKYFY:-pull}" = build ] && printf '    build:\n      context: %s\n' "$FLAKYFY_DIR"
+        printf '    image: %s/flakyfy:%s\n    depends_on:\n      slskd:\n        condition: service_started\n' "$r" "$t"
+        [ -n "${FAKE_NO_SONIC:-}" ] || printf '  flakyfy-sonic:\n    image: "%s/flakyfy-sonic:%s"\n' "$r" "$t"
         printf '  slskd:\n    image: slskd/slskd:latest\n'
-        printf '  unrelated:\n    image: %s/octopus:1\n' "$r"
-        printf '  yt-dlp-shim:\n    image: %s/octo-yt-dlp-shim:%s\n' "$r" "$t"
-        printf 'volumes:\n  ytdlp-bin:\n    name: octo_ytdlp-bin\n'
+        printf '  unrelated:\n    image: %s/flakyfypus:1\n' "$r"
+        printf '  yt-dlp-shim:\n    image: %s/flakyfy-yt-dlp-shim:%s\n' "$r" "$t"
+        printf 'volumes:\n  ytdlp-bin:\n    name: flakyfy_ytdlp-bin\n'
       fi ;;
     ps) echo cid ;;
     pull)
@@ -90,19 +90,19 @@ export PATH="$work/bin:$PATH" FAKE_LOG="$work/docker.log"
 # An origin whose main is at 2026.10.01, with newer releases 2026.10.04 and 2026.10.06 tagged.
 # The newer releases carry a helper of their own, whose installer only says it ran (or fails,
 # with FAKE_REFRESH_FAIL), so a run can be seen reinstalling the helper. 2026.10.01 names its
-# release in octo.csproj, as 2026.10.05 and earlier did; from 2026.10.04 on it is the VERSION
-# file, and octo.csproj (the C# app kept beside the Rust one) is left behind on purpose, to show
+# release in flakyfy.csproj, as 2026.10.05 and earlier did; from 2026.10.04 on it is the VERSION
+# file, and flakyfy.csproj (the C# app kept beside the Rust one) is left behind on purpose, to show
 # it is no longer read.
 (
   cd "$work/origin-src" || exit 1
   git init -q -b main . && git config user.email test@example.com && git config user.name test
   git config core.autocrlf false
-  version() { printf '<Project>\n  <PropertyGroup>\n    <InformationalVersion>%s</InformationalVersion>\n  </PropertyGroup>\n</Project>\n' "$1" > octo/octo.csproj; }
+  version() { printf '<Project>\n  <PropertyGroup>\n    <InformationalVersion>%s</InformationalVersion>\n  </PropertyGroup>\n</Project>\n' "$1" > flakyfy/flakyfy.csproj; }
   version 2026.10.01 && git add -A && git commit -qm one && git tag 2026.10.01
   mkdir -p scripts/updater
   printf '#!/usr/bin/env bash\necho "install-updater $*" >> "$FAKE_LOG"\n[ -z "${FAKE_REFRESH_FAIL:-}" ]\n' > scripts/updater/install-updater.sh
-  echo "# the next helper" > scripts/updater/octo-updater.sh
-  touch scripts/updater/octo-updater.path scripts/updater/octo-updater.service
+  echo "# the next helper" > scripts/updater/flakyfy-updater.sh
+  touch scripts/updater/flakyfy-updater.path scripts/updater/flakyfy-updater.service
   echo 2026.10.04 > VERSION && git add -A && git update-index --chmod=+x scripts/updater/install-updater.sh \
     && git commit -qm two && git tag 2026.10.04
   echo 2026.10.06 > VERSION && git commit -qam three && git tag 2026.10.06
@@ -111,15 +111,15 @@ export PATH="$work/bin:$PATH" FAKE_LOG="$work/docker.log"
 git clone -q --bare "$work/origin-src" "$work/origin.git"
 
 fresh() { # a clone on main at 2026.10.01 that has not fetched the newer releases yet
-  rm -rf "$work/octo" "$work/config"
-  git clone -q "$work/origin.git" "$work/octo"
-  git -C "$work/octo" tag -d 2026.10.04 2026.10.06 > /dev/null 2>&1 || true
+  rm -rf "$work/flakyfy" "$work/config"
+  git clone -q "$work/origin.git" "$work/flakyfy"
+  git -C "$work/flakyfy" tag -d 2026.10.04 2026.10.06 > /dev/null 2>&1 || true
   mkdir -p "$work/config/update"
   : > "$FAKE_LOG"
 }
 copied() { # the same folder, copied by hand: not a git clone
   fresh
-  rm -rf "$work/octo/.git"
+  rm -rf "$work/flakyfy/.git"
 }
 request() { # tag, id
   printf 'id=%s\ntag=%s\nby=test\nat=2026-10-03T12:00:00Z\n' "${2:-0b7c7a8e-1111-4222-8333-444455556666}" "$1" > "$work/config/update/request"
@@ -128,9 +128,9 @@ status_of() { sed -n "s/^$1=//p" "$work/config/update/status" 2>/dev/null | head
 helper_says() { sed -n "s/^$1=//p" "$work/config/update/helper" 2>/dev/null | head -n 1; }
 check() { # name, expected state, expected checkout, words the error must hold
   local name="$1" state head error
-  OCTO_DIR="$work/octo" OCTO_UPDATE_DIR="$work/config/update" bash "$script" > /dev/null 2>&1
+  FLAKYFY_DIR="$work/flakyfy" FLAKYFY_UPDATE_DIR="$work/config/update" bash "$script" > /dev/null 2>&1
   state="$(status_of state)"
-  head="$(git -C "$work/octo" describe --tags --exact-match 2>/dev/null || echo none)"
+  head="$(git -C "$work/flakyfy" describe --tags --exact-match 2>/dev/null || echo none)"
   error="$(status_of error)"
   if [ "$state" = "$2" ] && [ "$head" = "$3" ] && [[ "$error" == *"$4"* ]] && [ ! -f "$work/config/update/request" ]; then
     echo "ok    $name"
@@ -160,65 +160,65 @@ expect_compose() { # name, the compose commands wanted, in order, joined with |
 fresh; request 2026.10.04
 check "updates to a newer release" "done" 2026.10.04 ""
 expect "describes itself as version 2 in a clone" test "$(helper_says version) $(helper_says mode)" = "2 git"
-expect_compose "pulls Octo and its sidecars, builds nothing, then restarts" "pull octo|pull yt-dlp-shim|pull octo-sonic|up -d"
-expect "says what it now runs" test "$(status_of step)" = "Octo now runs 2026.10.04"
+expect_compose "pulls Flakyfy and its sidecars, builds nothing, then restarts" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|up -d"
+expect "says what it now runs" test "$(status_of step)" = "Flakyfy now runs 2026.10.04"
 expect "without the spotiflac profile nothing about Mornye runs" never 'spotiflac|image inspect'
 
-# ----- Mornye (the optional spotiflac service) never holds Octo back -----
+# ----- Mornye (the optional spotiflac service) never holds Flakyfy back -----
 
 fresh; request 2026.10.04
 FAKE_SPOTIFLAC=1 check "Mornye built before the restart" "done" 2026.10.04 ""
-expect_compose "builds Mornye from its repository, then restarts everything" "pull octo|pull yt-dlp-shim|pull octo-sonic|build spotiflac|up -d"
-expect "a Mornye built here is not called Octo's build" test "$(status_of step)" = "Octo now runs 2026.10.04"
+expect_compose "builds Mornye from its repository, then restarts everything" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|build spotiflac|up -d"
+expect "a Mornye built here is not called Flakyfy's build" test "$(status_of step)" = "Flakyfy now runs 2026.10.04"
 
 fresh; request 2026.10.04
 FAKE_SPOTIFLAC=1 FAKE_NO_BUILD=spotiflac check "Mornye keeps the image it has" "done" 2026.10.04 ""
-expect_compose "restarts everything with Mornye's old image" "pull octo|pull yt-dlp-shim|pull octo-sonic|build spotiflac|up -d"
+expect_compose "restarts everything with Mornye's old image" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|build spotiflac|up -d"
 expect "the log says Mornye kept its image" in_log 'spotiflac could not be built, so it keeps the image it has'
 
 fresh; request 2026.10.04
-FAKE_SPOTIFLAC=1 FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 check "Octo updates without a Mornye it cannot get" "done" 2026.10.04 ""
-expect_compose "starts every service but Mornye" "pull octo|pull yt-dlp-shim|pull octo-sonic|build spotiflac|up -d octo octo-sonic slskd unrelated yt-dlp-shim"
-expect "the dashboard says Mornye was left as it was" test "$(status_of step)" = "Octo now runs 2026.10.04. Mornye (the spotiflac service) could not be built, so it was left as it was"
+FAKE_SPOTIFLAC=1 FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 check "Flakyfy updates without a Mornye it cannot get" "done" 2026.10.04 ""
+expect_compose "starts every service but Mornye" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|build spotiflac|up -d flakyfy flakyfy-sonic slskd unrelated yt-dlp-shim"
+expect "the dashboard says Mornye was left as it was" test "$(status_of step)" = "Flakyfy now runs 2026.10.04. Mornye (the spotiflac service) could not be built, so it was left as it was"
 
 fresh; request 2026.10.04
 FAKE_SPOTIFLAC=1 FAKE_NO_BUILD=spotiflac FAKE_NO_LOCAL=1 FAKE_BAD_VERSION=2026.10.04 check "going back leaves Mornye out too" failed 2026.10.01 "which is running again"
-expect_compose "rebuilds and restarts the old release without Mornye" "pull octo|pull yt-dlp-shim|pull octo-sonic|build spotiflac|up -d octo octo-sonic slskd unrelated yt-dlp-shim|build octo octo-sonic slskd unrelated yt-dlp-shim|up -d octo octo-sonic slskd unrelated yt-dlp-shim"
+expect_compose "rebuilds and restarts the old release without Mornye" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|build spotiflac|up -d flakyfy flakyfy-sonic slskd unrelated yt-dlp-shim|build flakyfy flakyfy-sonic slskd unrelated yt-dlp-shim|up -d flakyfy flakyfy-sonic slskd unrelated yt-dlp-shim"
 
 fresh; request 2026.10.04
-FAKE_NO_IMAGE=octo check "Octo that will not pull is built from the folder" "done" 2026.10.04 ""
-expect_compose "builds octo-source, the sidecars still pulled" "pull octo|pull yt-dlp-shim|pull octo-sonic|--profile source build octo-source|up -d"
-expect "the log says why it built" in_log 'octo could not be pulled'
-expect "the dashboard says it was built here" test "$(status_of step)" = "Octo now runs 2026.10.04, built on this server because its image could not be pulled"
+FAKE_NO_IMAGE=flakyfy check "Flakyfy that will not pull is built from the folder" "done" 2026.10.04 ""
+expect_compose "builds flakyfy-source, the sidecars still pulled" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|--profile source build flakyfy-source|up -d"
+expect "the log says why it built" in_log 'flakyfy could not be pulled'
+expect "the dashboard says it was built here" test "$(status_of step)" = "Flakyfy now runs 2026.10.04, built on this server because its image could not be pulled"
 
 fresh; request 2026.10.04
-FAKE_NO_IMAGE=octo-sonic check "a sidecar that will not pull is built instead" "done" 2026.10.04 ""
-expect_compose "builds octo-sonic from the folder, Octo and the shim still pulled" "pull octo|pull yt-dlp-shim|pull octo-sonic|--profile source build octo-sonic-source|up -d"
-expect "a sidecar built here is not called Octo's build" test "$(status_of step)" = "Octo now runs 2026.10.04"
+FAKE_NO_IMAGE=flakyfy-sonic check "a sidecar that will not pull is built instead" "done" 2026.10.04 ""
+expect_compose "builds flakyfy-sonic from the folder, Flakyfy and the shim still pulled" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|--profile source build flakyfy-sonic-source|up -d"
+expect "a sidecar built here is not called Flakyfy's build" test "$(status_of step)" = "Flakyfy now runs 2026.10.04"
 
 fresh; request 2026.10.04
-FAKE_NO_IMAGE="octo yt-dlp-shim octo-sonic" check "without ghcr.io everything is built" "done" 2026.10.04 ""
-expect_compose "builds Octo and both sidecars" "pull octo|pull yt-dlp-shim|pull octo-sonic|--profile source build octo-source yt-dlp-shim-source octo-sonic-source|up -d"
+FAKE_NO_IMAGE="flakyfy yt-dlp-shim flakyfy-sonic" check "without ghcr.io everything is built" "done" 2026.10.04 ""
+expect_compose "builds Flakyfy and both sidecars" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|--profile source build flakyfy-source yt-dlp-shim-source flakyfy-sonic-source|up -d"
 
 fresh; request 2026.10.04
-FAKE_NO_IMAGE=octo DOCKER_FAIL=build check "a failed build changes nothing" failed 2026.10.01 "nothing was restarted"
+FAKE_NO_IMAGE=flakyfy DOCKER_FAIL=build check "a failed build changes nothing" failed 2026.10.01 "nothing was restarted"
 expect "nothing restarted after the failed build" never 'compose up'
 
 fresh; request 2026.10.04
-FAKE_NO_SONIC=1 check "a release without octo-sonic" "done" 2026.10.04 ""
-expect_compose "pulls only the images the release has" "pull octo|pull yt-dlp-shim|up -d"
+FAKE_NO_SONIC=1 check "a release without flakyfy-sonic" "done" 2026.10.04 ""
+expect_compose "pulls only the images the release has" "pull flakyfy|pull yt-dlp-shim|up -d"
 
 fresh; request 2026.10.04
-FAKE_OCTO=build check "an override that builds Octo from the folder" "done" 2026.10.04 ""
-expect_compose "builds Octo and pulls the sidecars" "pull yt-dlp-shim|pull octo-sonic|--profile source build octo|up -d"
-expect "the log says why it built" in_log 'An override builds Octo'
+FAKE_FLAKYFY=build check "an override that builds Flakyfy from the folder" "done" 2026.10.04 ""
+expect_compose "builds Flakyfy and pulls the sidecars" "pull yt-dlp-shim|pull flakyfy-sonic|--profile source build flakyfy|up -d"
+expect "the log says why it built" in_log 'An override builds Flakyfy'
 
 fresh; request 2026.10.04
-FAKE_IMAGE_TAG=latest check "OCTO_IMAGE_TAG=latest in a clone" "done" 2026.10.04 ""
-expect_compose "pulls latest with the release checked out" "pull octo|pull yt-dlp-shim|pull octo-sonic|up -d"
+FAKE_IMAGE_TAG=latest check "FLAKYFY_IMAGE_TAG=latest in a clone" "done" 2026.10.04 ""
+expect_compose "pulls latest with the release checked out" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|up -d"
 
 fresh; request 2026.10.04
-FAKE_IMAGE_TAG=2026.10.01 check "OCTO_IMAGE_TAG pinned to an older release is refused" failed 2026.10.01 "asks for Octo 2026.10.01"
+FAKE_IMAGE_TAG=2026.10.01 check "FLAKYFY_IMAGE_TAG pinned to an older release is refused" failed 2026.10.01 "asks for Flakyfy 2026.10.01"
 expect "nothing pulled or restarted while pinned" never 'compose (pull|build|up)'
 
 fresh; request "2026.10.04; touch $work/pwned"
@@ -234,31 +234,31 @@ check "a release that does not exist" failed 2026.10.01 "is not a release tag"
 fresh; request 2026.10.01
 check "the same release is refused" failed 2026.10.01 "not older than"
 
-fresh; echo "<!-- edit -->" >> "$work/octo/octo/octo.csproj"; request 2026.10.04
-check "local changes to Octo's own files are left alone" failed 2026.10.01 "(octo/octo.csproj)"
+fresh; echo "<!-- edit -->" >> "$work/flakyfy/flakyfy/flakyfy.csproj"; request 2026.10.04
+check "local changes to Flakyfy's own files are left alone" failed 2026.10.01 "(flakyfy/flakyfy.csproj)"
 expect "a changed folder is never pulled over" never 'compose (pull|build|up)'
 
-fresh; echo "KEY=value" > "$work/octo/.env"; request 2026.10.04
+fresh; echo "KEY=value" > "$work/flakyfy/.env"; request 2026.10.04
 check "untracked files such as .env are fine" "done" 2026.10.04 ""
 
 fresh; request 2026.10.04
 FAKE_BAD_VERSION=2026.10.04 check "a release that will not stay up is rolled back" failed 2026.10.01 "went back to 2026.10.01"
 # The old release's images are still here; a plain build builds what it built, if anything.
-expect_compose "the rollback restarts the old release" "pull octo|pull yt-dlp-shim|pull octo-sonic|up -d|build|up -d"
+expect_compose "the rollback restarts the old release" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|up -d|build|up -d"
 
 fresh; request 2026.10.04
 FAKE_STATE=restarting check "a failed rollback says so" failed 2026.10.01 "failed too"
 
 fresh; request 2026.10.04
-check "an update from a release that names itself in octo.csproj" "done" 2026.10.04 ""
-expect "the run starts from the octo.csproj release" test "$(status_of from)" = 2026.10.01
+check "an update from a release that names itself in flakyfy.csproj" "done" 2026.10.04 ""
+expect "the run starts from the flakyfy.csproj release" test "$(status_of from)" = 2026.10.01
 request 2026.10.06
 check "an update from a release with a VERSION file" "done" 2026.10.06 ""
-expect "the run starts from the VERSION release, not octo.csproj" test "$(status_of from)" = 2026.10.04
-expect "it pulls the tag the VERSION file names" grep -q 'image: ghcr.io/winters27/octo:2026.10.06' <(OCTO_DIR="$work/octo" docker compose config)
+expect "the run starts from the VERSION release, not flakyfy.csproj" test "$(status_of from)" = 2026.10.04
+expect "it pulls the tag the VERSION file names" grep -q 'image: ghcr.io/dedeham/flakyfy:2026.10.06' <(FLAKYFY_DIR="$work/flakyfy" docker compose config)
 
 fresh; request 2026.10.04
-OCTO_UPDATER_DRYRUN=1 check "a dry run changes nothing" "done" 2026.10.01 ""
+FLAKYFY_UPDATER_DRYRUN=1 check "a dry run changes nothing" "done" 2026.10.01 ""
 expect "the dry run never builds or pulls" never 'compose (build|pull|up)'
 
 fresh; request 2026.10.04
@@ -270,7 +270,7 @@ fresh; request 2026.10.04
 FAKE_REFRESH_FAIL=1 check "a helper that cannot be reinstalled leaves the update done" "done" 2026.10.04 ""
 expect "the log says the old helper stays" in_log 'the old one stays'
 
-fresh; git -C "$work/octo" remote remove origin; request 2026.10.04
+fresh; git -C "$work/flakyfy" remote remove origin; request 2026.10.04
 FAKE_IMAGE_TAG=latest check "a clone without an origin only pulls" "done" 2026.10.01 ""
 expect "describes itself as an image install" test "$(helper_says mode)" = image
 
@@ -279,8 +279,8 @@ expect "describes itself as an image install" test "$(helper_says mode)" = image
 copied; request 2026.10.04
 FAKE_IMAGE_TAG=latest check "an install that is not a clone pulls instead" "done" none ""
 expect "describes itself as version 2, image" test "$(helper_says version) $(helper_says mode)" = "2 image"
-expect "pulled Octo and its sidecars, not slskd" grep -qx 'docker compose pull octo octo-sonic yt-dlp-shim' "$FAKE_LOG"
-expect "restarted Octo and its sidecars" grep -qx 'docker compose up -d octo octo-sonic yt-dlp-shim' "$FAKE_LOG"
+expect "pulled Flakyfy and its sidecars, not slskd" grep -qx 'docker compose pull flakyfy flakyfy-sonic yt-dlp-shim' "$FAKE_LOG"
+expect "restarted Flakyfy and its sidecars" grep -qx 'docker compose up -d flakyfy flakyfy-sonic yt-dlp-shim' "$FAKE_LOG"
 expect "it never builds" never 'compose .*build'
 
 copied; request 2026.10.04
@@ -292,25 +292,25 @@ FAKE_IMAGE_TAG=2026.10.04 check "a copied compose file already at the release pu
 
 copied; request 2026.10.04
 FAKE_IMAGE_TAG=latest FAKE_REGISTRY=localhost:5000/me check "a registry with a port" "done" none ""
-expect "the port is not taken for a tag" grep -qx 'docker compose pull octo octo-sonic yt-dlp-shim' "$FAKE_LOG"
+expect "the port is not taken for a tag" grep -qx 'docker compose pull flakyfy flakyfy-sonic yt-dlp-shim' "$FAKE_LOG"
 
 copied; request 2026.10.04
 FAKE_IMAGE_TAG=latest DOCKER_FAIL=pull check "a failed pull restarts nothing" failed none "docker compose pull failed"
 expect "nothing restarted" never 'compose up'
 
 copied; request 2026.10.04
-FAKE_IMAGE_TAG=latest FAKE_OCTO=build check "Octo built from a folder that is not a clone is refused" failed none "not a git clone"
+FAKE_IMAGE_TAG=latest FAKE_FLAKYFY=build check "Flakyfy built from a folder that is not a clone is refused" failed none "not a git clone"
 
 copied; request 2026.10.04
-FAKE_IMAGE_TAG=latest OCTO_UPDATER_DRYRUN=1 check "an image install's dry run changes nothing" "done" none ""
+FAKE_IMAGE_TAG=latest FLAKYFY_UPDATER_DRYRUN=1 check "an image install's dry run changes nothing" "done" none ""
 expect "the image dry run never pulls" never 'compose (pull|up)'
 
 fresh
-OCTO_DIR="$work/octo" OCTO_UPDATE_DIR="$work/config/update" bash "$script" > /dev/null 2>&1
+FLAKYFY_DIR="$work/flakyfy" FLAKYFY_UPDATE_DIR="$work/config/update" bash "$script" > /dev/null 2>&1
 expect "no request, no run" test ! -f "$work/config/update/status"
 
 fresh
-OCTO_DIR="$work/octo" OCTO_UPDATE_DIR="$work/config/update" bash "$script" --describe > /dev/null 2>&1
+FLAKYFY_DIR="$work/flakyfy" FLAKYFY_UPDATE_DIR="$work/config/update" bash "$script" --describe > /dev/null 2>&1
 expect "--describe writes version 2" test "$(helper_says version) $(helper_says mode)" = "2 git"
 
 echo

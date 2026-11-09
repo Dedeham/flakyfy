@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Octo installer.
+# Flakyfy installer.
 # Prompts for required configuration, validates inputs, writes .env, and brings
 # the stack up. Idempotent — re-running offers to keep existing values.
 set -euo pipefail
@@ -90,7 +90,7 @@ require_docker() {
   if ! docker compose version >/dev/null 2>&1; then
     red "Docker Compose v2 isn't available."
     if command -v docker-compose >/dev/null 2>&1; then
-      yellow "  You have the old 'docker-compose' (v1). Octo needs the integrated 'docker compose' (v2)."
+      yellow "  You have the old 'docker-compose' (v1). Flakyfy needs the integrated 'docker compose' (v2)."
       echo  "  Update Docker Engine — v2 ships built in:   https://docs.docker.com/compose/install/"
     else
       echo "  Install instructions:   https://docs.docker.com/compose/install/"
@@ -105,7 +105,7 @@ require_docker() {
 probe_navidrome() {
   local url="$1"
   local code
-  code=$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "${url%/}/rest/ping?u=probe&p=probe&v=1.16.1&c=octo-installer&f=json" 2>/dev/null || echo "000")
+  code=$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "${url%/}/rest/ping?u=probe&p=probe&v=1.16.1&c=flakyfy-installer&f=json" 2>/dev/null || echo "000")
   if [ "$code" = "200" ]; then
     green "  ✓ reached Navidrome at $url"
     return 0
@@ -166,10 +166,10 @@ setting() {
 # ─────────────────────────────────────────────────────────────────
 clear 2>/dev/null || true   # a terminal without the capability (TERM=dumb, CI) must not end the install
 bold "═══════════════════════════════════════════════════════════"
-bold "  Octo · installer"
+bold "  Flakyfy · installer"
 bold "═══════════════════════════════════════════════════════════"
 echo
-echo "Sets up your own music service in one Docker Compose stack: Octo"
+echo "Sets up your own music service in one Docker Compose stack: Flakyfy"
 echo "(search, radio, previews and downloads), a yt-dlp shim, slskd, and, if"
 echo "you don't run one yet, a Navidrome music server."
 echo
@@ -187,8 +187,8 @@ echo
 # Required: Navidrome URL + music directory
 # ─────────────────────────────────────────────────────────────────
 bold "─── Your music server ──────────────────────────────────────"
-echo "  Octo plays your library through Navidrome, a self-hosted music server."
-echo "  Already run one? Octo sits in front of it. If not, Octo starts one for"
+echo "  Flakyfy plays your library through Navidrome, a self-hosted music server."
+echo "  Already run one? Flakyfy sits in front of it. If not, Flakyfy starts one for"
 echo "  you in the same stack, reading the same music folder."
 HAVE_NAVIDROME_DEFAULT="n"
 if [ -n "$(existing SUBSONIC_URL)" ] && [ "$(existing SUBSONIC_URL)" != "http://navidrome:4533" ]; then
@@ -216,13 +216,13 @@ if [ "$STARTER" = true ]; then
   fi
   SUBSONIC_ADMIN_USERNAME="admin"
   SUBSONIC_ADMIN_PASSWORD="$NAVIDROME_ADMIN_PASSWORD"
-  green "  ✓ Navidrome will start beside Octo"
+  green "  ✓ Navidrome will start beside Flakyfy"
 else
 while true; do
   SUBSONIC_URL=$(ask "Navidrome URL" "$(existing SUBSONIC_URL "http://192.168.1.10:4533")")
   # localhost trap: containers can't reach the host's loopback by default
   if [[ "$SUBSONIC_URL" =~ ^https?://(localhost|127\.0\.0\.1) ]]; then
-    yellow "  ⚠ 'localhost' inside the Octo container won't reach Navidrome on the host."
+    yellow "  ⚠ 'localhost' inside the Flakyfy container won't reach Navidrome on the host."
     echo  "    Use your machine's LAN IP (e.g. http://192.168.1.10:4533) or the special host:"
     echo  "      • Mac/Windows: http://host.docker.internal:4533"
     echo  "      • Linux:       use the LAN IP, or add 'extra_hosts' to compose"
@@ -236,7 +236,7 @@ while true; do
 done
 fi
 # The answer above decides only the navidrome profile; any other profile the old .env named
-# stays (an old sonic is harmless: octo-sonic needs no profile any more).
+# stays (an old sonic is harmless: flakyfy-sonic needs no profile any more).
 profiles=()
 IFS=',' read -r -a old_profiles <<< "$(existing COMPOSE_PROFILES)"
 for p in "${old_profiles[@]}"; do
@@ -314,9 +314,9 @@ LIDARR_COMPLETION_MODE="$(existing LIDARR_COMPLETION_MODE "Accepted")"
 LIDARR_IMPORT_TIMEOUT_SECONDS="$(existing LIDARR_IMPORT_TIMEOUT_SECONDS "1800")"
 if [ "${DOWNLOAD_SOURCE,,}" = "lidarr" ]; then
   echo "  Lidarr must already have working indexers and a download client."
-  LIDARR_URL=$(ask "Lidarr URL (reachable from the Octo container)" "$LIDARR_URL")
+  LIDARR_URL=$(ask "Lidarr URL (reachable from the Flakyfy container)" "$LIDARR_URL")
   LIDARR_API_KEY=$(ask_secret "Lidarr API key" "$LIDARR_API_KEY")
-  dim "  Choose the Lidarr root folder and profiles in Octo's admin UI after startup."
+  dim "  Choose the Lidarr root folder and profiles in Flakyfy's admin UI after startup."
 fi
 echo
 
@@ -355,11 +355,11 @@ cat > .env <<EOF
 # === Required ===
 SUBSONIC_URL=$SUBSONIC_URL
 DOWNLOAD_PATH=$DOWNLOAD_PATH
-# Navidrome admin login Octo uses for rescans and its own checks.
+# Navidrome admin login Flakyfy uses for rescans and its own checks.
 SUBSONIC_ADMIN_USERNAME=$SUBSONIC_ADMIN_USERNAME
 SUBSONIC_ADMIN_PASSWORD="$SUBSONIC_ADMIN_PASSWORD"
 
-# === Starter stack (Navidrome started beside Octo) ===
+# === Starter stack (Navidrome started beside Flakyfy) ===
 COMPOSE_PROFILES=$COMPOSE_PROFILES
 NAVIDROME_ADMIN_PASSWORD="$NAVIDROME_ADMIN_PASSWORD"
 
@@ -420,7 +420,7 @@ $(setting YTDLP_URL_CACHE_TTL 3600)
 $(setting YTDLP_PLAYER_CLIENT visionos)
 EOF
 # Every other line the old .env had goes back in as it was: settings this installer
-# never writes (LASTFM_API_SECRET, OCTO_CONFIG_DIR, one added by a later release),
+# never writes (LASTFM_API_SECRET, FLAKYFY_CONFIG_DIR, one added by a later release),
 # so a re-run never drops something the user set.
 kept=()
 for key in "${OLD_KEYS[@]}"; do
@@ -434,8 +434,8 @@ chmod 600 .env
 green "✓ wrote .env (chmod 600)"
 
 # Make sure the bind-mount targets exist so docker doesn't create them root-owned.
-mkdir -p "$(existing OCTO_CONFIG_DIR octo-config)" "$(existing SLSKD_STATE_DIR slskd-state)"
-# Family members' music needs no folder here: Octo keeps it in the music folder.
+mkdir -p "$(existing FLAKYFY_CONFIG_DIR flakyfy-config)" "$(existing SLSKD_STATE_DIR slskd-state)"
+# Family members' music needs no folder here: Flakyfy keeps it in the music folder.
 if [ "$STARTER" = true ]; then
   mkdir -p "$(existing NAVIDROME_DATA_DIR navidrome-data)"
 fi
@@ -447,39 +447,33 @@ esac
 # ─────────────────────────────────────────────────────────────────
 # Images + start
 # ─────────────────────────────────────────────────────────────────
-# Octo, the yt-dlp shim and octo-sonic are published with every release (amd64 and arm64), so
+# Flakyfy, the yt-dlp shim and flakyfy-sonic are published with every release (amd64 and arm64), so
 # they are pulled, not built: nothing compiles on a small machine. True when pulling gives what
 # a build of this folder would: the folder's copy is the one its release published. On main,
 # a branch past the release, or with changes of your own it may differ, so it is built from
-# the folder instead, and the installer says so. OCTO_IMAGE_TAG in .env is the user's own
+# the folder instead, and the installer says so. FLAKYFY_IMAGE_TAG in .env is the user's own
 # choice of image, and outside a git checkout there is nothing to compare, so both pull.
 published_copy_matches() { # the folders the image is built from
   local release
-  [ -z "$(existing OCTO_IMAGE_TAG)" ] || return 0
+  [ -z "$(existing FLAKYFY_IMAGE_TAG)" ] || return 0
   release="$(folder_release)"
   [ -n "$release" ] && git rev-parse -q --verify "refs/tags/$release^{commit}" > /dev/null 2>&1 || return 0
   git diff --quiet "refs/tags/$release" -- "$@" 2> /dev/null
 }
 
-# The release this folder holds: the VERSION file, or octo/octo.csproj in a folder from before
-# there was one.
+# The release this folder holds: the VERSION file.
 folder_release() {
-  if [ -f VERSION ]; then
-    tr -d ' \r\n' < VERSION
-  else
-    sed -n 's:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p' octo/octo.csproj 2>/dev/null | head -n 1
-  fi
+  [ -f VERSION ] && tr -d ' \r\n' < VERSION
 }
 
-# What Octo's image is built from (the Dockerfile's COPY lines): the Rust crates, and the files
-# it shares with the C# app that is still in the folder (the dashboard, images, the cover design
-# and the default settings). A change to the C# app alone changes nothing in the image.
-OCTO_FILES=Dockerfile,Cargo.toml,Cargo.lock,crates,VERSION,octo/wwwroot,octo/Assets,octo/Services/CoverArt/Design,octo/appsettings.json,octo/appsettings.Development.json,octo/octo.csproj
+# What Flakyfy's image is built from (the Dockerfile's COPY lines): the Rust crates, the dashboard,
+# images, the cover design and the default settings.
+FLAKYFY_FILES=Dockerfile,Cargo.toml,Cargo.lock,crates,VERSION,app/wwwroot,app/Assets,app/Services/CoverArt/Design,app/appsettings.json,app/appsettings.Development.json
 
 echo
 bold "─── Getting images ─────────────────────────────────────────"
 build=()
-for image in "octo:$OCTO_FILES" yt-dlp-shim:yt-dlp-shim octo-sonic:sonic; do
+for image in "flakyfy:$FLAKYFY_FILES" yt-dlp-shim:yt-dlp-shim flakyfy-sonic:sonic; do
   service="${image%%:*}"
   IFS=, read -r -a folders <<< "${image#*:}"
   if ! published_copy_matches "${folders[@]}"; then
@@ -495,8 +489,8 @@ for image in "octo:$OCTO_FILES" yt-dlp-shim:yt-dlp-shim octo-sonic:sonic; do
 done
 if [ "${#build[@]}" -gt 0 ]; then
   case " ${build[*]} " in
-    *" octo-source "* | *" octo-sonic-source "*)
-      dim "  Building ${build[*]}: Octo and octo-sonic are Rust, so this takes 5 to 15 minutes and about 3 GB of memory the first time." ;;
+    *" flakyfy-source "* | *" flakyfy-sonic-source "*)
+      dim "  Building ${build[*]}: Flakyfy and flakyfy-sonic are Rust, so this takes 5 to 15 minutes and about 3 GB of memory the first time." ;;
     *) dim "  Building ${build[*]}: 2-3 minutes the first time, ~10 seconds on re-runs." ;;
   esac
   docker compose --profile source build "${build[@]}"
@@ -504,14 +498,14 @@ fi
 
 echo
 bold "─── Starting stack ─────────────────────────────────────────"
-# Mornye (the spotiflac service) is not Octo's: one that cannot be built is
-# left out, so Octo still starts. Without its profile this is the plain up -d it always was.
+# Mornye (the spotiflac service) is not Flakyfy's: one that cannot be built is
+# left out, so Flakyfy still starts. Without its profile this is the plain up -d it always was.
 case ",${COMPOSE_PROFILES// /}," in
   *,spotiflac,*)
     if docker compose build spotiflac || docker image inspect "$(docker compose config --images spotiflac | head -n 1)" > /dev/null 2>&1; then
       docker compose up -d
     else
-      yellow "  ⚠ Mornye (spotiflac) could not be built, so Octo starts without it. Run docker compose build spotiflac later."
+      yellow "  ⚠ Mornye (spotiflac) could not be built, so Flakyfy starts without it. Run docker compose build spotiflac later."
       read -r -a keep <<< "$({ docker compose config --services || true; } | { grep -vx spotiflac || true; } | tr '\n' ' ')"
       docker compose up -d "${keep[@]}"
     fi ;;
@@ -519,22 +513,22 @@ case ",${COMPOSE_PROFILES// /}," in
 esac
 
 # ─────────────────────────────────────────────────────────────────
-# Wait for Octo + verify each backend
+# Wait for Flakyfy + verify each backend
 # ─────────────────────────────────────────────────────────────────
 echo
-echo -n "Waiting for Octo to come online "
+echo -n "Waiting for Flakyfy to come online "
 for i in $(seq 1 60); do
   if curl -s -m 2 -o /dev/null -w '%{http_code}' "http://localhost:5274/api/admin/status" 2>/dev/null | grep -q '^2'; then
     echo
-    green "✓ Octo responded on http://localhost:5274"
+    green "✓ Flakyfy responded on http://localhost:5274"
     break
   fi
   echo -n "."
   sleep 2
   if [ "$i" = "60" ]; then
     echo
-    red "Octo did not respond within 2 minutes."
-    echo "  Inspect:   docker compose logs octo"
+    red "Flakyfy did not respond within 2 minutes."
+    echo "  Inspect:   docker compose logs flakyfy"
     echo "  Restart:   docker compose down && docker compose up -d"
     exit 1
   fi
@@ -542,8 +536,8 @@ done
 
 echo
 bold "─── Service health ─────────────────────────────────────────"
-# Octo answers within seconds of starting, before Navidrome, slskd or the shim may be up, so
-# those get up to a minute (Octo's answer is fresh every 10 seconds). octo-sonic is not waited
+# Flakyfy answers within seconds of starting, before Navidrome, slskd or the shim may be up, so
+# those get up to a minute (Flakyfy's answer is fresh every 10 seconds). flakyfy-sonic is not waited
 # for: it says it cannot see the music folder for as long as the folder is empty, as on a
 # fresh starter stack.
 waited=false
@@ -571,7 +565,7 @@ check_svc() {
 check_svc "Navidrome"  "navidrome"
 check_svc "Last.fm"    "lastfm"
 check_svc "yt-dlp shim" "ytDlpShim"
-check_svc "octo-sonic" "sonic"
+check_svc "flakyfy-sonic" "sonic"
 check_svc "slskd"      "slskd"
 if [ "${DOWNLOAD_SOURCE,,}" = "lidarr" ]; then
   check_svc "Lidarr" "lidarr"
@@ -585,10 +579,10 @@ fi
 if [ -d /run/systemd/system ]; then
   echo
   bold "─── Updates ────────────────────────────────────────────────"
-  echo "  Octo can install new releases from its dashboard, through a small"
-  echo "  service on this machine (scripts/updater). Octo itself never gets"
+  echo "  Flakyfy can install new releases from its dashboard, through a small"
+  echo "  service on this machine (scripts/updater). Flakyfy itself never gets"
   echo "  access to Docker; it can only ask for the newest release."
-  if ask_yn "  Let the dashboard update Octo?" "y"; then
+  if ask_yn "  Let the dashboard update Flakyfy?" "y"; then
     scripts/updater/install-updater.sh || yellow "  ⚠ The update helper was not installed; the dashboard will show the command instead."
   fi
 fi
@@ -601,7 +595,7 @@ bold "════════════════════════�
 green "  Done. Three things to do next:"
 echo
 if [ "$STARTER" = true ]; then
-  echo "  Your music server is Navidrome, started beside Octo. Its admin login,"
+  echo "  Your music server is Navidrome, started beside Flakyfy. Its admin login,"
   echo "  for the dashboard and your music apps:"
   bold  "       admin / $NAVIDROME_ADMIN_PASSWORD"
   echo "     (also in .env as NAVIDROME_ADMIN_PASSWORD)"
@@ -610,12 +604,12 @@ fi
 echo "  1. Open the dashboard to review settings (sign in with a Navidrome admin):"
 bold  "       http://localhost:5274/admin"
 echo
-echo "  2. Point your music apps (Octo's own, Feishin, Arpeggi, Narjo, …) at:"
+echo "  2. Point your music apps (Flakyfy's own, Feishin, Arpeggi, Narjo, …) at:"
 bold  "       http://<this-host>:5274"
 if [ "$STARTER" = true ]; then
   echo "     Add the people who listen in Navidrome's own pages: http://<this-host>:4533"
 else
-  echo "     Sign in with your Navidrome login; Octo passes it through."
+  echo "     Sign in with your Navidrome login; Flakyfy passes it through."
 fi
 echo
 echo "  3. Test it: search for an artist you don't fully own. Owned tracks come"

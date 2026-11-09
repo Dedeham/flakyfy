@@ -1,28 +1,28 @@
-// Throwaway fixture generator: builds realistic state objects with the real Octo types and
+// Throwaway fixture generator: builds realistic state objects with the real Flakyfy types and
 // serializes them with exactly the options each writer uses, so the fixtures are byte-exact.
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using Octo.Models.Download;
-using Octo.Models.Radio;
-using Octo.Services.Common;
-using Octo.Services.CoverArt;
-using Octo.Services.LastFm;
-using Octo.Services.Library;
-using Octo.Services.Local;
-using Octo.Services.Lyrics;
-using Octo.Services.Metadata;
-using Octo.Services.Soulseek;
-using Octo.Services.Tagging;
-using Octo.Services.Updates;
-using Octo.Services.Admin;
-using Octo.Services.Fingerprint;
-using Octo.Models.Settings;
-using Octo.Services.Imports;
-using Octo.Services.Radio;
-using Octo.Services.Sonic;
+using Flakyfy.Models.Download;
+using Flakyfy.Models.Radio;
+using Flakyfy.Services.Common;
+using Flakyfy.Services.CoverArt;
+using Flakyfy.Services.LastFm;
+using Flakyfy.Services.Library;
+using Flakyfy.Services.Local;
+using Flakyfy.Services.Lyrics;
+using Flakyfy.Services.Metadata;
+using Flakyfy.Services.Soulseek;
+using Flakyfy.Services.Tagging;
+using Flakyfy.Services.Updates;
+using Flakyfy.Services.Admin;
+using Flakyfy.Services.Fingerprint;
+using Flakyfy.Models.Settings;
+using Flakyfy.Services.Imports;
+using Flakyfy.Services.Radio;
+using Flakyfy.Services.Sonic;
 
 var outDir = args.Length > 0 ? args[0] : "/src/out";
 Directory.CreateDirectory(outDir);
@@ -259,7 +259,7 @@ Type Nested(Type outer, string name) =>
 {
     var run = new GenreBackfillRun
     {
-        RunId = "20261003-142205-7f3a", Status = GenreBackfillStatus.Cancelled, Scope = GenreBackfillScope.OctoDownloads,
+        RunId = "20261003-142205-7f3a", Status = GenreBackfillStatus.Cancelled, Scope = GenreBackfillScope.FlakyfyDownloads,
         DryRun = false, StartedUtc = U("2026-10-03T14:22:05.1234567Z"), FinishedUtc = U("2026-10-03T14:31:10.0000001Z"),
         Total = 4, Processed = 2, Changed = 1, Cleared = 0, Skipped = 1, Failed = 0, Cursor = 2,
         LastPath = "/music/Beyoncé/Lemonade/01 - Pray You Catch Me.flac",
@@ -341,7 +341,7 @@ Type Nested(Type outer, string name) =>
     {
         new("Delete|nd-8f7e6d5c|62914560:639323617251234567", LibraryAction.Delete, "nd-8f7e6d5c", "brandon",
             "Svefn-g-englar", "Sigur Rós", "Ágætis byrjun", "/music/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac",
-            "/music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac", PathSource.NativeApi,
+            "/music/.flakyfy-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac", PathSource.NativeApi,
             LibraryActionState.Applied, null, false, U("2026-10-03T15:00:00.1234567Z")),
         new("BetterQuality|nd-1a2b3c4d|8650752:639322000000000000", LibraryAction.BetterQuality, "nd-1a2b3c4d", "anh",
             "Don't Stop Me Now", "Queen", "Jazz", "/music/Queen/Jazz/12 - Don't Stop Me Now.mp3", null, PathSource.LocalMappings,
@@ -351,14 +351,14 @@ Type Nested(Type outer, string name) =>
         },
         new("Delete|nd-5e6f7a8b|9123456:639323617259999999", LibraryAction.Delete, "nd-5e6f7a8b", "brandon",
             "First Love", "宇多田ヒカル", "First Love", "/music/宇多田ヒカル/First Love/01 - First Love.m4a",
-            "/music/.octo-trash/2026-10-03/宇多田ヒカル/First Love/01 - First Love.m4a", PathSource.NativeApi,
+            "/music/.flakyfy-trash/2026-10-03/宇多田ヒカル/First Love/01 - First Love.m4a", PathSource.NativeApi,
             LibraryActionState.Applied, null, false, U("2026-10-03T16:00:00.0000000Z"))
         {
             Copy = true,
         },
         new("Delete|nd-0a1b2c3d|5000000:639323617260000000", LibraryAction.Delete, "nd-0a1b2c3d", "anh",
             "Roads", "Portishead", "Dummy", "/music/Portishead/Dummy/08 - Roads.flac",
-            "/music/.octo-trash/2026-10-03/Portishead/Dummy/08 - Roads.flac", PathSource.SubsonicGetSong,
+            "/music/.flakyfy-trash/2026-10-03/Portishead/Dummy/08 - Roads.flac", PathSource.SubsonicGetSong,
             LibraryActionState.Applied, null, false, U("2026-10-03T16:30:00.0000000Z"))
         {
             DownloadAllowed = true,
@@ -459,7 +459,7 @@ Type Nested(Type outer, string name) =>
             Result = new UpgradeResult
             {
                 Before = "MP3 320 kbps", BeforeBytes = 8650752, After = "FLAC 16-bit/44.1 kHz", AfterBytes = 31457280,
-                NewFile = "12 - Don't Stop Me Now.flac", KeptAt = ".octo-trash/2026-10-03",
+                NewFile = "12 - Don't Stop Me Now.flac", KeptAt = ".flakyfy-trash/2026-10-03",
                 Checks = ["the same length", "AcoustID: the same recording", "the spectrum: really lossless, not a converted MP3"],
                 Seconds = 269,
             },
@@ -484,14 +484,14 @@ Type Nested(Type outer, string name) =>
 {
     var state = new ReleaseCheckState
     {
-        Repo = "winters27/octo", CheckedUtc = U("2026-10-03T18:00:00.1234567Z"), AttemptedUtc = U("2026-10-03T18:00:00.1234567Z"),
+        Repo = "dedeham/flakyfy", CheckedUtc = U("2026-10-03T18:00:00.1234567Z"), AttemptedUtc = U("2026-10-03T18:00:00.1234567Z"),
         Error = null, ETag = "W/\"5f2c8a0e1b\"",
         Releases =
         [
             new ReleaseNote("2026.10.03.2", "2026.10.03.2", "### Lyrics\n- A Lyrics page that scans for songs needing better lyrics.\n- Fixed <br> & quotes in notes.",
-                "https://github.com/winters27/octo/releases/tag/2026.10.03.2", U("2026-10-03T16:45:10Z")),
+                "https://github.com/Dedeham/flakyfy/releases/tag/2026.10.03.2", U("2026-10-03T16:45:10Z")),
             new ReleaseNote("2026.10.03.1", "2026.10.03.1", "Albums are filled in only from an album that holds its songs.",
-                "https://github.com/winters27/octo/releases/tag/2026.10.03.1", null),
+                "https://github.com/Dedeham/flakyfy/releases/tag/2026.10.03.1", null),
         ],
     };
     Write("update/release.json", JsonSerializer.Serialize(state));
@@ -620,10 +620,10 @@ Type Nested(Type outer, string name) =>
         LibraryAction.Delete.ToString(), "brandon", U("2026-10-03T15:00:00.2345678Z"),
         [
             new QuarantinedSidecar("/music/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.lrc",
-                "/music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.lrc"),
+                "/music/.flakyfy-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.lrc"),
         ],
         [
-            new Octo.Services.Local.LocalSongMapping
+            new Flakyfy.Services.Local.LocalSongMapping
             {
                 ExternalProvider = "soulseek", ExternalId = "Hq3k9ZpL2xW7mN1vB4cR8t",
                 LocalPath = "/music/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac", LocalSubsonicId = "nd-8f7e6d5c",
@@ -632,7 +632,7 @@ Type Nested(Type outer, string name) =>
                 SourceFile = "Music\\Sigur Rós\\02 Svefn-g-englar.flac",
             },
         ]);
-    Write("music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac.octo-action.json",
+    Write("music/.flakyfy-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac.flakyfy-action.json",
         JsonSerializer.Serialize(manifest));
 }
 
@@ -758,7 +758,7 @@ Type Nested(Type outer, string name) =>
     };
     state.Failed["nd-0a1b2c3d"] = new SonicFailure
     {
-        Stamp = "5000000:639323617260000000", Error = "octo-sonic could not read the file: unsupported codec",
+        Stamp = "5000000:639323617260000000", Error = "flakyfy-sonic could not read the file: unsupported codec",
         AtUtc = U("2026-10-04T02:00:00.0000000Z"),
     };
     Write("sonic-features.json", JsonSerializer.Serialize(state));
@@ -817,7 +817,7 @@ Type Nested(Type outer, string name) =>
 }
 
 // ---------------------------------------------------------------- admin-recovery-code (2026.10.05)
-// AdminRecoveryCode.Write: the code and a line end. A fixed code here; Octo's are random.
+// AdminRecoveryCode.Write: the code and a line end. A fixed code here; Flakyfy's are random.
 File.WriteAllText(P("admin-recovery-code"), "ABCDE-FGHJK-LMNPQ-RSTUV" + "\n");
 
 // ---------------------------------------------------------------- settings.json (via the real writer)

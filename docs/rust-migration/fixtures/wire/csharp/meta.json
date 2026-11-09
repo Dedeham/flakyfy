@@ -1,7 +1,7 @@
 {
  "target": "http://127.0.0.1:18480",
  "host": "127.0.0.1:18480",
- "image": "octo-csharp:csharp-final",
+ "image": "flakyfy-csharp:csharp-final",
  "recordedAt": "2026-10-04T08:08:02Z",
  "vars": {
   "song_flac1": "2A1r2OKTiTVuvPfmtePIIe",

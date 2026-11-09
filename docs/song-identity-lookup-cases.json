@@ -1,6 +1,6 @@
 {
   "about": [
-    "Cases for SongIdentity's lookup readings (Lookup::Owned and Lookup::Pick in crates/octo-core/src/common/song_identity.rs).",
+    "Cases for SongIdentity's lookup readings (Lookup::Owned and Lookup::Pick in crates/flakyfy-core/src/common/song_identity.rs).",
     "Every case runs with Owned and with Pick, both ways round. Unless a case's options say otherwise, lengths may be 8 s apart. Verdicts: same, version (the same song in another version, or lengths too far apart), different.",
     "Owned adds the same title written in another script (the two titles start in different scripts and their Latin spellings key the same) and the same artists credited another way (tribute words agree, no placeholder, every name of the shorter credit and the whole credit at least 0.92 by word-order-free similarity). Pick adds, on top, a title a typo away: both lengths known and within the tolerance, the shorter key at least six letters, the same numbers, trailing roman numeral and word count, and an indel ratio of at least 0.90.",
     "'romanized' records the Latin spelling keys the cases rest on. 'contractChanges' lists every case of docs/song-identity-cases.json whose verdict moves with a lookup on (by index in its compare list), with what it was and why."

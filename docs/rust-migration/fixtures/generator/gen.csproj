@@ -4,11 +4,11 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>octo.Tests</AssemblyName>
+    <AssemblyName>flakyfy.Tests</AssemblyName>
     <RootNamespace>Gen</RootNamespace>
     <NoWarn>CS8618;CS8602;CS8604;CS8600;CS8625;CS1998</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../../../octo/octo.csproj" />
+    <ProjectReference Include="../../../../flakyfy/flakyfy.csproj" />
   </ItemGroup>
 </Project>

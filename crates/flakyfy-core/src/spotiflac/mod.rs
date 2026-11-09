@@ -518,16 +518,12 @@ mod tests {
     #[test]
     fn paths_are_mapped_into_spotiflacs_folder() {
         assert_eq!(
-            path_for_spotiflac(
-                "/music/.flakyfy-incoming/spotiflac/j1",
-                "/music",
-                Some("/downloads")
-            ),
-            "/downloads/.flakyfy-incoming/spotiflac/j1"
+            path_for_spotiflac("/music/.octo-incoming/spotiflac/j1", "/music", Some("/downloads")),
+            "/downloads/.octo-incoming/spotiflac/j1"
         );
         assert_eq!(
-            path_for_spotiflac("/music/.flakyfy-incoming/spotiflac/j1", "/music/", None),
-            "/music/.flakyfy-incoming/spotiflac/j1"
+            path_for_spotiflac("/music/.octo-incoming/spotiflac/j1", "/music/", None),
+            "/music/.octo-incoming/spotiflac/j1"
         );
         assert_eq!(
             path_for_spotiflac("/musicians/j1", "/music", Some("/downloads")),

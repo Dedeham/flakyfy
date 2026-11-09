@@ -414,7 +414,7 @@ async fn fixture(change: impl FnOnce(&mut AppSettings)) -> Fixture {
             raw_settings: vec![
                 ("YouTube:ShimUrl".into(), server.uri()),
                 (
-                    "Flakyfy:StateDirectory".into(),
+                    "Octo:StateDirectory".into(),
                     dir.path().to_string_lossy().into_owned(),
                 ),
             ],
@@ -461,7 +461,7 @@ fn songs(body: &str) -> Vec<(String, Option<String>)> {
         .map(|song| {
             (
                 song["id"].as_str().expect("an id").to_string(),
-                song["flakyfySuggestedBy"].as_str().map(str::to_string),
+                song["octoSuggestedBy"].as_str().map(str::to_string),
             )
         })
         .collect()
@@ -559,9 +559,9 @@ async fn every_radio_song_says_which_source_suggested_it() {
         // Last.fm's chart for the genre, and the playlist's own songs.
         for by in ["Last.fm", "Your library"] {
             let expected = if format == "json" {
-                format!("\"flakyfySuggestedBy\":\"{by}\"")
+                format!("\"octoSuggestedBy\":\"{by}\"")
             } else {
-                format!("flakyfySuggestedBy=\"{by}\"")
+                format!("octoSuggestedBy=\"{by}\"")
             };
             assert!(body.contains(&expected), "{format}: {expected} in {body}");
         }
@@ -573,7 +573,7 @@ async fn the_radio_sources_extension_is_listed_while_radio_can_answer() {
     for (radio, listed) in [(true, true), (false, false)] {
         let f = fixture(|s| s.last_fm.enable_radio = radio).await;
         let body = get_string(&f.app, "/rest/getOpenSubsonicExtensions?f=json").await;
-        assert_eq!(body.contains("flakyfyRadioSources"), listed, "{radio}: {body}");
+        assert_eq!(body.contains("octoRadioSources"), listed, "{radio}: {body}");
     }
 }
 
@@ -770,7 +770,7 @@ async fn forgetting_what_radio_learned_needs_the_dashboards_header() {
         &f.app,
         Method::POST,
         "/api/admin/radio-outcomes/reset",
-        &[("X-Flakyfy-Admin", "1")],
+        &[("X-Octo-Admin", "1")],
         Body::empty(),
     )
     .await;
@@ -858,7 +858,7 @@ fn kinds(ids: &[String]) -> String {
         .collect()
 }
 
-// Radio placement: Flakyfy's own apps (flakyfyMix=client) get the order of fit; every other app gets
+// Radio placement: Flakyfy's own apps (octoMix=client) get the order of fit; every other app gets
 // the same songs with the outside ones placed at random at the radio's own mix (here 20 of 30),
 // each kind still in its own order. The Discovery balance, set to 90 here, plays no part. The draw is seeded, so the placed
 // order repeats exactly.
@@ -885,7 +885,7 @@ async fn other_apps_get_outside_songs_placed_and_flakyfys_apps_get_the_order_of_
         .collect();
 
     // Every artist differs, so the order of fit is Last.fm's own order.
-    assert_eq!(blend(&f, "&flakyfyMix=client").await, fit);
+    assert_eq!(blend(&f, "&octoMix=client").await, fit);
 
     let mut sorted_fit = fit.clone();
     sorted_fit.sort();
@@ -918,7 +918,7 @@ async fn other_apps_get_outside_songs_placed_and_flakyfys_apps_get_the_order_of_
 /// A seed with 120 songs like it on Last.fm, none of them in the library.
 const WIDE_SONGS: usize = 120;
 
-// "Ask for more songs": Flakyfy's own apps (flakyfyMix=client) may ask for up to 100 songs, whatever
+// "Ask for more songs": Flakyfy's own apps (octoMix=client) may ask for up to 100 songs, whatever
 // RadioTrackCount is (50 here, the default). Every other app is still cut to RadioTrackCount.
 #[tokio::test]
 async fn flakyfys_apps_may_ask_for_100_songs_and_other_apps_get_the_configured_count() {
@@ -931,7 +931,7 @@ async fn flakyfys_apps_may_ask_for_100_songs_and_other_apps_get_the_configured_c
         .await;
         songs(&body).len()
     }
-    assert_eq!(wide(&f, "&flakyfyMix=client").await, 100);
+    assert_eq!(wide(&f, "&octoMix=client").await, 100);
     assert_eq!(wide(&f, "").await, 50);
 }
 

@@ -1,4 +1,4 @@
-//! getTransitionProfile (flakyfyTransitions): a song's transition profile for the Flakyfy apps, or
+//! getTransitionProfile (octoTransitions): a song's transition profile for the Flakyfy apps, or
 //! that there is none yet. Always JSON.
 
 use serde_json::{Map, Value, json};
@@ -37,7 +37,7 @@ impl SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "transitionProfile": Value::Object(answer),
         }))

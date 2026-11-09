@@ -177,7 +177,7 @@ async fn top_chart_without_a_chart_is_the_overall() {
     let answer = top(&h, &format!("getTopChart?{ALICE}")).await;
 
     let list = &answer["topSongs"];
-    assert_eq!(answer["type"], "flakyfy");
+    assert_eq!(answer["type"], "octo");
     assert_eq!(list["source"], "apple");
     assert_eq!(list["chart"], "34");
     assert_eq!(list["name"], "Popular right now");
@@ -306,9 +306,9 @@ async fn get_playlists_lists_the_chart_lists_read_only() {
     let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
     // Alice has hearted a song, so her Liked Songs comes first.
     assert_eq!(names, vec!["Liked Songs", "Popular right now", "Best New Songs"]);
-    let groups: Vec<&str> = rows.iter().filter_map(|r| r["flakyfyGroup"].as_str()).collect();
+    let groups: Vec<&str> = rows.iter().filter_map(|r| r["octoGroup"].as_str()).collect();
     assert_eq!(groups, vec!["liked", "chart", "chart"]);
-    assert!(rows[1..].iter().all(|r| r.get("flakyfyList").is_none()));
+    assert!(rows[1..].iter().all(|r| r.get("octoList").is_none()));
     let rows = &rows[1..];
     let popular = &rows[0];
     assert_eq!(popular["id"], popular_id().as_str());
@@ -318,8 +318,8 @@ async fn get_playlists_lists_the_chart_lists_read_only() {
     let version = flakyfy_media::cover::CoverBook::shipped().version;
     assert_eq!(popular["coverArt"], format!("{}_{version}c5", popular_id()));
     // The Flakyfy apps put "Popular" on its cover; the other charts keep their names.
-    assert_eq!(popular["flakyfyCoverTitle"], "Popular");
-    assert!(rows[1].get("flakyfyCoverTitle").is_none());
+    assert_eq!(popular["octoCoverTitle"], "Popular");
+    assert!(rows[1].get("octoCoverTitle").is_none());
     assert_eq!(
         popular["comment"],
         flakyfy_subsonic::subsonic_response_builder::POPULAR_COMMENT
@@ -360,12 +360,12 @@ async fn get_playlists_xml_lists_them_too() {
 
     assert!(xml.contains("name=\"Popular right now\""), "{xml}");
     assert!(xml.contains("readonly=\"true\""), "{xml}");
-    assert!(xml.contains("flakyfyCoverTitle=\"Popular\""), "{xml}");
+    assert!(xml.contains("octoCoverTitle=\"Popular\""), "{xml}");
     let popular = xml
         .split("<playlist ")
         .find(|row| row.contains("name=\"Popular right now\""))
         .expect("the Popular right now row");
-    assert!(popular.contains("flakyfyGroup=\"chart\""), "{popular}");
+    assert!(popular.contains("octoGroup=\"chart\""), "{popular}");
 }
 
 #[tokio::test]
@@ -376,7 +376,7 @@ async fn get_playlist_library_songs_are_the_listeners_own_the_rest_outside() {
 
     let playlist = &answer["playlist"];
     assert_eq!(playlist["name"], "Popular right now");
-    assert_eq!(playlist["flakyfyGroup"], "chart");
+    assert_eq!(playlist["octoGroup"], "chart");
     let entries = playlist["entry"].as_array().unwrap();
     assert_eq!(entries.len(), 5);
     assert_eq!(playlist["songCount"], 5);
@@ -784,7 +784,7 @@ async fn extensions_list_top_songs_three() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|e| e["name"] == "flakyfyTopSongs")
+        .find(|e| e["name"] == "octoTopSongs")
         .cloned()
         .unwrap();
     assert_eq!(top_songs["versions"], json!([1, 2, 3]));
@@ -807,20 +807,20 @@ async fn a_pinned_list_row_names_its_country() {
     let row = |name: &str| rows.iter().find(|r| r["name"] == name).cloned().unwrap();
     let popular = row("Popular right now · Japan");
     assert_eq!(popular["id"], pinned_id.as_str());
-    assert_eq!(popular["flakyfyCoverTitle"], "Popular · Japan");
+    assert_eq!(popular["octoCoverTitle"], "Popular · Japan");
     assert_eq!(
         popular["comment"],
         "The most played songs right now in Japan, made by Flakyfy. Songs you have play from your library."
     );
     let genre = row("Top Hip-Hop/Rap · Japan");
-    assert_eq!(genre["flakyfyCoverTitle"], "Top Hip-Hop/Rap · Japan");
+    assert_eq!(genre["octoCoverTitle"], "Top Hip-Hop/Rap · Japan");
     assert_eq!(
         genre["comment"],
         "The most played Hip-Hop/Rap songs right now in Japan, made by Flakyfy. Songs you have play from your library."
     );
     // The listener's own lists are as they were.
     let home = row("Popular right now");
-    assert_eq!(home["flakyfyCoverTitle"], "Popular");
+    assert_eq!(home["octoCoverTitle"], "Popular");
     assert_eq!(
         home["comment"],
         flakyfy_subsonic::subsonic_response_builder::POPULAR_COMMENT

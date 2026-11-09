@@ -78,7 +78,7 @@ pub async fn get(app: &App, uri: &str) -> Reply {
     send(app, Method::GET, uri, &[], None).await
 }
 
-/// A dashboard write: the `X-Flakyfy-Admin` header the guard wants, and a JSON body.
+/// A dashboard write: the `X-Octo-Admin` header the guard wants, and a JSON body.
 pub async fn admin_write(app: &App, method: Method, uri: &str, json: Option<&str>) -> Reply {
-    send(app, method, uri, &[("X-Flakyfy-Admin", "1")], json).await
+    send(app, method, uri, &[("X-Octo-Admin", "1")], json).await
 }

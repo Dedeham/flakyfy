@@ -105,13 +105,13 @@ fn the_source_goes_out_in_json_and_xml_and_only_when_there_is_one() {
         ..Default::default()
     };
     assert_eq!(
-        builder.convert_song_to_json(&song)["flakyfySuggestedBy"],
+        builder.convert_song_to_json(&song)["octoSuggestedBy"],
         "YouTube Music"
     );
     assert_eq!(
         builder
             .convert_song_to_xml(&song, Some(SUBSONIC_NAMESPACE))
-            .attribute("flakyfySuggestedBy"),
+            .attribute("octoSuggestedBy"),
         Some("YouTube Music")
     );
 
@@ -119,12 +119,12 @@ fn the_source_goes_out_in_json_and_xml_and_only_when_there_is_one() {
     assert!(
         !builder
             .convert_song_to_json(&song)
-            .contains_key("flakyfySuggestedBy")
+            .contains_key("octoSuggestedBy")
     );
     assert!(
         builder
             .convert_song_to_xml(&song, Some(SUBSONIC_NAMESPACE))
-            .attribute("flakyfySuggestedBy")
+            .attribute("octoSuggestedBy")
             .is_none()
     );
 }

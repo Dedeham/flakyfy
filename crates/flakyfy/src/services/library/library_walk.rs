@@ -1,7 +1,7 @@
 //! What every walk of the music folder shares: the trash folder is not part of the library.
 //!
 //! Delete from disk and the replaced originals go to the trash folder at the top of the music
-//! folder (`LibraryActions:QuarantineDirectory`, `.flakyfy-trash` by default), under a dated
+//! folder (`LibraryActions:QuarantineDirectory`, `.octo-trash` by default), under a dated
 //! folder. A walk that went into it would list a trashed song as an album of its own, with an id
 //! that depended on the dated folder. So every library walk (the cover scan, the genre re-tag,
 //! Find lyrics for the library, the review sweep and the explicit marking) leaves the trash out,
@@ -25,7 +25,7 @@ pub fn is_trash(folder: &Path, trash: Option<&Path>) -> bool {
 }
 
 /// Whether a walk of the music folder `root` leaves `folder` out: the trash folder, and the
-/// folder of Family members' music kept next to the library (`.flakyfy-family`), which is theirs
+/// folder of Family members' music kept next to the library (`.octo-family`), which is theirs
 /// and not part of the owner's library.
 pub fn is_left_out(root: &Path, folder: &Path, trash: Option<&Path>) -> bool {
     is_trash(folder, trash) || folder == root.join(FAMILY_FOLDER)
@@ -67,8 +67,8 @@ mod tests {
         let root = dir.path();
         for path in [
             "Artist/Album/01 - Song.flac",
-            ".flakyfy-trash/2026-10-08/Artist/Album/02 - Gone.flac",
-            "Artist/.flakyfy-trash-not/03 - Kept.flac",
+            ".octo-trash/2026-10-08/Artist/Album/02 - Gone.flac",
+            "Artist/.octo-trash-not/03 - Kept.flac",
         ] {
             let file = root.join(path);
             std::fs::create_dir_all(file.parent().expect("a folder")).expect("made");
@@ -83,11 +83,11 @@ mod tests {
             .collect();
         walked.sort();
 
-        assert_eq!(trash, root.join(".flakyfy-trash"));
+        assert_eq!(trash, root.join(".octo-trash"));
         assert_eq!(
             walked,
             [
-                "Artist/.flakyfy-trash-not/03 - Kept.flac",
+                "Artist/.octo-trash-not/03 - Kept.flac",
                 "Artist/Album/01 - Song.flac"
             ]
         );
@@ -100,8 +100,8 @@ mod tests {
         let root = dir.path();
         for path in [
             "Artist/Album/01 - Song.flac",
-            ".flakyfy-family/alex/Artist/Album/01 - Song.flac",
-            ".flakyfy-family/.pool/Artist/Album/02 - Pooled.flac",
+            ".octo-family/alex/Artist/Album/01 - Song.flac",
+            ".octo-family/.pool/Artist/Album/02 - Pooled.flac",
         ] {
             let file = root.join(path);
             std::fs::create_dir_all(file.parent().expect("a folder")).expect("made");
@@ -110,7 +110,7 @@ mod tests {
         let walked = all_files(root, None).expect("listed");
         assert_eq!(walked.len(), 1, "{walked:?}");
         assert!(walked[0].ends_with("Artist/Album/01 - Song.flac"));
-        assert!(!is_left_out(root, &root.join("Artist/.flakyfy-family"), None));
+        assert!(!is_left_out(root, &root.join("Artist/.octo-family"), None));
     }
 
     #[test]

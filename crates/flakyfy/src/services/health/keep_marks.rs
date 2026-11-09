@@ -1205,7 +1205,7 @@ impl KeepMarks {
         Ok(())
     }
 
-    /// Removes the hidden copies a move makes beside a song (`.flakyfy-keep-…`), which a stop part
+    /// Removes the hidden copies a move makes beside a song (`.octo-keep-…`), which a stop part
     /// way leaves behind. Run at startup, when no move is going. Answers how many went.
     pub async fn sweep_staging(&self) -> usize {
         let root = PathBuf::from(self.resolver.music_root());
@@ -1474,9 +1474,9 @@ fn rewrite_notes(title: &str, rewrite: &Rewrite) -> Vec<String> {
 }
 
 /// The hidden copies a move makes beside a song.
-const STAGING_PREFIX: &str = ".flakyfy-keep-";
+const STAGING_PREFIX: &str = ".octo-keep-";
 
-/// Every `.flakyfy-keep-…` file under `root`, removed; links are never followed. Answers how many.
+/// Every `.octo-keep-…` file under `root`, removed; links are never followed. Answers how many.
 pub fn sweep_staging_under(root: &Path) -> usize {
     let mut removed = 0;
     let mut folders = vec![root.to_path_buf()];

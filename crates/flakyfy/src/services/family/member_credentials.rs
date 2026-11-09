@@ -54,7 +54,7 @@ impl MemberCredentials {
     /// with a new salt. None when Family is off, `user` is not a member, or their password
     /// cannot be opened.
     pub fn fresh(&self, user: &str) -> Option<SubsonicCredential> {
-        self.fresh_as(user, "1.16.1", "flakyfy")
+        self.fresh_as(user, "1.16.1", "octo")
     }
 
     /// [`MemberCredentials::fresh`] keeping the version and client name of a sign-in that

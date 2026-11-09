@@ -4,7 +4,7 @@
 //! - a kid profile's answers lose explicit songs ([`super::kid_filter`]);
 //! - the owner's answers lose the music in members' own libraries, and members' playlists,
 //!   unless the owner chose to see them ([`super::owner_privacy`]);
-//! - a member's answers mark the songs from their own library with `flakyfyPersonal`
+//! - a member's answers mark the songs from their own library with `octoPersonal`
 //!   ([`super::personal_marks`]).
 //!
 //! Counts follow what is left: `songCount` and `duration` on the album, playlist or directory
@@ -90,7 +90,7 @@ pub struct NodeFacts<'a> {
 pub enum Verdict {
     Keep,
     Drop,
-    /// Kept, with `flakyfyPersonal` set.
+    /// Kept, with `octoPersonal` set.
     Mark,
 }
 
@@ -196,8 +196,8 @@ impl Walk<'_, '_> {
     }
 
     fn mark_json(&mut self, node: &mut Map<String, Value>) {
-        if node.get("flakyfyPersonal") != Some(&Value::Bool(true)) {
-            node.insert("flakyfyPersonal".into(), Value::Bool(true));
+        if node.get("octoPersonal") != Some(&Value::Bool(true)) {
+            node.insert("octoPersonal".into(), Value::Bool(true));
             self.changed = true;
         }
     }
@@ -277,8 +277,8 @@ impl Walk<'_, '_> {
     }
 
     fn mark_xml(&mut self, element: &mut XElement) {
-        if element.attribute("flakyfyPersonal") != Some("true") {
-            element.set_attr("flakyfyPersonal", "true");
+        if element.attribute("octoPersonal") != Some("true") {
+            element.set_attr("octoPersonal", "true");
             self.changed = true;
         }
     }
@@ -732,11 +732,11 @@ mod tests {
         };
         let body = br#"{"subsonic-response":{"song":{"id":"mine"}}}"#;
         let out = json_of(&rewrite_answer(body, &mark).expect("changed"));
-        assert_eq!(out["subsonic-response"]["song"]["flakyfyPersonal"], true);
+        assert_eq!(out["subsonic-response"]["song"]["octoPersonal"], true);
         let xml = br#"<subsonic-response xmlns="http://subsonic.org/restapi" status="ok"><playlist id="p"><entry id="mine"/><entry id="other"/></playlist></subsonic-response>"#;
         let out = String::from_utf8(rewrite_answer(xml, &mark).expect("changed")).expect("text");
         assert!(
-            out.contains(r#"<entry id="mine" flakyfyPersonal="true" />"#),
+            out.contains(r#"<entry id="mine" octoPersonal="true" />"#),
             "{out}"
         );
         assert!(out.contains(r#"<entry id="other" />"#), "{out}");

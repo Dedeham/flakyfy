@@ -49,7 +49,7 @@ async fn get_playlists_marks_each_made_for_you_list_in_json_and_xml() {
             .as_array()
             .map(|rows| {
                 rows.iter()
-                    .filter(|row| row.get("flakyfyList").is_some())
+                    .filter(|row| row.get("octoList").is_some())
                     .cloned()
                     .collect()
             })
@@ -62,20 +62,20 @@ async fn get_playlists_marks_each_made_for_you_list_in_json_and_xml() {
 
     assert_eq!(
         rows.iter()
-            .map(|row| row["flakyfyList"].as_str().unwrap_or_default())
+            .map(|row| row["octoList"].as_str().unwrap_or_default())
             .collect::<Vec<_>>(),
         ["newReleases", "rediscover", "deepCuts"]
     );
     assert!(rows.iter().all(|row| row["readonly"] == true));
     let xml = get(&app, &format!("/rest/getPlaylists.view?{AUTH}")).await.text();
-    assert!(xml.contains(r#"flakyfyList="newReleases""#), "{xml}");
+    assert!(xml.contains(r#"octoList="newReleases""#), "{xml}");
 
     let id = rows[0]["id"].as_str().expect("an id").to_string();
     let detail = get(&app, &format!("/rest/getPlaylist.view?{AUTH}&f=json&id={id}"))
         .await
         .json();
     let playlist = &detail["subsonic-response"]["playlist"];
-    assert_eq!(playlist["flakyfyList"], "newReleases");
+    assert_eq!(playlist["octoList"], "newReleases");
     assert!(!playlist["entry"].as_array().expect("entries").is_empty());
 
     let cover = get(&app, &format!("/rest/getCoverArt.view?{AUTH}&f=json&id={id}")).await;
@@ -92,7 +92,7 @@ async fn listed_kinds(app: &App) -> Vec<String> {
         .as_array()
         .map(|rows| {
             rows.iter()
-                .filter_map(|row| row["flakyfyList"].as_str().map(str::to_string))
+                .filter_map(|row| row["octoList"].as_str().map(str::to_string))
                 .collect()
         })
         .unwrap_or_default()
@@ -103,7 +103,7 @@ async fn save(app: &App, method: Method, uri: &str, json: &str) {
         app,
         method,
         uri,
-        &[("X-Flakyfy-Admin", "1"), ("content-type", "application/json")],
+        &[("X-Octo-Admin", "1"), ("content-type", "application/json")],
         Body::from(json.to_string()),
     )
     .await;

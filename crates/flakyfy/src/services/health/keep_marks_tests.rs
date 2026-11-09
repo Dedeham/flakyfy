@@ -640,7 +640,7 @@ impl Factory {
 
 fn trashed(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    let mut folders = vec![root.join(".flakyfy-trash")];
+    let mut folders = vec![root.join(".octo-trash")];
     while let Some(folder) = folders.pop() {
         for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
             let path = entry.path();
@@ -1098,8 +1098,8 @@ fn the_startup_sweep_removes_the_hidden_copies_a_stopped_move_left() {
     std::fs::create_dir_all(&album).expect("made");
     for name in [
         "03 Teardrop.flac",
-        ".flakyfy-keep-0a1b.flac",
-        ".flakyfy-keep-back-2c3d.flac",
+        ".octo-keep-0a1b.flac",
+        ".octo-keep-back-2c3d.flac",
         ".hidden-but-not-ours.flac",
     ] {
         std::fs::write(album.join(name), b"x").expect("written");

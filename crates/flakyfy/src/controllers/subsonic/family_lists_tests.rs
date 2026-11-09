@@ -508,13 +508,13 @@ async fn personal_entry_falls_back_to_outside_for_others() {
     let alex = f.json("alex", &format!("getPlaylist?id={id}")).await;
     let entries = &alex["playlist"]["entry"];
     assert_eq!(ids(entries), ["s-clean", "s-alex", "s-alex-only"], "{alex}");
-    assert_eq!(entries[1]["flakyfyPersonal"], true, "alex's own song is marked");
-    assert!(entries[0].get("flakyfyPersonal").is_none());
+    assert_eq!(entries[1]["octoPersonal"], true, "alex's own song is marked");
+    assert!(entries[0].get("octoPersonal").is_none());
     assert_eq!(alex["playlist"]["songCount"], 3);
 
     let sam = f.json("sam", &format!("getPlaylist?id={id}")).await;
     assert_eq!(ids(&sam["playlist"]["entry"]), ["s-clean", OUTSIDE], "{sam}");
-    assert!(sam["playlist"]["entry"][1].get("flakyfyPersonal").is_none());
+    assert!(sam["playlist"]["entry"][1].get("octoPersonal").is_none());
     assert_eq!(sam["playlist"]["owner"], "Family");
 
     // In XML too, as entries of the playlist.
@@ -913,27 +913,27 @@ async fn rows_carry_family_rights() {
     ] {
         let answer = f.json(user, "getPlaylists").await;
         let listed = row(&answer, &id).unwrap_or_else(|| panic!("{user} sees it: {answer}"));
-        assert_eq!(listed["flakyfyFamily"], true, "{user}");
-        assert_eq!(listed["flakyfyFamilyCreatedBy"], "alex", "{user}");
-        assert_eq!(listed["flakyfyFamilyMayRename"], may_rename, "{user}");
-        assert_eq!(listed["flakyfyFamilyMayDelete"], may_delete, "{user}");
+        assert_eq!(listed["octoFamily"], true, "{user}");
+        assert_eq!(listed["octoFamilyCreatedBy"], "alex", "{user}");
+        assert_eq!(listed["octoFamilyMayRename"], may_rename, "{user}");
+        assert_eq!(listed["octoFamilyMayDelete"], may_delete, "{user}");
         let one = f.json(user, &format!("getPlaylist?id={id}")).await;
-        assert_eq!(one["playlist"]["flakyfyFamily"], true, "{user}: {one}");
-        assert_eq!(one["playlist"]["flakyfyFamilyCreatedBy"], "alex", "{user}");
-        assert_eq!(one["playlist"]["flakyfyFamilyMayRename"], may_rename, "{user}");
-        assert_eq!(one["playlist"]["flakyfyFamilyMayDelete"], may_delete, "{user}");
+        assert_eq!(one["playlist"]["octoFamily"], true, "{user}: {one}");
+        assert_eq!(one["playlist"]["octoFamilyCreatedBy"], "alex", "{user}");
+        assert_eq!(one["playlist"]["octoFamilyMayRename"], may_rename, "{user}");
+        assert_eq!(one["playlist"]["octoFamilyMayDelete"], may_delete, "{user}");
     }
     let xml = f.get("alex", "getPlaylists").await.text();
     for attribute in [
-        "flakyfyFamily=\"true\"",
-        "flakyfyFamilyCreatedBy=\"alex\"",
-        "flakyfyFamilyMayRename=\"true\"",
-        "flakyfyFamilyMayDelete=\"false\"",
+        "octoFamily=\"true\"",
+        "octoFamilyCreatedBy=\"alex\"",
+        "octoFamilyMayRename=\"true\"",
+        "octoFamilyMayDelete=\"false\"",
     ] {
         assert!(xml.contains(attribute), "{attribute} in {xml}");
     }
     let xml = f.get("alex", &format!("getPlaylist?id={id}")).await.text();
-    assert!(xml.contains("flakyfyFamilyMayRename=\"true\""), "{xml}");
+    assert!(xml.contains("octoFamilyMayRename=\"true\""), "{xml}");
 }
 
 #[tokio::test]
@@ -950,7 +950,7 @@ async fn removal_by_song_takes_that_song() {
     let answer = f
         .json(
             "alex",
-            &format!("updatePlaylist?playlistId={id}&flakyfySongToRemove=s-clean@2"),
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove=s-clean@2"),
         )
         .await;
     assert_eq!(answer["status"], "ok", "{answer}");
@@ -961,7 +961,7 @@ async fn removal_by_song_takes_that_song() {
     let answer = f
         .json(
             "alex",
-            &format!("updatePlaylist?playlistId={id}&flakyfySongToRemove=zzz@1"),
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove=zzz@1"),
         )
         .await;
     assert_eq!(answer["status"], "ok", "{answer}");
@@ -982,7 +982,7 @@ async fn removal_by_song_reads_no_navidrome_and_ignores_unreadable_entries() {
     let answer = f
         .json(
             "alex",
-            &format!("updatePlaylist?playlistId={id}&flakyfySongToRemove=s-clean@1"),
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove=s-clean@1"),
         )
         .await;
     assert_eq!(answer["status"], "ok", "{answer}");
@@ -1009,7 +1009,7 @@ async fn removal_by_song_works_for_clean_only_editors() {
     let answer = f
         .json(
             "kid",
-            &format!("updatePlaylist?playlistId={id}&flakyfySongToRemove={OUTSIDE}@1"),
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove={OUTSIDE}@1"),
         )
         .await;
     assert_eq!(answer["status"], "ok", "{answer}");
@@ -1029,14 +1029,14 @@ async fn both_removal_kinds_refused() {
     let answer = f
         .json(
             "alex",
-            &format!("updatePlaylist?playlistId={id}&flakyfySongToRemove=s-clean@1&songIndexToRemove=0"),
+            &format!("updatePlaylist?playlistId={id}&octoSongToRemove=s-clean@1&songIndexToRemove=0"),
         )
         .await;
     assert_eq!(answer["status"], "failed", "{answer}");
     assert_eq!(answer["error"]["code"], 10, "{answer}");
     assert_eq!(
         answer["error"]["message"],
-        "Use flakyfySongToRemove or songIndexToRemove, not both."
+        "Use octoSongToRemove or songIndexToRemove, not both."
     );
     assert_eq!(f.entries(&id).len(), 2);
 }
@@ -1068,7 +1068,7 @@ async fn extension_listed_with_family_on() {
             .as_array()
             .map(|list| {
                 list.iter()
-                    .any(|item| item["name"] == "flakyfyFamilyPlaylists" && item["versions"] == json!([1]))
+                    .any(|item| item["name"] == "octoFamilyPlaylists" && item["versions"] == json!([1]))
             })
             .unwrap_or(false);
         assert_eq!(listed, on, "{answer}");
@@ -1253,11 +1253,11 @@ async fn personal_songs_are_marked_json_and_xml() {
     let alex = f.json("alex", "getRandomSongs").await;
     let songs = alex["randomSongs"]["song"].as_array().expect("songs").clone();
     let mine = songs.iter().find(|s| s["id"] == "s-alex").expect("there");
-    assert_eq!(mine["flakyfyPersonal"], true, "{alex}");
+    assert_eq!(mine["octoPersonal"], true, "{alex}");
     let xml = f.get("alex", "getRandomSongs").await.text();
-    assert!(xml.contains("flakyfyPersonal=\"true\""), "{xml}");
+    assert!(xml.contains("octoPersonal=\"true\""), "{xml}");
     let song = f.json("alex", "getSong?id=s-alex").await;
-    assert_eq!(song["song"]["flakyfyPersonal"], true, "{song}");
+    assert_eq!(song["song"]["octoPersonal"], true, "{song}");
 }
 
 #[tokio::test]
@@ -1266,13 +1266,13 @@ async fn shared_songs_unmarked() {
     let alex = f.json("alex", "getRandomSongs").await;
     for song in alex["randomSongs"]["song"].as_array().expect("songs") {
         if song["id"] != "s-alex" {
-            assert!(song.get("flakyfyPersonal").is_none(), "{song}");
+            assert!(song.get("octoPersonal").is_none(), "{song}");
         }
     }
     // Nobody else's answers carry marks, not even for alex's songs.
     for user in ["winters", "sam"] {
         let body = f.get(user, "getRandomSongs?f=json").await.text();
-        assert!(!body.contains("flakyfyPersonal"), "{user}: {body}");
+        assert!(!body.contains("octoPersonal"), "{user}: {body}");
     }
 }
 
@@ -1315,14 +1315,14 @@ async fn family_off_changes_no_answer() {
     // Relayed answers go out byte for byte.
     for endpoint in ["getMusicFolders", "getArtists", "getMusicFolders?f=json"] {
         let body = f.get("winters", endpoint).await.text();
-        assert!(!body.contains("flakyfyPersonal"));
+        assert!(!body.contains("octoPersonal"));
         assert!(
             body.contains("Alex") || body.contains("ar-alex"),
             "{endpoint}: {body}"
         );
     }
     let random = f.get("alex", "getRandomSongs?f=json").await.text();
-    assert!(!random.contains("flakyfyPersonal"), "{random}");
+    assert!(!random.contains("octoPersonal"), "{random}");
 }
 
 // ---- Genres, playlist lengths and playlist additions ----

@@ -153,7 +153,7 @@ async fn put_people(
         app,
         axum::http::Method::PUT,
         "/api/admin/charts/listeners",
-        &[("X-Flakyfy-Admin", "1")],
+        &[("X-Octo-Admin", "1")],
         Some(&body.to_string()),
     )
     .await

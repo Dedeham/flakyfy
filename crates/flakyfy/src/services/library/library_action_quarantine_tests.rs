@@ -114,7 +114,7 @@ fn restore_works_from_the_sidecar_manifest_alone() {
     let moved = default_quarantine().move_file(&track, &f.root, LibraryAction::Delete, "alice");
     let moved_to = moved.quarantine_path.expect("a path");
 
-    assert!(exists(&format!("{moved_to}.flakyfy-action.json")));
+    assert!(exists(&format!("{moved_to}.octo-action.json")));
 
     // A completely separate instance, with no shared state at all.
     assert!(default_quarantine().restore(&moved_to, None).moved);
@@ -189,7 +189,7 @@ fn sweep_removes_only_folders_past_the_retention_window() {
     std::fs::create_dir_all(format!("{old_day}/a")).expect("old");
     std::fs::create_dir_all(&recent).expect("recent");
     std::fs::write(format!("{old_day}/a/gone.flac"), [0u8; 8]).expect("written");
-    std::fs::write(format!("{old_day}/a/gone.flac.flakyfy-action.json"), "{}").expect("written");
+    std::fs::write(format!("{old_day}/a/gone.flac.octo-action.json"), "{}").expect("written");
     std::fs::write(format!("{recent}/kept.flac"), [0u8; 8]).expect("written");
 
     assert_eq!(quarantine.sweep(&f.root), 1);
@@ -218,29 +218,29 @@ fn sweep_gone_names_the_navidrome_ids_of_the_files_it_deleted() {
     };
     put(&format!("{}/A - One.flac", day(40)), "audio");
     put(
-        &format!("{}/A - One.flac.flakyfy-action.json", day(40)),
+        &format!("{}/A - One.flac.octo-action.json", day(40)),
         &note("nd-one"),
     );
     put(&format!("{}/Album/02 - Two.flac", day(40)), "audio");
     put(
-        &format!("{}/Album/02 - Two.flac.flakyfy-action.json", day(40)),
+        &format!("{}/Album/02 - Two.flac.octo-action.json", day(40)),
         &note("nd-two"),
     );
     put(
-        &format!("{}/Album/03 - Again.flac.flakyfy-action.json", day(40)),
+        &format!("{}/Album/03 - Again.flac.octo-action.json", day(40)),
         &note("nd-one"),
     );
     put(
-        &format!("{}/B - Blank.flac.flakyfy-action.json", day(50)),
+        &format!("{}/B - Blank.flac.octo-action.json", day(50)),
         &note(" "),
     );
     put(
-        &format!("{}/B - Broken.flac.flakyfy-action.json", day(50)),
+        &format!("{}/B - Broken.flac.octo-action.json", day(50)),
         "not json",
     );
     put(&format!("{}/C - Kept.flac", day(2)), "audio");
     put(
-        &format!("{}/C - Kept.flac.flakyfy-action.json", day(2)),
+        &format!("{}/C - Kept.flac.octo-action.json", day(2)),
         &note("nd-kept"),
     );
 
@@ -290,7 +290,7 @@ fn root_for_uses_the_configured_directory() {
 
 fn fixture_manifest() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../docs/rust-migration/fixtures/state/music/.flakyfy-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac.flakyfy-action.json",
+        "../../docs/rust-migration/fixtures/state/music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac.octo-action.json",
     )
 }
 
@@ -315,7 +315,7 @@ fn a_move_writes_the_manifest_in_the_fixture_shape() {
     let moved = default_quarantine().move_file(&track, &f.root, LibraryAction::WrongSong, "brandon");
     let moved_to = moved.quarantine_path.expect("a path");
 
-    let written = std::fs::read_to_string(format!("{moved_to}.flakyfy-action.json")).expect("a manifest");
+    let written = std::fs::read_to_string(format!("{moved_to}.octo-action.json")).expect("a manifest");
     let manifest = default_quarantine().read_manifest(&moved_to).expect("readable");
     assert_eq!(manifest.action, "WrongSong");
     assert_eq!(manifest.navidrome_id, "song-id");
@@ -333,7 +333,7 @@ fn a_move_writes_the_manifest_in_the_fixture_shape() {
 #[test]
 fn a_restore_without_a_readable_manifest_is_refused() {
     let f = Fixture::new();
-    let lost = f.write_track(".flakyfy-trash/2026-01-01/Song.flac", 8);
+    let lost = f.write_track(".octo-trash/2026-01-01/Song.flac", 8);
     let restored = default_quarantine().restore(&lost.absolute_path, None);
     assert_eq!(
         restored.error.as_deref(),
@@ -393,7 +393,7 @@ fn a_path_that_climbs_out_is_outside() {
 #[test]
 fn a_file_in_the_trash_already_is_not_moved_again() {
     let f = Fixture::new();
-    let file = f.write_track(".flakyfy-trash/2026-10-01/Song.flac", 3);
+    let file = f.write_track(".octo-trash/2026-10-01/Song.flac", 3);
 
     let moved = default_quarantine().move_file(&file, &f.root, LibraryAction::Delete, "alice");
 
@@ -416,7 +416,7 @@ fn a_song_inside_the_music_folder_goes_to_the_trash() {
             .quarantine_path
             .as_deref()
             .expect("a place in the trash")
-            .starts_with(&format!("{}/.flakyfy-trash", f.root))
+            .starts_with(&format!("{}/.octo-trash", f.root))
     );
 }
 

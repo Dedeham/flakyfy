@@ -71,7 +71,7 @@ RUN cargo build --release --locked --package flakyfy --bin flakyfy \
 # once per run, for both platforms, so both have the same data. Those are used as they are.
 # Without place data (GeoNames cannot be reached, or PLACES_DOWNLOAD=0) the image is built
 # anyway and the build log says so in a warning; getPlace then answers error 70 for every place
-# and flakyfyPlaces is not listed. PLACES_REQUIRED=1 (docker.yml) fails the build instead.
+# and octoPlaces is not listed. PLACES_REQUIRED=1 (docker.yml) fails the build instead.
 FROM debian:bookworm-slim AS geonames
 ARG PLACES_URL=https://download.geonames.org/export/zip
 ARG PLACES_REQUIRED=0
@@ -101,7 +101,7 @@ RUN release="$(tr -d ' \r\n' < VERSION)" && rm VERSION \
          fi; \
          printf '%s\n' "" \
            "WARNING: THIS IMAGE HAS NO PLACE DATA." \
-           "getPlace will answer error 70 for every place, and flakyfyPlaces will not be listed." \
+           "getPlace will answer error 70 for every place, and octoPlaces will not be listed." \
            "Build again with --build-arg PLACES_REFRESH=<anything new> to try the download again." \
            "" >&2; \
        fi \

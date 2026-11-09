@@ -365,7 +365,7 @@ impl NavidromeAdmin {
         self.identity.ensure_admin_jwt().await;
         let (user, token, salt) = self.identity.get_scan_auth().ok_or(AdminError::NoIdentity)?;
         let url = format!(
-            "{base}/rest/startScan?f=json&c=flakyfy&v=1.16.1&u={}&t={}&s={}&target={}",
+            "{base}/rest/startScan?f=json&c=octo&v=1.16.1&u={}&t={}&s={}&target={}",
             escape_data_string(&user),
             escape_data_string(&token),
             escape_data_string(&salt),

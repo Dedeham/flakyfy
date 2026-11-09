@@ -273,7 +273,7 @@ fn the_first_byte_wait_is_never_longer_than_the_quiet_window() {
 
 // ---- parallel downloads (slskd's batch API) ----------------------------------------------
 
-const JOB: &str = ".flakyfy-incoming/slskd/job";
+const JOB: &str = ".octo-incoming/slskd/job";
 
 #[test]
 fn the_batch_payload_has_slskds_shape() {

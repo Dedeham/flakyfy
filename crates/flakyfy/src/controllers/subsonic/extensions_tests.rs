@@ -267,7 +267,7 @@ async fn get_acquisitions_returns_only_the_callers_rows_in_the_apps_shape() {
 
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["version"], "1.16.1");
-    assert_eq!(envelope["type"], "flakyfy");
+    assert_eq!(envelope["type"], "octo");
 
     let rows = acquisitions_of(&envelope);
     assert_eq!(rows.len(), 1, "{rows:?}");
@@ -424,7 +424,7 @@ async fn starring_a_library_song_from_the_flakyfy_app_is_relayed_as_before() {
         &t.app,
         &format!(
             "/rest/star.view?{}&f=json&id=nd-42",
-            auth("alice", "good", "Flakyfy")
+            auth("alice", "good", "Octo")
         ),
     )
     .await;
@@ -438,7 +438,7 @@ async fn starring_a_library_song_from_the_flakyfy_app_is_relayed_as_before() {
 #[tokio::test]
 async fn star_from_the_flakyfy_app_holds_no_sign_in() {
     let t = AcquisitionApp::new(|_| {}).await;
-    assert_eq!(held_after_star(&t, "Flakyfy").await, 0);
+    assert_eq!(held_after_star(&t, "Octo").await, 0);
 }
 
 #[tokio::test]
@@ -481,7 +481,7 @@ async fn get_open_subsonic_extensions_adds_flakyfy_acquisitions_to_navidromes_li
 
     let reply = get(
         &t.app,
-        "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=flakyfy-android",
+        "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=octo-android",
     )
     .await;
 
@@ -489,10 +489,7 @@ async fn get_open_subsonic_extensions_adds_flakyfy_acquisitions_to_navidromes_li
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["openSubsonic"], true);
     let extensions = extensions_of(&envelope);
-    assert_eq!(
-        extension(&extensions, "flakyfyAcquisitions"),
-        Some(&vec![1, 2, 3])
-    );
+    assert_eq!(extension(&extensions, "octoAcquisitions"), Some(&vec![1, 2, 3]));
     assert!(extension(&extensions, "formPost").is_some());
     assert!(extension(&extensions, "songLyrics").is_some());
 }
@@ -507,7 +504,7 @@ async fn get_open_subsonic_extensions_adds_it_in_xml_too() {
     assert!(extensions.iter().any(|e| e.attribute("name") == Some("formPost")));
     let ours: Vec<_> = extensions
         .iter()
-        .filter(|e| e.attribute("name") == Some("flakyfyAcquisitions"))
+        .filter(|e| e.attribute("name") == Some("octoAcquisitions"))
         .collect();
     assert_eq!(ours.len(), 1);
     assert_eq!(first_version(ours[0]).as_deref(), Some("1"));
@@ -1072,7 +1069,7 @@ impl LibraryApp {
     }
 
     fn quarantine(&self) -> PathBuf {
-        self.directory.path().join(".flakyfy-trash")
+        self.directory.path().join(".octo-trash")
     }
 
     async fn song_lookups(&self) -> usize {
@@ -1110,7 +1107,7 @@ fn envelope(doc: &Value) -> &Value {
 fn action(doc: &Value) -> Value {
     let envelope = envelope(doc);
     assert_eq!(envelope["status"], "ok", "{doc}");
-    assert_eq!(envelope["type"], "flakyfy");
+    assert_eq!(envelope["type"], "octo");
     assert_eq!(envelope["openSubsonic"], true);
     let action = envelope["libraryAction"].clone();
     assert_eq!(sorted_keys(&action), ["action", "detail", "id", "state"]);
@@ -1150,25 +1147,25 @@ async fn extensions_list_flakyfy_library_actions_only_while_they_are_on() {
 
         let reply = get(
             &t.app,
-            "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=flakyfy-android",
+            "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=octo-android",
         )
         .await;
 
         let extensions = extensions_of(&reply.envelope());
         assert!(extension(&extensions, "formPost").is_some(), "enabled={enabled}");
         assert!(
-            extension(&extensions, "flakyfyAcquisitions").is_some(),
+            extension(&extensions, "octoAcquisitions").is_some(),
             "enabled={enabled}"
         );
         if listed {
             assert_eq!(
-                extension(&extensions, "flakyfyLibraryActions"),
+                extension(&extensions, "octoLibraryActions"),
                 Some(&vec![1, 2, 3]),
                 "enabled={enabled}"
             );
         } else {
             assert!(
-                extension(&extensions, "flakyfyLibraryActions").is_none(),
+                extension(&extensions, "octoLibraryActions").is_none(),
                 "enabled={enabled}"
             );
         }
@@ -1185,7 +1182,7 @@ async fn extensions_list_flakyfy_library_actions_only_while_they_are_on_in_xml_t
         let extensions = xml_extensions(&reply.text());
         let ours: Vec<_> = extensions
             .iter()
-            .filter(|e| e.attribute("name") == Some("flakyfyLibraryActions"))
+            .filter(|e| e.attribute("name") == Some("octoLibraryActions"))
             .collect();
         assert!(
             extensions.iter().any(|e| e.attribute("name") == Some("formPost")),
@@ -1214,7 +1211,7 @@ async fn get_library_actions_describes_what_the_caller_may_do_in_the_apps_shape(
     let envelope = envelope(&doc);
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["version"], "1.16.1");
-    assert_eq!(envelope["type"], "flakyfy");
+    assert_eq!(envelope["type"], "octo");
     assert_eq!(envelope["openSubsonic"], true);
     let actions = &envelope["libraryActions"];
     assert_eq!(
@@ -1323,7 +1320,7 @@ async fn remove_moves_the_file_to_quarantine_as_delete_for_the_caller() {
     let t = LibraryApp::new(|_| {}).await;
 
     // A form post, as formPost clients send it.
-    let form = format!("u=alice&t=good&s=salt&v=1.16.1&c=flakyfy-android&id={SONG_ID}&action=remove");
+    let form = format!("u=alice&t=good&s=salt&v=1.16.1&c=octo-android&id={SONG_ID}&action=remove");
     let reply = send(
         &t.app,
         axum::http::Method::POST,
@@ -1563,7 +1560,7 @@ async fn remove_with_only_an_api_key_acts_for_its_listener() {
 
     let doc = t
         .get_json(&format!(
-            "/rest/libraryAction?apiKey=goodkey&v=1.16.1&c=flakyfy-android&id={SONG_ID}&action=remove"
+            "/rest/libraryAction?apiKey=goodkey&v=1.16.1&c=octo-android&id={SONG_ID}&action=remove"
         ))
         .await;
 
@@ -1588,7 +1585,7 @@ async fn an_api_key_of_a_listener_off_the_allowlist_is_refused_like_their_sign_i
         .await;
     let by_key = t
         .get_json(&format!(
-            "/rest/libraryAction?apiKey=bobkey&v=1.16.1&c=flakyfy-android&id={SONG_ID}&action=remove"
+            "/rest/libraryAction?apiKey=bobkey&v=1.16.1&c=octo-android&id={SONG_ID}&action=remove"
         ))
         .await;
 
@@ -1604,7 +1601,7 @@ async fn a_bad_api_key_is_refused_and_never_asks_token_info() {
 
     let doc = t
         .get_json(&format!(
-            "/rest/libraryAction?apiKey=nokey&v=1.16.1&c=flakyfy-android&id={SONG_ID}&action=remove"
+            "/rest/libraryAction?apiKey=nokey&v=1.16.1&c=octo-android&id={SONG_ID}&action=remove"
         ))
         .await;
 
@@ -1613,7 +1610,7 @@ async fn a_bad_api_key_is_refused_and_never_asks_token_info() {
     t.assert_untouched().await;
 }
 
-// flakyfyLibraryActions v2: upgrade and getUpgrades
+// octoLibraryActions v2: upgrade and getUpgrades
 
 /// Better quality searches Soulseek, so it is offered only where slskd is set up.
 fn better_quality_on(settings: &mut AppSettings, dry_run: bool, slskd: bool) {

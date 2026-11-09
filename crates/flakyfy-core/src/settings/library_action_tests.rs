@@ -279,12 +279,12 @@ fn action_for_rating_disabled_action_is_not_triggered() {
 #[test]
 fn effective_quarantine_directory_is_one_safe_segment() {
     for (configured, expected) in [
-        ("../../etc", ".flakyfy-trash"),
-        ("..", ".flakyfy-trash"),
-        (".", ".flakyfy-trash"),
-        ("", ".flakyfy-trash"),
+        ("../../etc", ".octo-trash"),
+        ("..", ".octo-trash"),
+        (".", ".octo-trash"),
+        ("", ".octo-trash"),
         ("trash/nested", "trash"),
-        ("/.flakyfy-trash/", ".flakyfy-trash"),
+        ("/.octo-trash/", ".octo-trash"),
         ("my-bin", "my-bin"),
     ] {
         let settings = LibraryActionSettings {

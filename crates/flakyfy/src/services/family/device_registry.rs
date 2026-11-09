@@ -41,9 +41,9 @@ pub struct Sighting {
     /// The Subsonic `c` parameter.
     pub client: String,
     pub user_agent: String,
-    /// `X-Flakyfy-Device-Id`.
+    /// `X-Octo-Device-Id`.
     pub flakyfy_device_id: Option<String>,
-    /// `X-Flakyfy-Device-Name`, decoded.
+    /// `X-Octo-Device-Name`, decoded.
     pub name: Option<String>,
     /// `X-Nd-Client-Unique-Id`.
     pub navidrome_client_id: Option<String>,
@@ -214,24 +214,15 @@ mod tests {
 
     #[test]
     fn owner_devices_are_detected_by_device_header() {
-        let phone = detected_device_id(
-            "winters",
-            &sighting(Some("uuid-1"), "Flakyfy", "Flakyfy/1.6 (Android)"),
-        );
+        let phone = detected_device_id("winters", &sighting(Some("uuid-1"), "Octo", "Octo/1.6 (Android)"));
         // The same install after an update, and whatever it says as c.
         assert_eq!(
             phone,
-            detected_device_id(
-                "Winters",
-                &sighting(Some("uuid-1"), "flakyfy", "Flakyfy/1.7 (Android)")
-            )
+            detected_device_id("Winters", &sighting(Some("uuid-1"), "octo", "Octo/1.7 (Android)"))
         );
         assert_ne!(
             phone,
-            detected_device_id(
-                "winters",
-                &sighting(Some("uuid-2"), "Flakyfy", "Flakyfy/1.6 (Android)")
-            )
+            detected_device_id("winters", &sighting(Some("uuid-2"), "Octo", "Octo/1.6 (Android)"))
         );
         // Without the header: client, app and Navidrome's client id tell devices apart, and a
         // version change does not.
@@ -255,7 +246,7 @@ mod tests {
         let registry = DeviceRegistry::new(store.clone());
         let mut events = registry.subscribe();
 
-        let mut seen = sighting(Some("install-1"), "Flakyfy", "Flakyfy/1.6 (Android)");
+        let mut seen = sighting(Some("install-1"), "Octo", "Octo/1.6 (Android)");
         seen.name = Some("Pixel 9".into());
         let id = detected_device_id("alex", &seen);
         let mut alex = FamilyCaller::member("alex", Preset::Listener, Abilities::preset(Preset::Listener));
@@ -265,7 +256,7 @@ mod tests {
         registry.seen(&alex, &seen);
         let event = events.try_recv().expect("one notice");
         assert_eq!(event.device_id, id);
-        assert_eq!(event.app, "Flakyfy 1.6 (Android)");
+        assert_eq!(event.app, "Octo 1.6 (Android)");
         assert_eq!(event.name, "Pixel 9");
         assert!(event.managed);
         assert!(events.try_recv().is_err(), "only the first sighting");
@@ -294,7 +285,7 @@ mod tests {
         let registry = DeviceRegistry::new(store.clone());
         let mut events = registry.subscribe();
         for n in 0..(NOTICES_PER_WINDOW * 3) {
-            let seen = sighting(Some(&format!("install-{n}")), "Flakyfy", "Flakyfy/1.6 (Android)");
+            let seen = sighting(Some(&format!("install-{n}")), "Octo", "Octo/1.6 (Android)");
             let mut owner = FamilyCaller::unmanaged("winters", true);
             owner.device_id = Some(detected_device_id("winters", &seen));
             registry.seen(&owner, &seen);

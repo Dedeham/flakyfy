@@ -781,7 +781,7 @@ mod tests {
 
     /// A file from before one login: an account password hash, device kinds and secrets, and
     /// pairing codes.
-    const OLD_FIXTURE: &str = r#"{"Version":1,"Owner":"winters","Members":[{"Username":"alex","DisplayName":"Alex","Preset":"Listener","Edits":{"OfflineCopies":true},"NavidromeUserId":"a1b2c3","NavidromePassword":"sealed:AAAA","PersonalLibraryId":3,"SharedLibraries":[1],"AccountPassword":"$argon2id$v=19$m=19456,t=2,p=1$salt$hash","Created":"2026-10-20T18:00:00Z","Suspended":false,"NtfyTopic":""}],"Devices":[{"Id":"d_1","Username":"alex","Name":"Pixel 9","Kind":"FlakyfyApp","Secret":"sealed:BBBB","Created":"2026-10-20T18:00:00Z","LastSeen":null,"App":"","Place":"Home","SeenApps":[]}],"Detected":[],"Invites":[{"TokenHash":"abc","Username":"alex","Expires":"2026-10-27T18:00:00Z"}],"PairCodes":[{"CodeHash":"def","Username":"alex","DeviceName":"","Expires":"2026-10-20T18:10:00Z","Tries":0}]}"#;
+    const OLD_FIXTURE: &str = r#"{"Version":1,"Owner":"winters","Members":[{"Username":"alex","DisplayName":"Alex","Preset":"Listener","Edits":{"OfflineCopies":true},"NavidromeUserId":"a1b2c3","NavidromePassword":"sealed:AAAA","PersonalLibraryId":3,"SharedLibraries":[1],"AccountPassword":"$argon2id$v=19$m=19456,t=2,p=1$salt$hash","Created":"2026-10-20T18:00:00Z","Suspended":false,"NtfyTopic":""}],"Devices":[{"Id":"d_1","Username":"alex","Name":"Pixel 9","Kind":"OctoApp","Secret":"sealed:BBBB","Created":"2026-10-20T18:00:00Z","LastSeen":null,"App":"","Place":"Home","SeenApps":[]}],"Detected":[],"Invites":[{"TokenHash":"abc","Username":"alex","Expires":"2026-10-27T18:00:00Z"}],"PairCodes":[{"CodeHash":"def","Username":"alex","DeviceName":"","Expires":"2026-10-20T18:10:00Z","Tries":0}]}"#;
 
     #[test]
     fn round_trip_fixture() {
@@ -915,12 +915,12 @@ mod tests {
         let store = FamilyStore::new(Some(&path));
         store.add_device(device("d_1", "alex"));
         let written = std::fs::read_to_string(&path).expect("reads");
-        assert!(store.touch_device("d_1", "Flakyfy 1.6 (Android)", NetworkPlace::Away, now()));
+        assert!(store.touch_device("d_1", "Octo 1.6 (Android)", NetworkPlace::Away, now()));
         assert!(!store.touch_device("d_9", "x", NetworkPlace::Away, now()));
         assert_eq!(std::fs::read_to_string(&path).expect("reads"), written);
         store.flush_if_dirty();
         let flushed = std::fs::read_to_string(&path).expect("reads");
-        assert!(flushed.contains("Flakyfy 1.6 (Android)"));
+        assert!(flushed.contains("Octo 1.6 (Android)"));
         assert!(flushed.contains("\"Place\":\"Away\""));
         // Nothing new: no write.
         std::fs::remove_file(&path).expect("removes");
@@ -955,21 +955,14 @@ mod tests {
         let store = FamilyStore::in_memory();
         store.add_device(device("d_2", "alex"));
         let seen = |id: &str, name: Option<&str>| {
-            store.record_device(
-                id,
-                "alex",
-                "Flakyfy 1.6 (Android)",
-                NetworkPlace::Away,
-                name,
-                now(),
-            )
+            store.record_device(id, "alex", "Octo 1.6 (Android)", NetworkPlace::Away, name, now())
         };
         assert!(seen("x_1", Some("Sam\u{2019}s phone")));
         assert!(!seen("x_1", Some("Other")));
         let recorded = store.device("x_1").expect("recorded");
         assert_eq!(recorded.name, "Sam\u{2019}s phone");
         assert_eq!(recorded.username, "alex");
-        assert_eq!(recorded.app, "Flakyfy 1.6 (Android)");
+        assert_eq!(recorded.app, "Octo 1.6 (Android)");
         assert_eq!(recorded.last_seen, Some(now()));
         // A device a manager named keeps its name.
         assert!(!seen("d_2", Some("Other")));

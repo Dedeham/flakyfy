@@ -211,7 +211,7 @@ async fn probe_navidrome(state: &AppState) -> ServiceProbe {
     // Navidrome's /rest/ping requires auth, but it returns 200 with an error body even on bad
     // credentials, which proves connectivity.
     let target = format!(
-        "{}/rest/ping?u=probe&p=probe&v=1.16.1&c=flakyfy&f=json",
+        "{}/rest/ping?u=probe&p=probe&v=1.16.1&c=octo&f=json",
         url.trim_end_matches('/')
     );
     match probe_get(state, &target).await {
@@ -372,7 +372,7 @@ pub async fn get_status(State(state): State<AppState>, caller: Caller) -> Respon
         return json_ok(&anonymous_status(&state).await);
     }
     json_ok(&json!({
-        "flakyfy": ServiceProbe::new(true, "Flakyfy is responding"),
+        "octo": ServiceProbe::new(true, "Flakyfy is responding"),
         "services": probe_all(&state).await,
         "time": round_trip_offset(Utc::now()),
     }))
@@ -447,7 +447,7 @@ async fn anonymous_status(state: &AppState) -> serde_json::Value {
         })
         .collect();
     let answer = json!({
-        "flakyfy": { "ok": true },
+        "octo": { "ok": true },
         "services": services,
         "time": round_trip_offset(Utc::now()),
         "signedIn": false,

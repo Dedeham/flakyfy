@@ -20,7 +20,7 @@ use crate::services::cover_art::ITunesCoverArtLookup;
 use crate::services::cover_art::animated_art::{AnimatedArt, Clip};
 
 const SQUARE: &str = "/itunes-assets/HLSMusic1/v4/aa/P1_default.m3u8";
-const QUERY: &str = "f=json&u=alice&t=good&s=salt&v=1.16.1&c=Flakyfy";
+const QUERY: &str = "f=json&u=alice&t=good&s=salt&v=1.16.1&c=Octo";
 
 async fn navidrome() -> MockServer {
     let server = MockServer::start().await;
@@ -146,7 +146,7 @@ async fn the_extension_is_listed_while_covers_are_on() {
             .iter()
             .filter_map(|e| e["name"].as_str().map(str::to_string))
             .collect();
-        assert_eq!(names.iter().any(|n| n == "flakyfyAnimatedArt"), listed, "{mode}");
+        assert_eq!(names.iter().any(|n| n == "octoAnimatedArt"), listed, "{mode}");
     }
 }
 

@@ -101,7 +101,7 @@
     "kind": "json",
     "size": 4954,
     "sha256": "090d94f56719447d0d515ab6b7301da4e8f4cfb5f5320e0bec890781e88f3515",
-    "text": "{\"Subsonic\":{\"Url\":\"http://navidrome:4533\",\"AdminUsername\":\"admin\",\"AdminPassword\":\"(saved, not shown)\",\"EnableSearchDiscovery\":true,\"WaitForSearchDurations\":true,\"EnableSyncCatalog\":true,\"SyncCatalogClients\":\"Symfonium\",\"SyncCatalogMaxSongs\":1000,\"StorageMode\":\"Stream\",\"DownloadMode\":\"Track\",\"DownloadOnStar\":true,\"DownloadAlbumOnStar\":true,\"RecordRequestedBy\":true,\"StarDownloadsForRequester\":false,\"SkipOwnedSongs\":true,\"WaitForLosslessOnPlay\":false,\"LosslessWaitTimeoutSeconds\":0,\"DownloadOnPlay\":false,\"LidarrAlbumOnPlay\":false,\"DownloadSource\":\"Soulseek\",\"HeartDownloadSources\":[{\"Source\":\"Soulseek\",\"SongEnabled\":true,\"AlbumEnabled\":true},{\"Source\":\"YouTube\",\"SongEnabled\":false,\"AlbumEnabled\":false},{\"Source\":\"Lidarr\",\"SongEnabled\":false,\"AlbumEnabled\":false}],\"AutoDetectDownloadPath\":true,\"LibraryPath\":\"\",\"FolderStructure\":\"Flat\",\"UseLocalStaging\":false,\"ExplicitFilter\":\"All\",\"CacheDurationHours\":1,\"EnableExternalPlaylists\":false,\"PlaylistsDirectory\":\"playlists\"},\"Library\":{\"DownloadPath\":\"/music\"},\"Server\":{\"PublicUrl\":\"\"},\"Updates\":{\"Check\":false,\"Repo\":\"dedeham/flakyfy\"},\"Soulseek\":{\"BaseUrl\":\"http://stubs:5030\",\"Username\":\"slskd\",\"Password\":\"slskd\",\"SearchWaitSeconds\":30,\"UpgradeSearchWaitSeconds\":90,\"MinFileSizeBytes\":5242880,\"PreferredExtension\":\"flac\",\"DownloadTimeoutSeconds\":180,\"VerifyDownloads\":false,\"AcoustIdApiKey\":\"\",\"MinMatchScore\":85,\"TagFromMusicBrainz\":false,\"NameFromMatch\":false,\"RejectedPeerTtlDays\":30,\"FingerprintSeconds\":120,\"FingerprintTimeoutSeconds\":30,\"AcoustIdTimeoutSeconds\":10,\"DetectTranscodes\":true,\"TranscodeCheckTimeoutSeconds\":20,\"OutageHoldHours\":6,\"ParallelDownloads\":3,\"AlbumFolders\":true,\"SubmitConfirmedFingerprints\":false,\"AcoustIdUserApiKey\":\"\"},\"Lidarr\":{\"BaseUrl\":\"http://stubs:8686\",\"ApiKey\":\"parity-lidarr-key\",\"RootFolderPath\":\"\",\"QualityProfileId\":0,\"MetadataProfileId\":0,\"CompletionMode\":\"Accepted\",\"ImportTimeoutSeconds\":1800},\"YouTube\":{\"ShimUrl\":\"http://stubs:8090\"},\"LastFm\":{\"ApiKey\":\"parity-lastfm-key\",\"ApiSecret\":\"\",\"ScrobbleExternalPlays\":true,\"ScrobbleLibraryPlays\":true,\"UserSessions\":{},\"EnableRadio\":false,\"RadioTrackCount\":50,\"RadioCacheDurationHours\":24,\"EnablePersonalizedStations\":false,\"EnableYourMix\":true,\"EnableDiscoveryMix\":true,\"ArtistStationCount\":2,\"GenreStationCount\":3,\"EnableDiscoveryStations\":false,\"ExposeRadioAsPlaylists\":false,\"ExposeRadioAsStreams\":false,\"RadioStreamBitrateKbps\":192,\"EnableIcyMetadata\":true,\"StarterPublishTimeoutSeconds\":8,\"RadioLoudnessTargetLufs\":-16,\"HistoryRetentionDays\":90,\"DiscoveryPercent\":35,\"RefreshIntervalHours\":12,\"MinimumPlays\":10,\"DiscoveryStations\":[]},\"LibraryActions\":{\"Enabled\":false,\"PlaylistsEnabled\":true,\"RatingsEnabled\":false,\"PlaylistPrefix\":\"\\uD83D\\uDEE0 \",\"DryRun\":true,\"QuarantineDirectory\":\".flakyfy-trash\",\"QuarantineRetentionDays\":30,\"PollIntervalSeconds\":60,\"MaxActionsPerCycle\":20,\"KeepReplacedOriginals\":true,\"NoticePrefix\":\"\\u25B8 \",\"ReviewEnabled\":false,\"ReviewPlaylistName\":\"Review\",\"ReviewSweepPerHour\":0,\"ReviewSweepFlakyfyDownloads\":false,\"DuplicatesEnabled\":false,\"DuplicatesPlaylistName\":\"Duplicates\",\"DuplicatesScanHours\":24,\"UpgradePerWeek\":0,\"UpgradeSource\":\"Auto\",\"NoticeMaxTracks\":100,\"RatingsScope\":\"Auto\",\"AllowedUsers\":[],\"Actions\":[{\"Action\":\"Delete\",\"Name\":\"Delete\",\"Enabled\":false,\"Rating\":1},{\"Action\":\"WrongSong\",\"Name\":\"Wrong song\",\"Enabled\":false,\"Rating\":2},{\"Action\":\"WrongVersion\",\"Name\":\"Wrong version\",\"Enabled\":false,\"Rating\":3},{\"Action\":\"BetterQuality\",\"Name\":\"Better quality\",\"Enabled\":false,\"Rating\":4},{\"Action\":\"Keep\",\"Name\":\"Keep\",\"Enabled\":false,\"Rating\":5}]},\"Metadata\":{\"Language\":\"en\",\"AlbumFromTitle\":true,\"UseCoverArtArchive\":true,\"ReplaceVideoCovers\":true,\"WriteCoverFile\":true,\"EmbedFullSizeCovers\":false,\"FetchLyrics\":true,\"LyricsSources\":\"song,kugou,lrclib,netease,lyricsovh\",\"PreferWordTimedLyrics\":true,\"WriteLyricsBesideAllSongs\":false,\"SaveLyricsTo\":\"beside\",\"PreferOriginalAlbum\":true,\"YearFromOriginalRelease\":true,\"PreferredCountries\":\"\",\"ReleaseDetailsLookup\":true,\"ReplayGain\":true,\"ReplayGainTimeoutSeconds\":45,\"TagRehearsal\":false},\"GeneratedPlaylists\":{\"Enabled\":false,\"Genres\":true,\"Decades\":true,\"TrackCount\":100,\"MaxPerArtist\":3,\"CreateAt\":20,\"RemoveBelow\":10,\"MaxPlaylists\":20,\"RefreshHours\":24,\"NewShare\":0,\"NewDays\":30,\"NameFormat\":\"{0} Mix\"},\"Genre\":{\"Enabled\":false,\"MaxGenres\":10,\"OnEmpty\":\"Clear\",\"Fallback\":\"None\",\"UnknownLabel\":\"Unknown\",\"Blocklist\":[],\"Mappings\":[],\"BackfillMaxConsecutiveFailures\":25,\"BackfillExtensions\":[]},\"Notifications\":{\"NtfyUrl\":\"\",\"NtfyToken\":\"\",\"DiscordWebhookUrl\":\"\",\"NotifyDownloadStarted\":false,\"NotifyDownloadCompleted\":true,\"NotifyLosslessFallback\":true,\"NotifyDownloadFailed\":true,\"NotifyAlbumCompleted\":true},\"ListenBrainz\":{\"Token\":\"\",\"SubmitExternalPlays\":true,\"UserTokens\":{}},\"_meta\":{\"ConfigFilePath\":\"/app/config/settings.json\",\"RejectedPeerCount\":0,\"ConfigFileExists\":false,\"ConfigFileValid\":true,\"RestartPending\":[],\"SecretPlaceholder\":\"(saved, not shown)\",\"Version\":\"2026.10.03.2\"}}"
+    "text": "{\"Subsonic\":{\"Url\":\"http://navidrome:4533\",\"AdminUsername\":\"admin\",\"AdminPassword\":\"(saved, not shown)\",\"EnableSearchDiscovery\":true,\"WaitForSearchDurations\":true,\"EnableSyncCatalog\":true,\"SyncCatalogClients\":\"Symfonium\",\"SyncCatalogMaxSongs\":1000,\"StorageMode\":\"Stream\",\"DownloadMode\":\"Track\",\"DownloadOnStar\":true,\"DownloadAlbumOnStar\":true,\"RecordRequestedBy\":true,\"StarDownloadsForRequester\":false,\"SkipOwnedSongs\":true,\"WaitForLosslessOnPlay\":false,\"LosslessWaitTimeoutSeconds\":0,\"DownloadOnPlay\":false,\"LidarrAlbumOnPlay\":false,\"DownloadSource\":\"Soulseek\",\"HeartDownloadSources\":[{\"Source\":\"Soulseek\",\"SongEnabled\":true,\"AlbumEnabled\":true},{\"Source\":\"YouTube\",\"SongEnabled\":false,\"AlbumEnabled\":false},{\"Source\":\"Lidarr\",\"SongEnabled\":false,\"AlbumEnabled\":false}],\"AutoDetectDownloadPath\":true,\"LibraryPath\":\"\",\"FolderStructure\":\"Flat\",\"UseLocalStaging\":false,\"ExplicitFilter\":\"All\",\"CacheDurationHours\":1,\"EnableExternalPlaylists\":false,\"PlaylistsDirectory\":\"playlists\"},\"Library\":{\"DownloadPath\":\"/music\"},\"Server\":{\"PublicUrl\":\"\"},\"Updates\":{\"Check\":false,\"Repo\":\"dedeham/flakyfy\"},\"Soulseek\":{\"BaseUrl\":\"http://stubs:5030\",\"Username\":\"slskd\",\"Password\":\"slskd\",\"SearchWaitSeconds\":30,\"UpgradeSearchWaitSeconds\":90,\"MinFileSizeBytes\":5242880,\"PreferredExtension\":\"flac\",\"DownloadTimeoutSeconds\":180,\"VerifyDownloads\":false,\"AcoustIdApiKey\":\"\",\"MinMatchScore\":85,\"TagFromMusicBrainz\":false,\"NameFromMatch\":false,\"RejectedPeerTtlDays\":30,\"FingerprintSeconds\":120,\"FingerprintTimeoutSeconds\":30,\"AcoustIdTimeoutSeconds\":10,\"DetectTranscodes\":true,\"TranscodeCheckTimeoutSeconds\":20,\"OutageHoldHours\":6,\"ParallelDownloads\":3,\"AlbumFolders\":true,\"SubmitConfirmedFingerprints\":false,\"AcoustIdUserApiKey\":\"\"},\"Lidarr\":{\"BaseUrl\":\"http://stubs:8686\",\"ApiKey\":\"parity-lidarr-key\",\"RootFolderPath\":\"\",\"QualityProfileId\":0,\"MetadataProfileId\":0,\"CompletionMode\":\"Accepted\",\"ImportTimeoutSeconds\":1800},\"YouTube\":{\"ShimUrl\":\"http://stubs:8090\"},\"LastFm\":{\"ApiKey\":\"parity-lastfm-key\",\"ApiSecret\":\"\",\"ScrobbleExternalPlays\":true,\"ScrobbleLibraryPlays\":true,\"UserSessions\":{},\"EnableRadio\":false,\"RadioTrackCount\":50,\"RadioCacheDurationHours\":24,\"EnablePersonalizedStations\":false,\"EnableYourMix\":true,\"EnableDiscoveryMix\":true,\"ArtistStationCount\":2,\"GenreStationCount\":3,\"EnableDiscoveryStations\":false,\"ExposeRadioAsPlaylists\":false,\"ExposeRadioAsStreams\":false,\"RadioStreamBitrateKbps\":192,\"EnableIcyMetadata\":true,\"StarterPublishTimeoutSeconds\":8,\"RadioLoudnessTargetLufs\":-16,\"HistoryRetentionDays\":90,\"DiscoveryPercent\":35,\"RefreshIntervalHours\":12,\"MinimumPlays\":10,\"DiscoveryStations\":[]},\"LibraryActions\":{\"Enabled\":false,\"PlaylistsEnabled\":true,\"RatingsEnabled\":false,\"PlaylistPrefix\":\"\\uD83D\\uDEE0 \",\"DryRun\":true,\"QuarantineDirectory\":\".octo-trash\",\"QuarantineRetentionDays\":30,\"PollIntervalSeconds\":60,\"MaxActionsPerCycle\":20,\"KeepReplacedOriginals\":true,\"NoticePrefix\":\"\\u25B8 \",\"ReviewEnabled\":false,\"ReviewPlaylistName\":\"Review\",\"ReviewSweepPerHour\":0,\"ReviewSweepOctoDownloads\":false,\"DuplicatesEnabled\":false,\"DuplicatesPlaylistName\":\"Duplicates\",\"DuplicatesScanHours\":24,\"UpgradePerWeek\":0,\"UpgradeSource\":\"Auto\",\"NoticeMaxTracks\":100,\"RatingsScope\":\"Auto\",\"AllowedUsers\":[],\"Actions\":[{\"Action\":\"Delete\",\"Name\":\"Delete\",\"Enabled\":false,\"Rating\":1},{\"Action\":\"WrongSong\",\"Name\":\"Wrong song\",\"Enabled\":false,\"Rating\":2},{\"Action\":\"WrongVersion\",\"Name\":\"Wrong version\",\"Enabled\":false,\"Rating\":3},{\"Action\":\"BetterQuality\",\"Name\":\"Better quality\",\"Enabled\":false,\"Rating\":4},{\"Action\":\"Keep\",\"Name\":\"Keep\",\"Enabled\":false,\"Rating\":5}]},\"Metadata\":{\"Language\":\"en\",\"AlbumFromTitle\":true,\"UseCoverArtArchive\":true,\"ReplaceVideoCovers\":true,\"WriteCoverFile\":true,\"EmbedFullSizeCovers\":false,\"FetchLyrics\":true,\"LyricsSources\":\"song,kugou,lrclib,netease,lyricsovh\",\"PreferWordTimedLyrics\":true,\"WriteLyricsBesideAllSongs\":false,\"SaveLyricsTo\":\"beside\",\"PreferOriginalAlbum\":true,\"YearFromOriginalRelease\":true,\"PreferredCountries\":\"\",\"ReleaseDetailsLookup\":true,\"ReplayGain\":true,\"ReplayGainTimeoutSeconds\":45,\"TagRehearsal\":false},\"GeneratedPlaylists\":{\"Enabled\":false,\"Genres\":true,\"Decades\":true,\"TrackCount\":100,\"MaxPerArtist\":3,\"CreateAt\":20,\"RemoveBelow\":10,\"MaxPlaylists\":20,\"RefreshHours\":24,\"NewShare\":0,\"NewDays\":30,\"NameFormat\":\"{0} Mix\"},\"Genre\":{\"Enabled\":false,\"MaxGenres\":10,\"OnEmpty\":\"Clear\",\"Fallback\":\"None\",\"UnknownLabel\":\"Unknown\",\"Blocklist\":[],\"Mappings\":[],\"BackfillMaxConsecutiveFailures\":25,\"BackfillExtensions\":[]},\"Notifications\":{\"NtfyUrl\":\"\",\"NtfyToken\":\"\",\"DiscordWebhookUrl\":\"\",\"NotifyDownloadStarted\":false,\"NotifyDownloadCompleted\":true,\"NotifyLosslessFallback\":true,\"NotifyDownloadFailed\":true,\"NotifyAlbumCompleted\":true},\"ListenBrainz\":{\"Token\":\"\",\"SubmitExternalPlays\":true,\"UserTokens\":{}},\"_meta\":{\"ConfigFilePath\":\"/app/config/settings.json\",\"RejectedPeerCount\":0,\"ConfigFileExists\":false,\"ConfigFileValid\":true,\"RestartPending\":[],\"SecretPlaceholder\":\"(saved, not shown)\",\"Version\":\"2026.10.03.2\"}}"
    }
   },
   {
@@ -138,7 +138,7 @@
     "kind": "json",
     "size": 4954,
     "sha256": "090d94f56719447d0d515ab6b7301da4e8f4cfb5f5320e0bec890781e88f3515",
-    "text": "{\"Subsonic\":{\"Url\":\"http://navidrome:4533\",\"AdminUsername\":\"admin\",\"AdminPassword\":\"(saved, not shown)\",\"EnableSearchDiscovery\":true,\"WaitForSearchDurations\":true,\"EnableSyncCatalog\":true,\"SyncCatalogClients\":\"Symfonium\",\"SyncCatalogMaxSongs\":1000,\"StorageMode\":\"Stream\",\"DownloadMode\":\"Track\",\"DownloadOnStar\":true,\"DownloadAlbumOnStar\":true,\"RecordRequestedBy\":true,\"StarDownloadsForRequester\":false,\"SkipOwnedSongs\":true,\"WaitForLosslessOnPlay\":false,\"LosslessWaitTimeoutSeconds\":0,\"DownloadOnPlay\":false,\"LidarrAlbumOnPlay\":false,\"DownloadSource\":\"Soulseek\",\"HeartDownloadSources\":[{\"Source\":\"Soulseek\",\"SongEnabled\":true,\"AlbumEnabled\":true},{\"Source\":\"YouTube\",\"SongEnabled\":false,\"AlbumEnabled\":false},{\"Source\":\"Lidarr\",\"SongEnabled\":false,\"AlbumEnabled\":false}],\"AutoDetectDownloadPath\":true,\"LibraryPath\":\"\",\"FolderStructure\":\"Flat\",\"UseLocalStaging\":false,\"ExplicitFilter\":\"All\",\"CacheDurationHours\":1,\"EnableExternalPlaylists\":false,\"PlaylistsDirectory\":\"playlists\"},\"Library\":{\"DownloadPath\":\"/music\"},\"Server\":{\"PublicUrl\":\"\"},\"Updates\":{\"Check\":false,\"Repo\":\"dedeham/flakyfy\"},\"Soulseek\":{\"BaseUrl\":\"http://stubs:5030\",\"Username\":\"slskd\",\"Password\":\"slskd\",\"SearchWaitSeconds\":30,\"UpgradeSearchWaitSeconds\":90,\"MinFileSizeBytes\":5242880,\"PreferredExtension\":\"flac\",\"DownloadTimeoutSeconds\":180,\"VerifyDownloads\":false,\"AcoustIdApiKey\":\"\",\"MinMatchScore\":85,\"TagFromMusicBrainz\":false,\"NameFromMatch\":false,\"RejectedPeerTtlDays\":30,\"FingerprintSeconds\":120,\"FingerprintTimeoutSeconds\":30,\"AcoustIdTimeoutSeconds\":10,\"DetectTranscodes\":true,\"TranscodeCheckTimeoutSeconds\":20,\"OutageHoldHours\":6,\"ParallelDownloads\":3,\"AlbumFolders\":true,\"SubmitConfirmedFingerprints\":false,\"AcoustIdUserApiKey\":\"\"},\"Lidarr\":{\"BaseUrl\":\"http://stubs:8686\",\"ApiKey\":\"parity-lidarr-key\",\"RootFolderPath\":\"\",\"QualityProfileId\":0,\"MetadataProfileId\":0,\"CompletionMode\":\"Accepted\",\"ImportTimeoutSeconds\":1800},\"YouTube\":{\"ShimUrl\":\"http://stubs:8090\"},\"LastFm\":{\"ApiKey\":\"parity-lastfm-key\",\"ApiSecret\":\"\",\"ScrobbleExternalPlays\":true,\"ScrobbleLibraryPlays\":true,\"UserSessions\":{},\"EnableRadio\":false,\"RadioTrackCount\":50,\"RadioCacheDurationHours\":24,\"EnablePersonalizedStations\":false,\"EnableYourMix\":true,\"EnableDiscoveryMix\":true,\"ArtistStationCount\":2,\"GenreStationCount\":3,\"EnableDiscoveryStations\":false,\"ExposeRadioAsPlaylists\":false,\"ExposeRadioAsStreams\":false,\"RadioStreamBitrateKbps\":192,\"EnableIcyMetadata\":true,\"StarterPublishTimeoutSeconds\":8,\"RadioLoudnessTargetLufs\":-16,\"HistoryRetentionDays\":90,\"DiscoveryPercent\":35,\"RefreshIntervalHours\":12,\"MinimumPlays\":10,\"DiscoveryStations\":[]},\"LibraryActions\":{\"Enabled\":false,\"PlaylistsEnabled\":true,\"RatingsEnabled\":false,\"PlaylistPrefix\":\"\\uD83D\\uDEE0 \",\"DryRun\":true,\"QuarantineDirectory\":\".flakyfy-trash\",\"QuarantineRetentionDays\":30,\"PollIntervalSeconds\":60,\"MaxActionsPerCycle\":20,\"KeepReplacedOriginals\":true,\"NoticePrefix\":\"\\u25B8 \",\"ReviewEnabled\":false,\"ReviewPlaylistName\":\"Review\",\"ReviewSweepPerHour\":0,\"ReviewSweepFlakyfyDownloads\":false,\"DuplicatesEnabled\":false,\"DuplicatesPlaylistName\":\"Duplicates\",\"DuplicatesScanHours\":24,\"UpgradePerWeek\":0,\"UpgradeSource\":\"Auto\",\"NoticeMaxTracks\":100,\"RatingsScope\":\"Auto\",\"AllowedUsers\":[],\"Actions\":[{\"Action\":\"Delete\",\"Name\":\"Delete\",\"Enabled\":false,\"Rating\":1},{\"Action\":\"WrongSong\",\"Name\":\"Wrong song\",\"Enabled\":false,\"Rating\":2},{\"Action\":\"WrongVersion\",\"Name\":\"Wrong version\",\"Enabled\":false,\"Rating\":3},{\"Action\":\"BetterQuality\",\"Name\":\"Better quality\",\"Enabled\":false,\"Rating\":4},{\"Action\":\"Keep\",\"Name\":\"Keep\",\"Enabled\":false,\"Rating\":5}]},\"Metadata\":{\"Language\":\"en\",\"AlbumFromTitle\":true,\"UseCoverArtArchive\":true,\"ReplaceVideoCovers\":true,\"WriteCoverFile\":true,\"EmbedFullSizeCovers\":false,\"FetchLyrics\":true,\"LyricsSources\":\"song,kugou,lrclib,netease,lyricsovh\",\"PreferWordTimedLyrics\":true,\"WriteLyricsBesideAllSongs\":false,\"SaveLyricsTo\":\"beside\",\"PreferOriginalAlbum\":true,\"YearFromOriginalRelease\":true,\"PreferredCountries\":\"\",\"ReleaseDetailsLookup\":true,\"ReplayGain\":true,\"ReplayGainTimeoutSeconds\":45,\"TagRehearsal\":false},\"GeneratedPlaylists\":{\"Enabled\":false,\"Genres\":true,\"Decades\":true,\"TrackCount\":100,\"MaxPerArtist\":3,\"CreateAt\":20,\"RemoveBelow\":10,\"MaxPlaylists\":20,\"RefreshHours\":24,\"NewShare\":0,\"NewDays\":30,\"NameFormat\":\"{0} Mix\"},\"Genre\":{\"Enabled\":false,\"MaxGenres\":10,\"OnEmpty\":\"Clear\",\"Fallback\":\"None\",\"UnknownLabel\":\"Unknown\",\"Blocklist\":[],\"Mappings\":[],\"BackfillMaxConsecutiveFailures\":25,\"BackfillExtensions\":[]},\"Notifications\":{\"NtfyUrl\":\"\",\"NtfyToken\":\"\",\"DiscordWebhookUrl\":\"\",\"NotifyDownloadStarted\":false,\"NotifyDownloadCompleted\":true,\"NotifyLosslessFallback\":true,\"NotifyDownloadFailed\":true,\"NotifyAlbumCompleted\":true},\"ListenBrainz\":{\"Token\":\"\",\"SubmitExternalPlays\":true,\"UserTokens\":{}},\"_meta\":{\"ConfigFilePath\":\"/app/config/settings.json\",\"RejectedPeerCount\":0,\"ConfigFileExists\":false,\"ConfigFileValid\":true,\"RestartPending\":[],\"SecretPlaceholder\":\"(saved, not shown)\",\"Version\":\"2026.10.03.2\"}}"
+    "text": "{\"Subsonic\":{\"Url\":\"http://navidrome:4533\",\"AdminUsername\":\"admin\",\"AdminPassword\":\"(saved, not shown)\",\"EnableSearchDiscovery\":true,\"WaitForSearchDurations\":true,\"EnableSyncCatalog\":true,\"SyncCatalogClients\":\"Symfonium\",\"SyncCatalogMaxSongs\":1000,\"StorageMode\":\"Stream\",\"DownloadMode\":\"Track\",\"DownloadOnStar\":true,\"DownloadAlbumOnStar\":true,\"RecordRequestedBy\":true,\"StarDownloadsForRequester\":false,\"SkipOwnedSongs\":true,\"WaitForLosslessOnPlay\":false,\"LosslessWaitTimeoutSeconds\":0,\"DownloadOnPlay\":false,\"LidarrAlbumOnPlay\":false,\"DownloadSource\":\"Soulseek\",\"HeartDownloadSources\":[{\"Source\":\"Soulseek\",\"SongEnabled\":true,\"AlbumEnabled\":true},{\"Source\":\"YouTube\",\"SongEnabled\":false,\"AlbumEnabled\":false},{\"Source\":\"Lidarr\",\"SongEnabled\":false,\"AlbumEnabled\":false}],\"AutoDetectDownloadPath\":true,\"LibraryPath\":\"\",\"FolderStructure\":\"Flat\",\"UseLocalStaging\":false,\"ExplicitFilter\":\"All\",\"CacheDurationHours\":1,\"EnableExternalPlaylists\":false,\"PlaylistsDirectory\":\"playlists\"},\"Library\":{\"DownloadPath\":\"/music\"},\"Server\":{\"PublicUrl\":\"\"},\"Updates\":{\"Check\":false,\"Repo\":\"dedeham/flakyfy\"},\"Soulseek\":{\"BaseUrl\":\"http://stubs:5030\",\"Username\":\"slskd\",\"Password\":\"slskd\",\"SearchWaitSeconds\":30,\"UpgradeSearchWaitSeconds\":90,\"MinFileSizeBytes\":5242880,\"PreferredExtension\":\"flac\",\"DownloadTimeoutSeconds\":180,\"VerifyDownloads\":false,\"AcoustIdApiKey\":\"\",\"MinMatchScore\":85,\"TagFromMusicBrainz\":false,\"NameFromMatch\":false,\"RejectedPeerTtlDays\":30,\"FingerprintSeconds\":120,\"FingerprintTimeoutSeconds\":30,\"AcoustIdTimeoutSeconds\":10,\"DetectTranscodes\":true,\"TranscodeCheckTimeoutSeconds\":20,\"OutageHoldHours\":6,\"ParallelDownloads\":3,\"AlbumFolders\":true,\"SubmitConfirmedFingerprints\":false,\"AcoustIdUserApiKey\":\"\"},\"Lidarr\":{\"BaseUrl\":\"http://stubs:8686\",\"ApiKey\":\"parity-lidarr-key\",\"RootFolderPath\":\"\",\"QualityProfileId\":0,\"MetadataProfileId\":0,\"CompletionMode\":\"Accepted\",\"ImportTimeoutSeconds\":1800},\"YouTube\":{\"ShimUrl\":\"http://stubs:8090\"},\"LastFm\":{\"ApiKey\":\"parity-lastfm-key\",\"ApiSecret\":\"\",\"ScrobbleExternalPlays\":true,\"ScrobbleLibraryPlays\":true,\"UserSessions\":{},\"EnableRadio\":false,\"RadioTrackCount\":50,\"RadioCacheDurationHours\":24,\"EnablePersonalizedStations\":false,\"EnableYourMix\":true,\"EnableDiscoveryMix\":true,\"ArtistStationCount\":2,\"GenreStationCount\":3,\"EnableDiscoveryStations\":false,\"ExposeRadioAsPlaylists\":false,\"ExposeRadioAsStreams\":false,\"RadioStreamBitrateKbps\":192,\"EnableIcyMetadata\":true,\"StarterPublishTimeoutSeconds\":8,\"RadioLoudnessTargetLufs\":-16,\"HistoryRetentionDays\":90,\"DiscoveryPercent\":35,\"RefreshIntervalHours\":12,\"MinimumPlays\":10,\"DiscoveryStations\":[]},\"LibraryActions\":{\"Enabled\":false,\"PlaylistsEnabled\":true,\"RatingsEnabled\":false,\"PlaylistPrefix\":\"\\uD83D\\uDEE0 \",\"DryRun\":true,\"QuarantineDirectory\":\".octo-trash\",\"QuarantineRetentionDays\":30,\"PollIntervalSeconds\":60,\"MaxActionsPerCycle\":20,\"KeepReplacedOriginals\":true,\"NoticePrefix\":\"\\u25B8 \",\"ReviewEnabled\":false,\"ReviewPlaylistName\":\"Review\",\"ReviewSweepPerHour\":0,\"ReviewSweepOctoDownloads\":false,\"DuplicatesEnabled\":false,\"DuplicatesPlaylistName\":\"Duplicates\",\"DuplicatesScanHours\":24,\"UpgradePerWeek\":0,\"UpgradeSource\":\"Auto\",\"NoticeMaxTracks\":100,\"RatingsScope\":\"Auto\",\"AllowedUsers\":[],\"Actions\":[{\"Action\":\"Delete\",\"Name\":\"Delete\",\"Enabled\":false,\"Rating\":1},{\"Action\":\"WrongSong\",\"Name\":\"Wrong song\",\"Enabled\":false,\"Rating\":2},{\"Action\":\"WrongVersion\",\"Name\":\"Wrong version\",\"Enabled\":false,\"Rating\":3},{\"Action\":\"BetterQuality\",\"Name\":\"Better quality\",\"Enabled\":false,\"Rating\":4},{\"Action\":\"Keep\",\"Name\":\"Keep\",\"Enabled\":false,\"Rating\":5}]},\"Metadata\":{\"Language\":\"en\",\"AlbumFromTitle\":true,\"UseCoverArtArchive\":true,\"ReplaceVideoCovers\":true,\"WriteCoverFile\":true,\"EmbedFullSizeCovers\":false,\"FetchLyrics\":true,\"LyricsSources\":\"song,kugou,lrclib,netease,lyricsovh\",\"PreferWordTimedLyrics\":true,\"WriteLyricsBesideAllSongs\":false,\"SaveLyricsTo\":\"beside\",\"PreferOriginalAlbum\":true,\"YearFromOriginalRelease\":true,\"PreferredCountries\":\"\",\"ReleaseDetailsLookup\":true,\"ReplayGain\":true,\"ReplayGainTimeoutSeconds\":45,\"TagRehearsal\":false},\"GeneratedPlaylists\":{\"Enabled\":false,\"Genres\":true,\"Decades\":true,\"TrackCount\":100,\"MaxPerArtist\":3,\"CreateAt\":20,\"RemoveBelow\":10,\"MaxPlaylists\":20,\"RefreshHours\":24,\"NewShare\":0,\"NewDays\":30,\"NameFormat\":\"{0} Mix\"},\"Genre\":{\"Enabled\":false,\"MaxGenres\":10,\"OnEmpty\":\"Clear\",\"Fallback\":\"None\",\"UnknownLabel\":\"Unknown\",\"Blocklist\":[],\"Mappings\":[],\"BackfillMaxConsecutiveFailures\":25,\"BackfillExtensions\":[]},\"Notifications\":{\"NtfyUrl\":\"\",\"NtfyToken\":\"\",\"DiscordWebhookUrl\":\"\",\"NotifyDownloadStarted\":false,\"NotifyDownloadCompleted\":true,\"NotifyLosslessFallback\":true,\"NotifyDownloadFailed\":true,\"NotifyAlbumCompleted\":true},\"ListenBrainz\":{\"Token\":\"\",\"SubmitExternalPlays\":true,\"UserTokens\":{}},\"_meta\":{\"ConfigFilePath\":\"/app/config/settings.json\",\"RejectedPeerCount\":0,\"ConfigFileExists\":false,\"ConfigFileValid\":true,\"RestartPending\":[],\"SecretPlaceholder\":\"(saved, not shown)\",\"Version\":\"2026.10.03.2\"}}"
    }
   },
   {
@@ -173,7 +173,7 @@
     "kind": "json",
     "size": 6238,
     "sha256": "16ae799837b972381b4750606f32b2cdf2c451816740bb36649c19f6320d6b31",
-    "text": "{\n  \"Subsonic\": {\n    \"Url\": \"http://navidrome:4533\",\n    \"AdminUsername\": \"admin\",\n    \"AdminPassword\": \"(saved, not shown)\",\n    \"EnableSearchDiscovery\": true,\n    \"WaitForSearchDurations\": true,\n    \"EnableSyncCatalog\": true,\n    \"SyncCatalogClients\": \"Symfonium\",\n    \"SyncCatalogMaxSongs\": 1000,\n    \"StorageMode\": \"Stream\",\n    \"DownloadMode\": \"Track\",\n    \"DownloadOnStar\": true,\n    \"DownloadAlbumOnStar\": true,\n    \"RecordRequestedBy\": true,\n    \"StarDownloadsForRequester\": false,\n    \"SkipOwnedSongs\": true,\n    \"WaitForLosslessOnPlay\": false,\n    \"LosslessWaitTimeoutSeconds\": 0,\n    \"DownloadOnPlay\": false,\n    \"LidarrAlbumOnPlay\": false,\n    \"DownloadSource\": \"Soulseek\",\n    \"HeartDownloadSources\": [\n      {\n        \"Source\": \"Soulseek\",\n        \"SongEnabled\": true,\n        \"AlbumEnabled\": true\n      },\n      {\n        \"Source\": \"YouTube\",\n        \"SongEnabled\": false,\n        \"AlbumEnabled\": false\n      },\n      {\n        \"Source\": \"Lidarr\",\n        \"SongEnabled\": false,\n        \"AlbumEnabled\": false\n      }\n    ],\n    \"AutoDetectDownloadPath\": true,\n    \"LibraryPath\": \"\",\n    \"FolderStructure\": \"Flat\",\n    \"UseLocalStaging\": false,\n    \"ExplicitFilter\": \"All\",\n    \"CacheDurationHours\": 1,\n    \"EnableExternalPlaylists\": false,\n    \"PlaylistsDirectory\": \"playlists\"\n  },\n  \"Library\": {\n    \"DownloadPath\": \"/music\"\n  },\n  \"Server\": {\n    \"PublicUrl\": \"\"\n  },\n  \"Updates\": {\n    \"Check\": false,\n    \"Repo\": \"dedeham/flakyfy\"\n  },\n  \"Soulseek\": {\n    \"BaseUrl\": \"http://stubs:5030\",\n    \"Username\": \"slskd\",\n    \"Password\": \"slskd\",\n    \"SearchWaitSeconds\": 30,\n    \"UpgradeSearchWaitSeconds\": 90,\n    \"MinFileSizeBytes\": 5242880,\n    \"PreferredExtension\": \"flac\",\n    \"DownloadTimeoutSeconds\": 180,\n    \"VerifyDownloads\": false,\n    \"AcoustIdApiKey\": \"\",\n    \"MinMatchScore\": 85,\n    \"TagFromMusicBrainz\": false,\n    \"NameFromMatch\": false,\n    \"RejectedPeerTtlDays\": 30,\n    \"FingerprintSeconds\": 120,\n    \"FingerprintTimeoutSeconds\": 30,\n    \"AcoustIdTimeoutSeconds\": 10,\n    \"DetectTranscodes\": true,\n    \"TranscodeCheckTimeoutSeconds\": 20,\n    \"OutageHoldHours\": 6,\n    \"ParallelDownloads\": 3,\n    \"AlbumFolders\": true,\n    \"SubmitConfirmedFingerprints\": false,\n    \"AcoustIdUserApiKey\": \"\"\n  },\n  \"Lidarr\": {\n    \"BaseUrl\": \"http://stubs:8686\",\n    \"ApiKey\": \"parity-lidarr-key\",\n    \"RootFolderPath\": \"\",\n    \"QualityProfileId\": 0,\n    \"MetadataProfileId\": 0,\n    \"CompletionMode\": \"Accepted\",\n    \"ImportTimeoutSeconds\": 1800\n  },\n  \"YouTube\": {\n    \"ShimUrl\": \"http://stubs:8090\"\n  },\n  \"LastFm\": {\n    \"ApiKey\": \"parity-lastfm-key\",\n    \"ApiSecret\": \"\",\n    \"ScrobbleExternalPlays\": true,\n    \"ScrobbleLibraryPlays\": true,\n    \"UserSessions\": {},\n    \"EnableRadio\": false,\n    \"RadioTrackCount\": 50,\n    \"RadioCacheDurationHours\": 24,\n    \"EnablePersonalizedStations\": false,\n    \"EnableYourMix\": true,\n    \"EnableDiscoveryMix\": true,\n    \"ArtistStationCount\": 2,\n    \"GenreStationCount\": 3,\n    \"EnableDiscoveryStations\": false,\n    \"ExposeRadioAsPlaylists\": false,\n    \"ExposeRadioAsStreams\": false,\n    \"RadioStreamBitrateKbps\": 192,\n    \"EnableIcyMetadata\": true,\n    \"StarterPublishTimeoutSeconds\": 8,\n    \"RadioLoudnessTargetLufs\": -16,\n    \"HistoryRetentionDays\": 90,\n    \"DiscoveryPercent\": 35,\n    \"RefreshIntervalHours\": 12,\n    \"MinimumPlays\": 10,\n    \"DiscoveryStations\": []\n  },\n  \"LibraryActions\": {\n    \"Enabled\": false,\n    \"PlaylistsEnabled\": true,\n    \"RatingsEnabled\": false,\n    \"PlaylistPrefix\": \"\\uD83D\\uDEE0 \",\n    \"DryRun\": true,\n    \"QuarantineDirectory\": \".flakyfy-trash\",\n    \"QuarantineRetentionDays\": 30,\n    \"PollIntervalSeconds\": 60,\n    \"MaxActionsPerCycle\": 20,\n    \"KeepReplacedOriginals\": true,\n    \"NoticePrefix\": \"\\u25B8 \",\n    \"ReviewEnabled\": false,\n    \"ReviewPlaylistName\": \"Review\",\n    \"ReviewSweepPerHour\": 0,\n    \"ReviewSweepFlakyfyDownloads\": false,\n    \"DuplicatesEnabled\": false,\n    \"DuplicatesPlaylistName\": \"Duplicates\",\n    \"DuplicatesScanHours\": 24,\n    \"UpgradePerWeek\": 0,\n    \"UpgradeSource\": \"Auto\",\n    \"NoticeMaxTracks\": 100,\n    \"RatingsScope\": \"Auto\",\n    \"AllowedUsers\": [],\n    \"Actions\": [\n      {\n        \"Action\": \"Delete\",\n        \"Name\": \"Delete\",\n        \"Enabled\": false,\n        \"Rating\": 1\n      },\n      {\n        \"Action\": \"WrongSong\",\n        \"Name\": \"Wrong song\",\n        \"Enabled\": false,\n        \"Rating\": 2\n      },\n      {\n        \"Action\": \"WrongVersion\",\n        \"Name\": \"Wrong version\",\n        \"Enabled\": false,\n        \"Rating\": 3\n      },\n      {\n        \"Action\": \"BetterQuality\",\n        \"Name\": \"Better quality\",\n        \"Enabled\": false,\n        \"Rating\": 4\n      },\n      {\n        \"Action\": \"Keep\",\n        \"Name\": \"Keep\",\n        \"Enabled\": false,\n        \"Rating\": 5\n      }\n    ]\n  },\n  \"Metadata\": {\n    \"Language\": \"en\",\n    \"AlbumFromTitle\": true,\n    \"UseCoverArtArchive\": true,\n    \"ReplaceVideoCovers\": true,\n    \"WriteCoverFile\": true,\n    \"EmbedFullSizeCovers\": false,\n    \"FetchLyrics\": true,\n    \"LyricsSources\": \"song,kugou,lrclib,netease,lyricsovh\",\n    \"PreferWordTimedLyrics\": true,\n    \"WriteLyricsBesideAllSongs\": false,\n    \"SaveLyricsTo\": \"beside\",\n    \"PreferOriginalAlbum\": true,\n    \"YearFromOriginalRelease\": true,\n    \"PreferredCountries\": \"\",\n    \"ReleaseDetailsLookup\": true,\n    \"ReplayGain\": true,\n    \"ReplayGainTimeoutSeconds\": 45,\n    \"TagRehearsal\": false\n  },\n  \"GeneratedPlaylists\": {\n    \"Enabled\": false,\n    \"Genres\": true,\n    \"Decades\": true,\n    \"TrackCount\": 100,\n    \"MaxPerArtist\": 3,\n    \"CreateAt\": 20,\n    \"RemoveBelow\": 10,\n    \"MaxPlaylists\": 20,\n    \"RefreshHours\": 24,\n    \"NewShare\": 0,\n    \"NewDays\": 30,\n    \"NameFormat\": \"{0} Mix\"\n  },\n  \"Genre\": {\n    \"Enabled\": false,\n    \"MaxGenres\": 10,\n    \"OnEmpty\": \"Clear\",\n    \"Fallback\": \"None\",\n    \"UnknownLabel\": \"Unknown\",\n    \"Blocklist\": [],\n    \"Mappings\": [],\n    \"BackfillMaxConsecutiveFailures\": 25,\n    \"BackfillExtensions\": []\n  },\n  \"Notifications\": {\n    \"NtfyUrl\": \"\",\n    \"NtfyToken\": \"\",\n    \"DiscordWebhookUrl\": \"\",\n    \"NotifyDownloadStarted\": false,\n    \"NotifyDownloadCompleted\": true,\n    \"NotifyLosslessFallback\": true,\n    \"NotifyDownloadFailed\": true,\n    \"NotifyAlbumCompleted\": true\n  },\n  \"ListenBrainz\": {\n    \"Token\": \"\",\n    \"SubmitExternalPlays\": true,\n    \"UserTokens\": {}\n  }\n}"
+    "text": "{\n  \"Subsonic\": {\n    \"Url\": \"http://navidrome:4533\",\n    \"AdminUsername\": \"admin\",\n    \"AdminPassword\": \"(saved, not shown)\",\n    \"EnableSearchDiscovery\": true,\n    \"WaitForSearchDurations\": true,\n    \"EnableSyncCatalog\": true,\n    \"SyncCatalogClients\": \"Symfonium\",\n    \"SyncCatalogMaxSongs\": 1000,\n    \"StorageMode\": \"Stream\",\n    \"DownloadMode\": \"Track\",\n    \"DownloadOnStar\": true,\n    \"DownloadAlbumOnStar\": true,\n    \"RecordRequestedBy\": true,\n    \"StarDownloadsForRequester\": false,\n    \"SkipOwnedSongs\": true,\n    \"WaitForLosslessOnPlay\": false,\n    \"LosslessWaitTimeoutSeconds\": 0,\n    \"DownloadOnPlay\": false,\n    \"LidarrAlbumOnPlay\": false,\n    \"DownloadSource\": \"Soulseek\",\n    \"HeartDownloadSources\": [\n      {\n        \"Source\": \"Soulseek\",\n        \"SongEnabled\": true,\n        \"AlbumEnabled\": true\n      },\n      {\n        \"Source\": \"YouTube\",\n        \"SongEnabled\": false,\n        \"AlbumEnabled\": false\n      },\n      {\n        \"Source\": \"Lidarr\",\n        \"SongEnabled\": false,\n        \"AlbumEnabled\": false\n      }\n    ],\n    \"AutoDetectDownloadPath\": true,\n    \"LibraryPath\": \"\",\n    \"FolderStructure\": \"Flat\",\n    \"UseLocalStaging\": false,\n    \"ExplicitFilter\": \"All\",\n    \"CacheDurationHours\": 1,\n    \"EnableExternalPlaylists\": false,\n    \"PlaylistsDirectory\": \"playlists\"\n  },\n  \"Library\": {\n    \"DownloadPath\": \"/music\"\n  },\n  \"Server\": {\n    \"PublicUrl\": \"\"\n  },\n  \"Updates\": {\n    \"Check\": false,\n    \"Repo\": \"dedeham/flakyfy\"\n  },\n  \"Soulseek\": {\n    \"BaseUrl\": \"http://stubs:5030\",\n    \"Username\": \"slskd\",\n    \"Password\": \"slskd\",\n    \"SearchWaitSeconds\": 30,\n    \"UpgradeSearchWaitSeconds\": 90,\n    \"MinFileSizeBytes\": 5242880,\n    \"PreferredExtension\": \"flac\",\n    \"DownloadTimeoutSeconds\": 180,\n    \"VerifyDownloads\": false,\n    \"AcoustIdApiKey\": \"\",\n    \"MinMatchScore\": 85,\n    \"TagFromMusicBrainz\": false,\n    \"NameFromMatch\": false,\n    \"RejectedPeerTtlDays\": 30,\n    \"FingerprintSeconds\": 120,\n    \"FingerprintTimeoutSeconds\": 30,\n    \"AcoustIdTimeoutSeconds\": 10,\n    \"DetectTranscodes\": true,\n    \"TranscodeCheckTimeoutSeconds\": 20,\n    \"OutageHoldHours\": 6,\n    \"ParallelDownloads\": 3,\n    \"AlbumFolders\": true,\n    \"SubmitConfirmedFingerprints\": false,\n    \"AcoustIdUserApiKey\": \"\"\n  },\n  \"Lidarr\": {\n    \"BaseUrl\": \"http://stubs:8686\",\n    \"ApiKey\": \"parity-lidarr-key\",\n    \"RootFolderPath\": \"\",\n    \"QualityProfileId\": 0,\n    \"MetadataProfileId\": 0,\n    \"CompletionMode\": \"Accepted\",\n    \"ImportTimeoutSeconds\": 1800\n  },\n  \"YouTube\": {\n    \"ShimUrl\": \"http://stubs:8090\"\n  },\n  \"LastFm\": {\n    \"ApiKey\": \"parity-lastfm-key\",\n    \"ApiSecret\": \"\",\n    \"ScrobbleExternalPlays\": true,\n    \"ScrobbleLibraryPlays\": true,\n    \"UserSessions\": {},\n    \"EnableRadio\": false,\n    \"RadioTrackCount\": 50,\n    \"RadioCacheDurationHours\": 24,\n    \"EnablePersonalizedStations\": false,\n    \"EnableYourMix\": true,\n    \"EnableDiscoveryMix\": true,\n    \"ArtistStationCount\": 2,\n    \"GenreStationCount\": 3,\n    \"EnableDiscoveryStations\": false,\n    \"ExposeRadioAsPlaylists\": false,\n    \"ExposeRadioAsStreams\": false,\n    \"RadioStreamBitrateKbps\": 192,\n    \"EnableIcyMetadata\": true,\n    \"StarterPublishTimeoutSeconds\": 8,\n    \"RadioLoudnessTargetLufs\": -16,\n    \"HistoryRetentionDays\": 90,\n    \"DiscoveryPercent\": 35,\n    \"RefreshIntervalHours\": 12,\n    \"MinimumPlays\": 10,\n    \"DiscoveryStations\": []\n  },\n  \"LibraryActions\": {\n    \"Enabled\": false,\n    \"PlaylistsEnabled\": true,\n    \"RatingsEnabled\": false,\n    \"PlaylistPrefix\": \"\\uD83D\\uDEE0 \",\n    \"DryRun\": true,\n    \"QuarantineDirectory\": \".octo-trash\",\n    \"QuarantineRetentionDays\": 30,\n    \"PollIntervalSeconds\": 60,\n    \"MaxActionsPerCycle\": 20,\n    \"KeepReplacedOriginals\": true,\n    \"NoticePrefix\": \"\\u25B8 \",\n    \"ReviewEnabled\": false,\n    \"ReviewPlaylistName\": \"Review\",\n    \"ReviewSweepPerHour\": 0,\n    \"ReviewSweepOctoDownloads\": false,\n    \"DuplicatesEnabled\": false,\n    \"DuplicatesPlaylistName\": \"Duplicates\",\n    \"DuplicatesScanHours\": 24,\n    \"UpgradePerWeek\": 0,\n    \"UpgradeSource\": \"Auto\",\n    \"NoticeMaxTracks\": 100,\n    \"RatingsScope\": \"Auto\",\n    \"AllowedUsers\": [],\n    \"Actions\": [\n      {\n        \"Action\": \"Delete\",\n        \"Name\": \"Delete\",\n        \"Enabled\": false,\n        \"Rating\": 1\n      },\n      {\n        \"Action\": \"WrongSong\",\n        \"Name\": \"Wrong song\",\n        \"Enabled\": false,\n        \"Rating\": 2\n      },\n      {\n        \"Action\": \"WrongVersion\",\n        \"Name\": \"Wrong version\",\n        \"Enabled\": false,\n        \"Rating\": 3\n      },\n      {\n        \"Action\": \"BetterQuality\",\n        \"Name\": \"Better quality\",\n        \"Enabled\": false,\n        \"Rating\": 4\n      },\n      {\n        \"Action\": \"Keep\",\n        \"Name\": \"Keep\",\n        \"Enabled\": false,\n        \"Rating\": 5\n      }\n    ]\n  },\n  \"Metadata\": {\n    \"Language\": \"en\",\n    \"AlbumFromTitle\": true,\n    \"UseCoverArtArchive\": true,\n    \"ReplaceVideoCovers\": true,\n    \"WriteCoverFile\": true,\n    \"EmbedFullSizeCovers\": false,\n    \"FetchLyrics\": true,\n    \"LyricsSources\": \"song,kugou,lrclib,netease,lyricsovh\",\n    \"PreferWordTimedLyrics\": true,\n    \"WriteLyricsBesideAllSongs\": false,\n    \"SaveLyricsTo\": \"beside\",\n    \"PreferOriginalAlbum\": true,\n    \"YearFromOriginalRelease\": true,\n    \"PreferredCountries\": \"\",\n    \"ReleaseDetailsLookup\": true,\n    \"ReplayGain\": true,\n    \"ReplayGainTimeoutSeconds\": 45,\n    \"TagRehearsal\": false\n  },\n  \"GeneratedPlaylists\": {\n    \"Enabled\": false,\n    \"Genres\": true,\n    \"Decades\": true,\n    \"TrackCount\": 100,\n    \"MaxPerArtist\": 3,\n    \"CreateAt\": 20,\n    \"RemoveBelow\": 10,\n    \"MaxPlaylists\": 20,\n    \"RefreshHours\": 24,\n    \"NewShare\": 0,\n    \"NewDays\": 30,\n    \"NameFormat\": \"{0} Mix\"\n  },\n  \"Genre\": {\n    \"Enabled\": false,\n    \"MaxGenres\": 10,\n    \"OnEmpty\": \"Clear\",\n    \"Fallback\": \"None\",\n    \"UnknownLabel\": \"Unknown\",\n    \"Blocklist\": [],\n    \"Mappings\": [],\n    \"BackfillMaxConsecutiveFailures\": 25,\n    \"BackfillExtensions\": []\n  },\n  \"Notifications\": {\n    \"NtfyUrl\": \"\",\n    \"NtfyToken\": \"\",\n    \"DiscordWebhookUrl\": \"\",\n    \"NotifyDownloadStarted\": false,\n    \"NotifyDownloadCompleted\": true,\n    \"NotifyLosslessFallback\": true,\n    \"NotifyDownloadFailed\": true,\n    \"NotifyAlbumCompleted\": true\n  },\n  \"ListenBrainz\": {\n    \"Token\": \"\",\n    \"SubmitExternalPlays\": true,\n    \"UserTokens\": {}\n  }\n}"
    }
   },
   {
@@ -208,7 +208,7 @@
     "kind": "json",
     "size": 10624,
     "sha256": "d448103b5ce75dd96f2f970c0c44bd56d97b33f1eb44a33bdf48da18652c45d8",
-    "text": "{\"keys\":[{\"Key\":\"Subsonic:Url\",\"Value\":\"http://navidrome:4533\",\"IsSecret\":false},{\"Key\":\"Subsonic:StorageMode\",\"Value\":\"Stream\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadMode\",\"Value\":\"Track\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadOnStar\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadAlbumOnStar\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:RecordRequestedBy\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:StarDownloadsForRequester\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Subsonic:WaitForLosslessOnPlay\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"Subsonic:LosslessWaitTimeoutSeconds\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadOnPlay\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"Subsonic:LidarrAlbumOnPlay\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadSource\",\"Value\":\"Soulseek\",\"IsSecret\":false},{\"Key\":\"Subsonic:AutoDetectDownloadPath\",\"Value\":\"true\",\"IsSecret\":false},{\"Key\":\"Subsonic:LibraryPath\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Subsonic:FolderStructure\",\"Value\":\"Flat\",\"IsSecret\":false},{\"Key\":\"Subsonic:UseLocalStaging\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Subsonic:ExplicitFilter\",\"Value\":\"All\",\"IsSecret\":false},{\"Key\":\"Subsonic:CacheDurationHours\",\"Value\":\"1\",\"IsSecret\":false},{\"Key\":\"Subsonic:EnableExternalPlaylists\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"Subsonic:WaitForSearchDurations\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:SkipOwnedSongs\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:PlaylistsDirectory\",\"Value\":\"playlists\",\"IsSecret\":false},{\"Key\":\"Library:DownloadPath\",\"Value\":\"/music\",\"IsSecret\":false},{\"Key\":\"Server:PublicUrl\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Updates:Check\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"Updates:Repo\",\"Value\":\"dedeham/flakyfy\",\"IsSecret\":false},{\"Key\":\"Soulseek:BaseUrl\",\"Value\":\"http://stubs:5030\",\"IsSecret\":false},{\"Key\":\"Soulseek:Username\",\"Value\":\"slskd\",\"IsSecret\":false},{\"Key\":\"Soulseek:Password\",\"Value\":\"\\u2022\\u2022\\u2022\\u2022\\u2022\",\"IsSecret\":true},{\"Key\":\"Soulseek:SearchWaitSeconds\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"Soulseek:UpgradeSearchWaitSeconds\",\"Value\":\"90\",\"IsSecret\":false},{\"Key\":\"Soulseek:MinFileSizeBytes\",\"Value\":\"5242880\",\"IsSecret\":false},{\"Key\":\"Soulseek:PreferredExtension\",\"Value\":\"flac\",\"IsSecret\":false},{\"Key\":\"Soulseek:DownloadTimeoutSeconds\",\"Value\":\"180\",\"IsSecret\":false},{\"Key\":\"Soulseek:RejectedPeerTtlDays\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"Soulseek:FingerprintSeconds\",\"Value\":\"120\",\"IsSecret\":false},{\"Key\":\"Soulseek:FingerprintTimeoutSeconds\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"Soulseek:AcoustIdTimeoutSeconds\",\"Value\":\"10\",\"IsSecret\":false},{\"Key\":\"Soulseek:DetectTranscodes\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Soulseek:TranscodeCheckTimeoutSeconds\",\"Value\":\"20\",\"IsSecret\":false},{\"Key\":\"Soulseek:OutageHoldHours\",\"Value\":\"6\",\"IsSecret\":false},{\"Key\":\"Soulseek:ParallelDownloads\",\"Value\":\"3\",\"IsSecret\":false},{\"Key\":\"Soulseek:AlbumFolders\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Genre:BackfillMaxConsecutiveFailures\",\"Value\":\"25\",\"IsSecret\":false},{\"Key\":\"Genre:BackfillExtensions\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LibraryActions:Enabled\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"LibraryActions:PlaylistsEnabled\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LibraryActions:RatingsEnabled\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"LibraryActions:PlaylistPrefix\",\"Value\":\"\\uD83D\\uDEE0 \",\"IsSecret\":false},{\"Key\":\"LibraryActions:DryRun\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LibraryActions:QuarantineDirectory\",\"Value\":\".flakyfy-trash\",\"IsSecret\":false},{\"Key\":\"LibraryActions:QuarantineRetentionDays\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"LibraryActions:PollIntervalSeconds\",\"Value\":\"60\",\"IsSecret\":false},{\"Key\":\"LibraryActions:MaxActionsPerCycle\",\"Value\":\"20\",\"IsSecret\":false},{\"Key\":\"LibraryActions:KeepReplacedOriginals\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LibraryActions:Actions\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LibraryActions:AllowedUsers\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LibraryActions:NoticePrefix\",\"Value\":\"\\u25B8 \",\"IsSecret\":false},{\"Key\":\"LibraryActions:ReviewEnabled\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"LibraryActions:ReviewPlaylistName\",\"Value\":\"Review\",\"IsSecret\":false},{\"Key\":\"LibraryActions:NoticeMaxTracks\",\"Value\":\"100\",\"IsSecret\":false},{\"Key\":\"LibraryActions:RatingsScope\",\"Value\":\"Auto\",\"IsSecret\":false},{\"Key\":\"LibraryActions:DuplicatesEnabled\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"LibraryActions:DuplicatesPlaylistName\",\"Value\":\"Duplicates\",\"IsSecret\":false},{\"Key\":\"LibraryActions:DuplicatesScanHours\",\"Value\":\"24\",\"IsSecret\":false},{\"Key\":\"LibraryActions:UpgradePerWeek\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"LibraryActions:UpgradeSource\",\"Value\":\"Auto\",\"IsSecret\":false},{\"Key\":\"LibraryActions:ReviewSweepPerHour\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"LibraryActions:ReviewSweepFlakyfyDownloads\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Soulseek:SubmitConfirmedFingerprints\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Soulseek:AcoustIdUserApiKey\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"Genre:Enabled\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Genre:MaxGenres\",\"Value\":\"10\",\"IsSecret\":false},{\"Key\":\"Genre:OnEmpty\",\"Value\":\"Clear\",\"IsSecret\":false},{\"Key\":\"Genre:Fallback\",\"Value\":\"None\",\"IsSecret\":false},{\"Key\":\"Genre:UnknownLabel\",\"Value\":\"Unknown\",\"IsSecret\":false},{\"Key\":\"Genre:Mappings\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Genre:Blocklist\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Soulseek:VerifyDownloads\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Soulseek:AcoustIdApiKey\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"Soulseek:MinMatchScore\",\"Value\":\"85\",\"IsSecret\":false},{\"Key\":\"Soulseek:TagFromMusicBrainz\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Soulseek:NameFromMatch\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Lidarr:BaseUrl\",\"Value\":\"http://stubs:8686\",\"IsSecret\":false},{\"Key\":\"Lidarr:ApiKey\",\"Value\":\"\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\",\"IsSecret\":true},{\"Key\":\"Lidarr:RootFolderPath\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Lidarr:QualityProfileId\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"Lidarr:MetadataProfileId\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"Lidarr:CompletionMode\",\"Value\":\"Accepted\",\"IsSecret\":false},{\"Key\":\"Lidarr:ImportTimeoutSeconds\",\"Value\":\"1800\",\"IsSecret\":false},{\"Key\":\"YouTube:ShimUrl\",\"Value\":\"http://stubs:8090\",\"IsSecret\":false},{\"Key\":\"LastFm:ApiKey\",\"Value\":\"\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\",\"IsSecret\":true},{\"Key\":\"LastFm:ApiSecret\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"LastFm:ScrobbleExternalPlays\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LastFm:ScrobbleLibraryPlays\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LastFm:EnableRadio\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"LastFm:RadioTrackCount\",\"Value\":\"50\",\"IsSecret\":false},{\"Key\":\"LastFm:RadioCacheDurationHours\",\"Value\":\"24\",\"IsSecret\":false},{\"Key\":\"LastFm:StarterPublishTimeoutSeconds\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LastFm:RadioLoudnessTargetLufs\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LastFm:EnablePersonalizedStations\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"LastFm:EnableYourMix\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LastFm:EnableDiscoveryMix\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LastFm:ArtistStationCount\",\"Value\":\"2\",\"IsSecret\":false},{\"Key\":\"LastFm:GenreStationCount\",\"Value\":\"3\",\"IsSecret\":false},{\"Key\":\"LastFm:EnableDiscoveryStations\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"LastFm:HistoryRetentionDays\",\"Value\":\"90\",\"IsSecret\":false},{\"Key\":\"LastFm:DiscoveryPercent\",\"Value\":\"35\",\"IsSecret\":false},{\"Key\":\"LastFm:RefreshIntervalHours\",\"Value\":\"12\",\"IsSecret\":false},{\"Key\":\"LastFm:MinimumPlays\",\"Value\":\"10\",\"IsSecret\":false},{\"Key\":\"LastFm:DiscoveryStations\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:Language\",\"Value\":\"en\",\"IsSecret\":false},{\"Key\":\"Metadata:AlbumFromTitle\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:UseCoverArtArchive\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:ReplaceVideoCovers\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:WriteCoverFile\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:EmbedFullSizeCovers\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Metadata:FetchLyrics\",\"Value\":\"true\",\"IsSecret\":false},{\"Key\":\"Metadata:LyricsSources\",\"Value\":\"song,kugou,lrclib,netease,lyricsovh\",\"IsSecret\":false},{\"Key\":\"Metadata:PreferWordTimedLyrics\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:WriteLyricsBesideAllSongs\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Metadata:SaveLyricsTo\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:PreferOriginalAlbum\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:YearFromOriginalRelease\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:PreferredCountries\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:ReleaseDetailsLookup\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:ReplayGain\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:ReplayGainTimeoutSeconds\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:TagRehearsal\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:Enabled\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:Genres\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:Decades\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:TrackCount\",\"Value\":\"100\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:MaxPerArtist\",\"Value\":\"3\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:CreateAt\",\"Value\":\"20\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:RemoveBelow\",\"Value\":\"10\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:MaxPlaylists\",\"Value\":\"20\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:RefreshHours\",\"Value\":\"24\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:NewShare\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:NewDays\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:NameFormat\",\"Value\":\"{0} Mix\",\"IsSecret\":false},{\"Key\":\"Notifications:NtfyUrl\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Notifications:NtfyToken\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"Notifications:DiscordWebhookUrl\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"Notifications:NotifyDownloadStarted\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Notifications:NotifyDownloadCompleted\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Notifications:NotifyLosslessFallback\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Notifications:NotifyDownloadFailed\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Notifications:NotifyAlbumCompleted\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"ListenBrainz:Token\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"ListenBrainz:SubmitExternalPlays\",\"Value\":\"\",\"IsSecret\":false}],\"configFile\":\"/app/config/settings.json\"}"
+    "text": "{\"keys\":[{\"Key\":\"Subsonic:Url\",\"Value\":\"http://navidrome:4533\",\"IsSecret\":false},{\"Key\":\"Subsonic:StorageMode\",\"Value\":\"Stream\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadMode\",\"Value\":\"Track\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadOnStar\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadAlbumOnStar\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:RecordRequestedBy\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:StarDownloadsForRequester\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Subsonic:WaitForLosslessOnPlay\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"Subsonic:LosslessWaitTimeoutSeconds\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadOnPlay\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"Subsonic:LidarrAlbumOnPlay\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Subsonic:DownloadSource\",\"Value\":\"Soulseek\",\"IsSecret\":false},{\"Key\":\"Subsonic:AutoDetectDownloadPath\",\"Value\":\"true\",\"IsSecret\":false},{\"Key\":\"Subsonic:LibraryPath\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Subsonic:FolderStructure\",\"Value\":\"Flat\",\"IsSecret\":false},{\"Key\":\"Subsonic:UseLocalStaging\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Subsonic:ExplicitFilter\",\"Value\":\"All\",\"IsSecret\":false},{\"Key\":\"Subsonic:CacheDurationHours\",\"Value\":\"1\",\"IsSecret\":false},{\"Key\":\"Subsonic:EnableExternalPlaylists\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"Subsonic:WaitForSearchDurations\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:SkipOwnedSongs\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Subsonic:PlaylistsDirectory\",\"Value\":\"playlists\",\"IsSecret\":false},{\"Key\":\"Library:DownloadPath\",\"Value\":\"/music\",\"IsSecret\":false},{\"Key\":\"Server:PublicUrl\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Updates:Check\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"Updates:Repo\",\"Value\":\"dedeham/flakyfy\",\"IsSecret\":false},{\"Key\":\"Soulseek:BaseUrl\",\"Value\":\"http://stubs:5030\",\"IsSecret\":false},{\"Key\":\"Soulseek:Username\",\"Value\":\"slskd\",\"IsSecret\":false},{\"Key\":\"Soulseek:Password\",\"Value\":\"\\u2022\\u2022\\u2022\\u2022\\u2022\",\"IsSecret\":true},{\"Key\":\"Soulseek:SearchWaitSeconds\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"Soulseek:UpgradeSearchWaitSeconds\",\"Value\":\"90\",\"IsSecret\":false},{\"Key\":\"Soulseek:MinFileSizeBytes\",\"Value\":\"5242880\",\"IsSecret\":false},{\"Key\":\"Soulseek:PreferredExtension\",\"Value\":\"flac\",\"IsSecret\":false},{\"Key\":\"Soulseek:DownloadTimeoutSeconds\",\"Value\":\"180\",\"IsSecret\":false},{\"Key\":\"Soulseek:RejectedPeerTtlDays\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"Soulseek:FingerprintSeconds\",\"Value\":\"120\",\"IsSecret\":false},{\"Key\":\"Soulseek:FingerprintTimeoutSeconds\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"Soulseek:AcoustIdTimeoutSeconds\",\"Value\":\"10\",\"IsSecret\":false},{\"Key\":\"Soulseek:DetectTranscodes\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Soulseek:TranscodeCheckTimeoutSeconds\",\"Value\":\"20\",\"IsSecret\":false},{\"Key\":\"Soulseek:OutageHoldHours\",\"Value\":\"6\",\"IsSecret\":false},{\"Key\":\"Soulseek:ParallelDownloads\",\"Value\":\"3\",\"IsSecret\":false},{\"Key\":\"Soulseek:AlbumFolders\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Genre:BackfillMaxConsecutiveFailures\",\"Value\":\"25\",\"IsSecret\":false},{\"Key\":\"Genre:BackfillExtensions\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LibraryActions:Enabled\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"LibraryActions:PlaylistsEnabled\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LibraryActions:RatingsEnabled\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"LibraryActions:PlaylistPrefix\",\"Value\":\"\\uD83D\\uDEE0 \",\"IsSecret\":false},{\"Key\":\"LibraryActions:DryRun\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LibraryActions:QuarantineDirectory\",\"Value\":\".octo-trash\",\"IsSecret\":false},{\"Key\":\"LibraryActions:QuarantineRetentionDays\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"LibraryActions:PollIntervalSeconds\",\"Value\":\"60\",\"IsSecret\":false},{\"Key\":\"LibraryActions:MaxActionsPerCycle\",\"Value\":\"20\",\"IsSecret\":false},{\"Key\":\"LibraryActions:KeepReplacedOriginals\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LibraryActions:Actions\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LibraryActions:AllowedUsers\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LibraryActions:NoticePrefix\",\"Value\":\"\\u25B8 \",\"IsSecret\":false},{\"Key\":\"LibraryActions:ReviewEnabled\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"LibraryActions:ReviewPlaylistName\",\"Value\":\"Review\",\"IsSecret\":false},{\"Key\":\"LibraryActions:NoticeMaxTracks\",\"Value\":\"100\",\"IsSecret\":false},{\"Key\":\"LibraryActions:RatingsScope\",\"Value\":\"Auto\",\"IsSecret\":false},{\"Key\":\"LibraryActions:DuplicatesEnabled\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"LibraryActions:DuplicatesPlaylistName\",\"Value\":\"Duplicates\",\"IsSecret\":false},{\"Key\":\"LibraryActions:DuplicatesScanHours\",\"Value\":\"24\",\"IsSecret\":false},{\"Key\":\"LibraryActions:UpgradePerWeek\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"LibraryActions:UpgradeSource\",\"Value\":\"Auto\",\"IsSecret\":false},{\"Key\":\"LibraryActions:ReviewSweepPerHour\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"LibraryActions:ReviewSweepOctoDownloads\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Soulseek:SubmitConfirmedFingerprints\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Soulseek:AcoustIdUserApiKey\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"Genre:Enabled\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Genre:MaxGenres\",\"Value\":\"10\",\"IsSecret\":false},{\"Key\":\"Genre:OnEmpty\",\"Value\":\"Clear\",\"IsSecret\":false},{\"Key\":\"Genre:Fallback\",\"Value\":\"None\",\"IsSecret\":false},{\"Key\":\"Genre:UnknownLabel\",\"Value\":\"Unknown\",\"IsSecret\":false},{\"Key\":\"Genre:Mappings\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Genre:Blocklist\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Soulseek:VerifyDownloads\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Soulseek:AcoustIdApiKey\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"Soulseek:MinMatchScore\",\"Value\":\"85\",\"IsSecret\":false},{\"Key\":\"Soulseek:TagFromMusicBrainz\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Soulseek:NameFromMatch\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Lidarr:BaseUrl\",\"Value\":\"http://stubs:8686\",\"IsSecret\":false},{\"Key\":\"Lidarr:ApiKey\",\"Value\":\"\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\",\"IsSecret\":true},{\"Key\":\"Lidarr:RootFolderPath\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Lidarr:QualityProfileId\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"Lidarr:MetadataProfileId\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"Lidarr:CompletionMode\",\"Value\":\"Accepted\",\"IsSecret\":false},{\"Key\":\"Lidarr:ImportTimeoutSeconds\",\"Value\":\"1800\",\"IsSecret\":false},{\"Key\":\"YouTube:ShimUrl\",\"Value\":\"http://stubs:8090\",\"IsSecret\":false},{\"Key\":\"LastFm:ApiKey\",\"Value\":\"\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022\",\"IsSecret\":true},{\"Key\":\"LastFm:ApiSecret\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"LastFm:ScrobbleExternalPlays\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LastFm:ScrobbleLibraryPlays\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LastFm:EnableRadio\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"LastFm:RadioTrackCount\",\"Value\":\"50\",\"IsSecret\":false},{\"Key\":\"LastFm:RadioCacheDurationHours\",\"Value\":\"24\",\"IsSecret\":false},{\"Key\":\"LastFm:StarterPublishTimeoutSeconds\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LastFm:RadioLoudnessTargetLufs\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"LastFm:EnablePersonalizedStations\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"LastFm:EnableYourMix\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LastFm:EnableDiscoveryMix\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"LastFm:ArtistStationCount\",\"Value\":\"2\",\"IsSecret\":false},{\"Key\":\"LastFm:GenreStationCount\",\"Value\":\"3\",\"IsSecret\":false},{\"Key\":\"LastFm:EnableDiscoveryStations\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"LastFm:HistoryRetentionDays\",\"Value\":\"90\",\"IsSecret\":false},{\"Key\":\"LastFm:DiscoveryPercent\",\"Value\":\"35\",\"IsSecret\":false},{\"Key\":\"LastFm:RefreshIntervalHours\",\"Value\":\"12\",\"IsSecret\":false},{\"Key\":\"LastFm:MinimumPlays\",\"Value\":\"10\",\"IsSecret\":false},{\"Key\":\"LastFm:DiscoveryStations\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:Language\",\"Value\":\"en\",\"IsSecret\":false},{\"Key\":\"Metadata:AlbumFromTitle\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:UseCoverArtArchive\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:ReplaceVideoCovers\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:WriteCoverFile\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:EmbedFullSizeCovers\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Metadata:FetchLyrics\",\"Value\":\"true\",\"IsSecret\":false},{\"Key\":\"Metadata:LyricsSources\",\"Value\":\"song,kugou,lrclib,netease,lyricsovh\",\"IsSecret\":false},{\"Key\":\"Metadata:PreferWordTimedLyrics\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Metadata:WriteLyricsBesideAllSongs\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Metadata:SaveLyricsTo\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:PreferOriginalAlbum\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:YearFromOriginalRelease\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:PreferredCountries\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:ReleaseDetailsLookup\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:ReplayGain\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:ReplayGainTimeoutSeconds\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Metadata:TagRehearsal\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:Enabled\",\"Value\":\"false\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:Genres\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:Decades\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:TrackCount\",\"Value\":\"100\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:MaxPerArtist\",\"Value\":\"3\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:CreateAt\",\"Value\":\"20\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:RemoveBelow\",\"Value\":\"10\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:MaxPlaylists\",\"Value\":\"20\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:RefreshHours\",\"Value\":\"24\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:NewShare\",\"Value\":\"0\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:NewDays\",\"Value\":\"30\",\"IsSecret\":false},{\"Key\":\"GeneratedPlaylists:NameFormat\",\"Value\":\"{0} Mix\",\"IsSecret\":false},{\"Key\":\"Notifications:NtfyUrl\",\"Value\":\"\",\"IsSecret\":false},{\"Key\":\"Notifications:NtfyToken\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"Notifications:DiscordWebhookUrl\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"Notifications:NotifyDownloadStarted\",\"Value\":\"False\",\"IsSecret\":false},{\"Key\":\"Notifications:NotifyDownloadCompleted\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Notifications:NotifyLosslessFallback\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Notifications:NotifyDownloadFailed\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"Notifications:NotifyAlbumCompleted\",\"Value\":\"True\",\"IsSecret\":false},{\"Key\":\"ListenBrainz:Token\",\"Value\":\"\",\"IsSecret\":true},{\"Key\":\"ListenBrainz:SubmitExternalPlays\",\"Value\":\"\",\"IsSecret\":false}],\"configFile\":\"/app/config/settings.json\"}"
    }
   },
   {
@@ -770,7 +770,7 @@
     "headers": {
      "Origin": "http://evil.example",
      "Access-Control-Request-Method": "POST",
-     "Access-Control-Request-Headers": "content-type,x-flakyfy-admin"
+     "Access-Control-Request-Headers": "content-type,x-octo-admin"
     },
     "body": null
    },
@@ -826,7 +826,7 @@
     "kind": "json",
     "size": 117,
     "sha256": "d237d2d0f5c49198d0175a66528eebed81aa0f3320fc6797ce57364be3a5b73b",
-    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Flakyfy-Admin header to opt in.\"}"
+    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Octo-Admin header to opt in.\"}"
    }
   },
   {
@@ -863,7 +863,7 @@
     "kind": "json",
     "size": 117,
     "sha256": "d237d2d0f5c49198d0175a66528eebed81aa0f3320fc6797ce57364be3a5b73b",
-    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Flakyfy-Admin header to opt in.\"}"
+    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Octo-Admin header to opt in.\"}"
    }
   },
   {
@@ -898,7 +898,7 @@
     "kind": "json",
     "size": 117,
     "sha256": "d237d2d0f5c49198d0175a66528eebed81aa0f3320fc6797ce57364be3a5b73b",
-    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Flakyfy-Admin header to opt in.\"}"
+    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Octo-Admin header to opt in.\"}"
    }
   },
   {
@@ -935,7 +935,7 @@
     "kind": "json",
     "size": 117,
     "sha256": "d237d2d0f5c49198d0175a66528eebed81aa0f3320fc6797ce57364be3a5b73b",
-    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Flakyfy-Admin header to opt in.\"}"
+    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Octo-Admin header to opt in.\"}"
    }
   },
   {
@@ -970,7 +970,7 @@
     "kind": "json",
     "size": 117,
     "sha256": "d237d2d0f5c49198d0175a66528eebed81aa0f3320fc6797ce57364be3a5b73b",
-    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Flakyfy-Admin header to opt in.\"}"
+    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Octo-Admin header to opt in.\"}"
    }
   },
   {
@@ -979,7 +979,7 @@
     "method": "POST",
     "target": "/api/admin/nothing-here",
     "headers": {
-     "X-Flakyfy-Admin": "1"
+     "X-Octo-Admin": "1"
     },
     "body": null
    },
@@ -1471,7 +1471,7 @@
     "method": "POST",
     "target": "/api/admin/tags/preview",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"artist\": \"Zephyr Echo\", \"title\": \"Glass Harbor\"}"
@@ -1509,7 +1509,7 @@
     "method": "GET",
     "target": "/api/admin/library-actions",
     "headers": {
-     "X-Flakyfy-Browse-Token": "not-a-session"
+     "X-Octo-Browse-Token": "not-a-session"
     },
     "body": null
    },
@@ -1546,7 +1546,7 @@
     "method": "POST",
     "target": "/api/admin/browse/auth",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"username\": \"admin\", \"password\": \"nope\"}"
@@ -1584,7 +1584,7 @@
     "method": "POST",
     "target": "/api/admin/browse/auth",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"username\": \"\", \"password\": \"\"}"
@@ -1622,7 +1622,7 @@
     "method": "POST",
     "target": "/api/admin/browse/auth",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"username\": \"listener\", \"password\": \"listener-pass\"}"
@@ -1660,7 +1660,7 @@
     "method": "POST",
     "target": "/api/admin/browse/auth",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": null
@@ -1698,7 +1698,7 @@
     "method": "POST",
     "target": "/api/admin/browse/auth",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"Username\": \"admin\", \"Password\": \"parity-admin\"}"
@@ -1720,7 +1720,7 @@
     ],
     [
      "Set-Cookie",
-     "flakyfy_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2; max-age=7776000; path=/api/admin; samesite=strict; httponly"
+     "octo_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2; max-age=7776000; path=/api/admin; samesite=strict; httponly"
     ],
     [
      "Transfer-Encoding",
@@ -1740,7 +1740,7 @@
     "method": "GET",
     "target": "/api/admin/browse/session",
     "headers": {
-     "Cookie": "flakyfy_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "Cookie": "octo_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -1761,7 +1761,7 @@
     ],
     [
      "Set-Cookie",
-     "flakyfy_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2; max-age=7776000; path=/api/admin; samesite=strict; httponly"
+     "octo_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2; max-age=7776000; path=/api/admin; samesite=strict; httponly"
     ],
     [
      "Transfer-Encoding",
@@ -1781,7 +1781,7 @@
     "method": "GET",
     "target": "/api/admin/browse/session",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -1818,7 +1818,7 @@
     "method": "GET",
     "target": "/api/admin/browse?path=%2Fmusic",
     "headers": {
-     "Cookie": "flakyfy_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "Cookie": "octo_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -1839,7 +1839,7 @@
     ],
     [
      "Set-Cookie",
-     "flakyfy_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2; max-age=7776000; path=/api/admin; samesite=strict; httponly"
+     "octo_browse=D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2; max-age=7776000; path=/api/admin; samesite=strict; httponly"
     ],
     [
      "Transfer-Encoding",
@@ -1859,7 +1859,7 @@
     "method": "GET",
     "target": "/api/admin/browse?path=%2Fmusic%2FAurora%20Vale%2FNorthern%20Lights%20%282020%29",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -1896,8 +1896,8 @@
     "method": "GET",
     "target": "/api/admin/browse?path=%2Fmusic",
     "headers": {
-     "Cookie": "flakyfy_browse=stale",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "Cookie": "octo_browse=stale",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -1934,7 +1934,7 @@
     "method": "GET",
     "target": "/api/admin/library-actions",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -1962,7 +1962,7 @@
     "kind": "json",
     "size": 123,
     "sha256": "93fa35c4043e20a36cd1e8fce35c8db42fd47fd986184be934c167cf8c57a934",
-    "text": "{\"enabled\":false,\"dryRun\":true,\"hasAdminIdentity\":true,\"allowedUsers\":[],\"quarantine\":\"/music/.flakyfy-trash\",\"entries\":[]}"
+    "text": "{\"enabled\":false,\"dryRun\":true,\"hasAdminIdentity\":true,\"allowedUsers\":[],\"quarantine\":\"/music/.octo-trash\",\"entries\":[]}"
    }
   },
   {
@@ -1971,7 +1971,7 @@
     "method": "GET",
     "target": "/api/admin/notices",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2008,7 +2008,7 @@
     "method": "GET",
     "target": "/api/admin/lossy",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2045,7 +2045,7 @@
     "method": "GET",
     "target": "/api/admin/upgrades",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2082,7 +2082,7 @@
     "method": "GET",
     "target": "/api/admin/genre/backfill",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2110,7 +2110,7 @@
     "kind": "json",
     "size": 311,
     "sha256": "f55a9855a7c598b233dfea3ae048293f1cc1952afef69806fe03547d75b75c51",
-    "text": "{\"runId\":\"\",\"status\":\"Idle\",\"scope\":\"FlakyfyDownloads\",\"dryRun\":true,\"startedUtc\":null,\"finishedUtc\":null,\"total\":0,\"processed\":0,\"changed\":0,\"cleared\":0,\"skipped\":0,\"failed\":0,\"lastPath\":null,\"reason\":null,\"errors\":[],\"preview\":[],\"canResume\":false,\"canUndo\":false,\"settingsChanged\":false,\"musicPath\":\"/music\"}"
+    "text": "{\"runId\":\"\",\"status\":\"Idle\",\"scope\":\"OctoDownloads\",\"dryRun\":true,\"startedUtc\":null,\"finishedUtc\":null,\"total\":0,\"processed\":0,\"changed\":0,\"cleared\":0,\"skipped\":0,\"failed\":0,\"lastPath\":null,\"reason\":null,\"errors\":[],\"preview\":[],\"canResume\":false,\"canUndo\":false,\"settingsChanged\":false,\"musicPath\":\"/music\"}"
    }
   },
   {
@@ -2119,7 +2119,7 @@
     "method": "GET",
     "target": "/api/admin/covers/upgrade",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2147,7 +2147,7 @@
     "kind": "json",
     "size": 464,
     "sha256": "d1360a6c1d4966cf1ee68ccbd77036de569dfa98c94b63509cc93f8b2084f149",
-    "text": "{\"runId\":\"\",\"status\":\"Idle\",\"scope\":\"FlakyfyDownloads\",\"mode\":\"Scan\",\"dryRun\":true,\"smallerThan\":1000,\"picked\":null,\"soft\":0,\"folderCovers\":true,\"fullSize\":false,\"undo\":false,\"startedUtc\":null,\"finishedUtc\":null,\"total\":0,\"processed\":0,\"upgraded\":0,\"kept\":0,\"files\":0,\"failed\":0,\"lastFolder\":null,\"reason\":null,\"songsTotal\":0,\"songsRead\":0,\"albumsTotal\":0,\"albumsDone\":0,\"errors\":[],\"preview\":[],\"canResume\":false,\"busy\":false,\"canUndo\":false,\"musicPath\":\"/music\"}"
+    "text": "{\"runId\":\"\",\"status\":\"Idle\",\"scope\":\"OctoDownloads\",\"mode\":\"Scan\",\"dryRun\":true,\"smallerThan\":1000,\"picked\":null,\"soft\":0,\"folderCovers\":true,\"fullSize\":false,\"undo\":false,\"startedUtc\":null,\"finishedUtc\":null,\"total\":0,\"processed\":0,\"upgraded\":0,\"kept\":0,\"files\":0,\"failed\":0,\"lastFolder\":null,\"reason\":null,\"songsTotal\":0,\"songsRead\":0,\"albumsTotal\":0,\"albumsDone\":0,\"errors\":[],\"preview\":[],\"canResume\":false,\"busy\":false,\"canUndo\":false,\"musicPath\":\"/music\"}"
    }
   },
   {
@@ -2156,7 +2156,7 @@
     "method": "GET",
     "target": "/api/admin/covers/upgrade/thumb/5KkmjLAmQA5mvuA6BVtGuD",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2197,7 +2197,7 @@
     "method": "GET",
     "target": "/api/admin/covers/upgrade/thumb/5KkmjLAmQA5mvuA6BVtGuD?found=true",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2238,7 +2238,7 @@
     "method": "GET",
     "target": "/api/admin/covers/upgrade/thumb/5KkmjLAmQA5mvuA6BVtGuD?found=maybe",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2275,7 +2275,7 @@
     "method": "GET",
     "target": "/api/admin/lyrics/library",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2324,7 +2324,7 @@
     "method": "GET",
     "target": "/api/admin/lyrics/songs?q=polar",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2361,7 +2361,7 @@
     "method": "GET",
     "target": "/api/admin/lyrics/songs?q=",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2398,7 +2398,7 @@
     "method": "GET",
     "target": "/api/admin/lyrics/candidates?id=6TOMTUtoEzhnB8tjXmNY5V",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2435,7 +2435,7 @@
     "method": "GET",
     "target": "/api/admin/lyrics/candidates?id=doesnotexist000000000x",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2472,7 +2472,7 @@
     "method": "GET",
     "target": "/api/admin/lyrics/choices",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2509,7 +2509,7 @@
     "method": "GET",
     "target": "/api/admin/library/resolve?id=2A1r2OKTiTVuvPfmtePIIe",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2546,7 +2546,7 @@
     "method": "GET",
     "target": "/api/admin/library/resolve",
     "headers": {
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2"
     },
     "body": null
    },
@@ -2583,8 +2583,8 @@
     "method": "POST",
     "target": "/api/admin/tags/preview",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"artist\": \"Zephyr Echo\", \"title\": \"Glass Harbor\"}"
@@ -2622,8 +2622,8 @@
     "method": "POST",
     "target": "/api/admin/tags/preview",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"artist\": \"Zephyr Echo\"}"
@@ -2661,8 +2661,8 @@
     "method": "POST",
     "target": "/api/admin/tags/preview",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"path\": \"/music/../etc/passwd\"}"
@@ -2700,8 +2700,8 @@
     "method": "POST",
     "target": "/api/admin/tags/preview",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"path\": \"/music/Aurora Vale/Northern Lights (2020)/02 - Polar Night.flac\"}"
@@ -2739,7 +2739,7 @@
     "method": "POST",
     "target": "/api/admin/settings",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": null
@@ -2777,7 +2777,7 @@
     "method": "POST",
     "target": "/api/admin/settings",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{not json"
@@ -2815,7 +2815,7 @@
     "method": "POST",
     "target": "/api/admin/settings",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"Subsonic\": {\"AdminPassword\": \"(saved, not shown)x\"}}"
@@ -2853,7 +2853,7 @@
     "method": "POST",
     "target": "/api/admin/settings",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"LibraryActions\": {\"Enabled\": true, \"AllowedUsers\": []}}"
@@ -2891,7 +2891,7 @@
     "method": "PUT",
     "target": "/api/admin/raw-config",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "[]"
@@ -2929,7 +2929,7 @@
     "method": "PUT",
     "target": "/api/admin/raw-config",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": null
@@ -2967,7 +2967,7 @@
     "method": "POST",
     "target": "/api/admin/lidarr/test",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{}"
@@ -3005,7 +3005,7 @@
     "method": "POST",
     "target": "/api/admin/lidarr/test",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"baseUrl\": \"http://stubs:9\", \"apiKey\": \"x\"}"
@@ -3043,7 +3043,7 @@
     "method": "POST",
     "target": "/api/admin/lastfm/check",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{}"
@@ -3081,7 +3081,7 @@
     "method": "POST",
     "target": "/api/admin/lastfm/scrobble/connect",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"user\": \"admin\"}"
@@ -3119,7 +3119,7 @@
     "method": "POST",
     "target": "/api/admin/lastfm/radio/refresh",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{}"
@@ -3157,7 +3157,7 @@
     "method": "DELETE",
     "target": "/api/admin/lastfm/radio/history",
     "headers": {
-     "X-Flakyfy-Admin": "1"
+     "X-Octo-Admin": "1"
     },
     "body": null
    },
@@ -3194,7 +3194,7 @@
     "method": "POST",
     "target": "/api/admin/listenbrainz/validate",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"token\": \"not-a-token\"}"
@@ -3232,8 +3232,8 @@
     "method": "POST",
     "target": "/api/admin/lyrics/review/dismiss",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{}"
@@ -3271,8 +3271,8 @@
     "method": "POST",
     "target": "/api/admin/lyrics/choice",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"id\": \"6TOMTUtoEzhnB8tjXmNY5V\"}"
@@ -3310,8 +3310,8 @@
     "method": "POST",
     "target": "/api/admin/covers/upgrade",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"albums\": []}"
@@ -3349,8 +3349,8 @@
     "method": "POST",
     "target": "/api/admin/lyrics/library",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"mode\": \"Preview\", \"picked\": []}"
@@ -3388,8 +3388,8 @@
     "method": "POST",
     "target": "/api/admin/genre/backfill",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"dryRun\": true}"
@@ -3427,8 +3427,8 @@
     "method": "POST",
     "target": "/api/admin/upgrades",
     "headers": {
-     "X-Flakyfy-Admin": "1",
-     "X-Flakyfy-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
+     "X-Octo-Admin": "1",
+     "X-Octo-Browse-Token": "D47684740D98B317E2C4EA1DF00BFBD438357C0C06B5A6E7801F981BB723BCD2",
      "Content-Type": "application/json"
     },
     "body": "{\"songs\": []}"
@@ -3466,7 +3466,7 @@
     "method": "POST",
     "target": "/api/admin/duplicates/scan",
     "headers": {
-     "X-Flakyfy-Admin": "1"
+     "X-Octo-Admin": "1"
     },
     "body": null
    },
@@ -3503,7 +3503,7 @@
     "method": "POST",
     "target": "/api/admin/review-sweep/start",
     "headers": {
-     "X-Flakyfy-Admin": "1"
+     "X-Octo-Admin": "1"
     },
     "body": null
    },
@@ -3540,7 +3540,7 @@
     "method": "POST",
     "target": "/api/admin/update",
     "headers": {
-     "X-Flakyfy-Admin": "1",
+     "X-Octo-Admin": "1",
      "Content-Type": "application/json"
     },
     "body": "{\"tag\": \"2099.01.01.1\"}"

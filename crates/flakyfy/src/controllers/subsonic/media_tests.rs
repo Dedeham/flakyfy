@@ -608,12 +608,12 @@ fn parameters(pairs: &[(&str, &str)]) -> flakyfy_subsonic::Parameters {
 #[test]
 fn only_the_flakyfy_app_gets_plain_covers() {
     for (client, plain) in [
-        ("Flakyfy", true),
-        ("flakyfy", true),
+        ("Octo", true),
+        ("octo", true),
         (" Flakyfy ", true),
         ("Symfonium", false),
         ("Feishin", false),
-        ("FlakyfyPlayer", false),
+        ("OctoPlayer", false),
         ("", false),
     ] {
         assert_eq!(
@@ -752,14 +752,14 @@ async fn get_cover_art_answers_each_kind_of_id() {
         Some("application/problem+json; charset=utf-8")
     );
 
-    for id in ["flakyfy-radio", "ext-album-unknown"] {
+    for id in ["octo-radio", "ext-album-unknown"] {
         let placeholder = get(&app, &format!("/rest/getCoverArt?id={id}")).await;
         assert_eq!(placeholder.status, StatusCode::OK, "{id}");
         assert_eq!(placeholder.header("content-type"), Some("image/jpeg"), "{id}");
         assert!(image::load_from_memory(&placeholder.body).is_ok(), "{id}");
     }
     // The Flakyfy app draws its own tile for a cover Flakyfy cannot find.
-    let plain = get(&app, "/rest/getCoverArt?id=ext-album-unknown&c=Flakyfy").await;
+    let plain = get(&app, "/rest/getCoverArt?id=ext-album-unknown&c=Octo").await;
     assert_eq!(plain.status, StatusCode::NOT_FOUND);
 
     // A relay failure is the unbranded placeholder, still a 200.
@@ -876,7 +876,7 @@ async fn a_badged_outside_cover_is_kept_and_served_again_from_memory() {
     let other = get(&app, &format!("/rest/getCoverArt?id={id}&size=600")).await;
     assert_eq!(other.body.as_ref(), b"kept");
     // The Flakyfy app gets the plain picture, never the badged one.
-    let plain = get(&app, &format!("/rest/getCoverArt?id={id}&size=300&c=Flakyfy")).await;
+    let plain = get(&app, &format!("/rest/getCoverArt?id={id}&size=300&c=Octo")).await;
     assert_ne!(plain.body.as_ref(), b"kept");
 }
 
@@ -1216,7 +1216,7 @@ async fn an_flakyfy_app_plays_a_kept_songs_file_with_getting_songs_ahead_off() {
 
     let reply = get(
         &app,
-        "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Flakyfy",
+        "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Octo",
     )
     .await;
 
@@ -1251,7 +1251,7 @@ async fn an_flakyfy_app_play_that_started_on_the_preview_keeps_it_once_the_file_
     let navidrome = ping_ok().await;
     let (state, downloads, library) = kept_song_state(&navidrome, false);
     let app = app(&state);
-    let url = "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Flakyfy";
+    let url = "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Octo";
 
     let first = send(&app, Method::GET, url, &[("Range", "bytes=0-")], Body::empty()).await;
     assert_eq!(first.body.as_ref(), [1, 2, 3]);
@@ -1273,7 +1273,7 @@ async fn an_flakyfy_app_still_waits_for_lossless_on_a_song_not_kept_yet() {
     let response = tokio::spawn(async move {
         get(
             &app,
-            "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Flakyfy",
+            "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Octo",
         )
         .await
     });
@@ -1305,7 +1305,7 @@ async fn an_flakyfy_app_play_served_its_lossless_copy_keeps_it_on_the_next_range
     let navidrome = ping_ok().await;
     let (state, downloads, library) = kept_song_state(&navidrome, true);
     let app = app(&state);
-    let url = "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Flakyfy";
+    let url = "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=Octo";
     let first = {
         let app = app.clone();
         tokio::spawn(async move { get(&app, url).await })

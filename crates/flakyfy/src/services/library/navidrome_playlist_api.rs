@@ -217,7 +217,7 @@ impl NavidromePlaylistApi {
         };
         let mut query: Vec<(&str, &str)> = vec![
             ("f", "json"),
-            ("c", "flakyfy"),
+            ("c", "octo"),
             ("v", "1.16.1"),
             ("u", &user),
             ("t", &token),

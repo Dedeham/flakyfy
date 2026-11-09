@@ -990,7 +990,7 @@ impl TidyWorker {
         }
         let owned: Option<HashSet<String>> = match scope {
             TidyScope::WholeLibrary => None,
-            TidyScope::FlakyfyDownloads => {
+            TidyScope::OctoDownloads => {
                 let Some(library) = &self.services.library else {
                     self.finish_with(
                         TidyStatus::Failed,

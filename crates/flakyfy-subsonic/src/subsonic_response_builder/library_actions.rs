@@ -7,7 +7,7 @@ use serde_json::json;
 use super::{SUBSONIC_VERSION, SubsonicReply, SubsonicResponseBuilder};
 
 /// The OpenSubsonic extension a client checks for before it offers a library action.
-pub const LIBRARY_ACTIONS_EXTENSION: &str = "flakyfyLibraryActions";
+pub const LIBRARY_ACTIONS_EXTENSION: &str = "octoLibraryActions";
 
 /// Version 2 adds the upgrade action and getUpgrades; version 3 the edits below,
 /// getLibraryTrash and the admin flag. Every older version is still listed.
@@ -76,7 +76,7 @@ impl SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "libraryActions": {
                 "enabled": settings.enabled,
@@ -107,7 +107,7 @@ impl SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "libraryAction": {
                 "id": song_id,

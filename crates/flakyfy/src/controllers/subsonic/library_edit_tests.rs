@@ -1,4 +1,4 @@
-//! flakyfyLibraryActions version 3, as the apps' Library health uses it. Removing needs an admin and
+//! octoLibraryActions version 3, as the apps' Library health uses it. Removing needs an admin and
 //! can be put back from the trash, tags are written in place and can be undone, a split album is
 //! joined by copying the album's own tags, and a cover goes only into a file that has none. Real
 //! files in a temporary music folder, a real resolver and quarantine, Navidrome faked.
@@ -194,7 +194,7 @@ impl Factory {
     }
 
     fn trash(&self) -> PathBuf {
-        self.root.join(".flakyfy-trash")
+        self.root.join(".octo-trash")
     }
 
     /// A FLAC in the music folder with these tags, known to Navidrome by id.
@@ -271,7 +271,7 @@ impl Factory {
     }
 }
 
-const AUTH: &str = "u=alice&t=good&s=salt&v=1.16.1&c=flakyfy";
+const AUTH: &str = "u=alice&t=good&s=salt&v=1.16.1&c=octo";
 
 fn state(action: &Value) -> &str {
     action["state"].as_str().expect("a state")
@@ -399,7 +399,7 @@ async fn remove_takes_the_songs_lyrics_with_it_and_put_back_returns_them_leaving
     let trashed = f.removals()[0].quarantine_path.clone().expect("in the trash");
     assert!(Path::new(&trashed).with_extension("lrc").exists());
     assert!(
-        std::fs::read_to_string(format!("{trashed}.flakyfy-action.json"))
+        std::fs::read_to_string(format!("{trashed}.octo-action.json"))
             .expect("the note")
             .contains("03 - Digital Love.lrc")
     );
@@ -455,7 +455,7 @@ async fn put_back_links_the_outside_song_to_the_file_again() {
     // The link waits in the trash note beside the file, which is all Put back reads.
     let trashed = f.removals()[0].quarantine_path.clone().expect("in the trash");
     let note: QuarantineManifest = serde_json::from_str(
-        &std::fs::read_to_string(format!("{trashed}.flakyfy-action.json")).expect("the note"),
+        &std::fs::read_to_string(format!("{trashed}.octo-action.json")).expect("the note"),
     )
     .expect("reads");
     let mappings = note.mappings.expect("the links");
@@ -558,7 +558,7 @@ async fn restore_never_puts_a_file_outside_the_music_folder_whatever_its_manifes
         mappings: None,
     };
     std::fs::write(
-        format!("{trashed}.flakyfy-action.json"),
+        format!("{trashed}.octo-action.json"),
         flakyfy_core::json::to_string(&note),
     )
     .expect("written");
@@ -724,7 +724,7 @@ async fn retag_someone_not_on_the_allowed_list_is_turned_away() {
 
     let body = get(
         &f.app,
-        "/rest/libraryAction.view?u=bob&t=good&s=salt&v=1.16.1&c=flakyfy&id=s1&action=retag&year=2001",
+        "/rest/libraryAction.view?u=bob&t=good&s=salt&v=1.16.1&c=octo&id=s1&action=retag&year=2001",
     )
     .await
     .text();
@@ -959,10 +959,7 @@ async fn the_dashboard_lists_the_trash_and_puts_a_song_back() {
     assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
 
     let token = f.state.browse_sessions.create("alice");
-    let signed = [
-        ("X-Flakyfy-Admin", "1"),
-        ("X-Flakyfy-Browse-Token", token.as_str()),
-    ];
+    let signed = [("X-Octo-Admin", "1"), ("X-Octo-Browse-Token", token.as_str())];
     let listed = send(&app, Method::GET, "/api/admin/trash", &signed, None).await;
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.text());
     let doc = listed.json();
@@ -1006,7 +1003,7 @@ async fn the_dashboard_lists_the_trash_and_puts_a_song_back() {
         &app,
         Method::GET,
         "/api/admin/trash",
-        &[("X-Flakyfy-Browse-Token", bob.as_str())],
+        &[("X-Octo-Browse-Token", bob.as_str())],
         None,
     )
     .await;

@@ -39,7 +39,7 @@ use crate::services::subsonic::NavidromeIdentityService;
 pub enum CoverUpgradeScope {
     /// Only the files Flakyfy downloaded.
     #[default]
-    FlakyfyDownloads = 0,
+    OctoDownloads = 0,
     /// Every song under the music folder.
     WholeLibrary = 1,
 }
@@ -242,7 +242,7 @@ impl Default for CoverUpgradeRun {
         Self {
             run_id: String::new(),
             status: CoverUpgradeStatus::Idle,
-            scope: CoverUpgradeScope::FlakyfyDownloads,
+            scope: CoverUpgradeScope::OctoDownloads,
             mode: CoverUpgradeMode::Scan,
             folder_covers: true,
             smaller_than: CoverUpgradeWorker::DEFAULT_SMALLER_THAN,
@@ -1852,7 +1852,7 @@ impl CoverUpgradeWorker {
             .filter(|url| !is_blank(url))?;
         let http = self.services.http.as_ref()?;
         let url = format!(
-            "{}/rest/getCoverArt?c=flakyfy&v=1.16.1&size=300&id={}&u={}&t={token}&s={salt}",
+            "{}/rest/getCoverArt?c=octo&v=1.16.1&size=300&id={}&u={}&t={token}&s={salt}",
             base_url.trim_end_matches('/'),
             escape_data_string(&format!("al-{album}")),
             escape_data_string(&user)
@@ -2028,7 +2028,7 @@ impl CoverUpgradeWorker {
             Some(identity) => identity.effective_download_path(&fallback),
             None => fallback,
         };
-        let files: Vec<String> = if scope == CoverUpgradeScope::FlakyfyDownloads {
+        let files: Vec<String> = if scope == CoverUpgradeScope::OctoDownloads {
             let library = self
                 .services
                 .library
@@ -2116,9 +2116,9 @@ fn restore(journal: &CoverUpgradeJournal, entry: &CoverUpgradeJournalEntry) -> R
     file.save().map_err(|failure| failure.to_string())
 }
 
-/// `<path>.flakyfy-tmp` written and moved over the file.
+/// `<path>.octo-tmp` written and moved over the file.
 fn write_beside(path: &str, bytes: &[u8]) -> io::Result<()> {
-    let temp = format!("{path}.flakyfy-tmp");
+    let temp = format!("{path}.octo-tmp");
     std::fs::write(&temp, bytes)?;
     std::fs::rename(&temp, path)
 }

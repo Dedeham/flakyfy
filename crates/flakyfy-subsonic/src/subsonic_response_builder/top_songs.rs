@@ -113,7 +113,7 @@ impl SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "topSongs": Value::Object(top),
         }))
@@ -146,7 +146,7 @@ impl SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "charts": {
                 "country": header.country,

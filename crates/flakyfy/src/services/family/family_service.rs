@@ -1,6 +1,6 @@
 //! What the Family page and the apps ask of Flakyfy Family, in one place: members' lifecycle
 //! (add, adopt, edit, suspend, remove, invite, repair), devices (add, pair, sign out),
-//! turning Family on, and the answers the page and the `flakyfyFamily` calls share.
+//! turning Family on, and the answers the page and the `octoFamily` calls share.
 //!
 //! Work that belongs to other parts of Flakyfy is reached through small traits gathered in
 //! [`FamilyHooks`]: the members' folders and files, requests, storage use, the personal library,
@@ -550,7 +550,7 @@ pub fn copy_mode_message(members_path: &str) -> String {
     super::members_place::link_hint(members_path).message
 }
 
-/// The service behind the Family page and the `flakyfyFamily` calls.
+/// The service behind the Family page and the `octoFamily` calls.
 pub struct FamilyService {
     hooks: RwLock<Option<FamilyHooks>>,
     /// Wrong sign-ins on the Family page, per address.

@@ -597,7 +597,7 @@ async fn the_listener_hears_each_poll_and_a_caller_can_give_up() {
 
 // ---- Parallel downloads (slskd's batch API, through the gate) ------------------------------
 
-const JOB: &str = ".flakyfy-incoming/slskd/job";
+const JOB: &str = ".octo-incoming/slskd/job";
 const ACCEPTED: &str = r#"{"batch":{"transfers":[{"id":"t-1","filename":"f.flac"}]},"failures":[]}"#;
 
 #[derive(Default)]

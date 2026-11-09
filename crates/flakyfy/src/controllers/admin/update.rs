@@ -1,7 +1,7 @@
 //! The dashboard's update card. Whether a newer release is out, and Update now, which hands the
 //! update to the host helper (scripts/updater). Without the helper the card shows the command.
 //!
-//! Behind the same guard as the rest of /api/admin: writes need X-Flakyfy-Admin. Anyone who can use
+//! Behind the same guard as the rest of /api/admin: writes need X-Octo-Admin. Anyone who can use
 //! the dashboard can already restart Flakyfy; this only adds moving it to the newest published
 //! release of the configured repo, which the helper checks again on its side.
 

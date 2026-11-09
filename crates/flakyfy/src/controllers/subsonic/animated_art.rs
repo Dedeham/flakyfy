@@ -1,4 +1,4 @@
-//! `flakyfyAnimatedArt` version 1: Apple Music's animated album art for the Flakyfy apps (see
+//! `octoAnimatedArt` version 1: Apple Music's animated album art for the Flakyfy apps (see
 //! [`crate::services::cover_art::animated_art`]).
 //!
 //! - `getAnimatedArt?id=<album id>` (a library album or an outside one), or `?artist=&album=`:

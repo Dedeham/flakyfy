@@ -1,4 +1,4 @@
-//! getTransitionProfile (flakyfyTransitions): a song's transition profile, which the Flakyfy apps
+//! getTransitionProfile (octoTransitions): a song's transition profile, which the Flakyfy apps
 //! use to plan the blend into and out of it without reading the song themselves. Flakyfy only
 //! hands out what flakyfy-sonic made beforehand; asking never starts any work.
 

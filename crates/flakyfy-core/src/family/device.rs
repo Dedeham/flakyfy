@@ -65,26 +65,26 @@ const KNOWN_CLIENTS: [(&str, &str); 11] = [
 ];
 
 /// The app name the Family page shows for a device, from the Subsonic `c` parameter and the
-/// User-Agent. `Flakyfy` with `Flakyfy/1.6 (Android)` is `Flakyfy 1.6 (Android)`; a known client is
+/// User-Agent. `Octo` with `Octo/1.6 (Android)` is `Octo 1.6 (Android)`; a known client is
 /// its name plus its version from the User-Agent when there is one; anything else is `c` as
 /// given.
 pub fn app_label(client: &str, user_agent: &str) -> String {
     let client = client.trim();
     let user_agent = user_agent.trim();
-    if client.eq_ignore_ascii_case("flakyfy") {
-        if let Some(rest) = strip_prefix_ignore_case(user_agent, "flakyfy/") {
+    if client.eq_ignore_ascii_case("octo") {
+        if let Some(rest) = strip_prefix_ignore_case(user_agent, "octo/") {
             let (version, platform) = match rest.split_once(' ') {
                 Some((version, tail)) => (version, tail.trim()),
                 None => (rest, ""),
             };
             let platform = platform.trim_start_matches('(').trim_end_matches(')').trim();
             return if platform.is_empty() {
-                format!("Flakyfy {version}")
+                format!("Octo {version}")
             } else {
-                format!("Flakyfy {version} ({platform})")
+                format!("Octo {version} ({platform})")
             };
         }
-        return "Flakyfy".to_string();
+        return "Octo".to_string();
     }
     let lower = client.to_ascii_lowercase();
     if let Some((key, name)) = KNOWN_CLIENTS.iter().find(|(key, _)| lower.starts_with(key)) {
@@ -164,7 +164,7 @@ pub fn place_of(ip: IpAddr, home: &[IpNet]) -> NetworkPlace {
 /// The most characters a device name keeps.
 pub const DEVICE_NAME_LIMIT: usize = 64;
 
-/// A device name as the `X-Flakyfy-Device-Name` header carries it (UTF-8, percent-encoded),
+/// A device name as the `X-Octo-Device-Name` header carries it (UTF-8, percent-encoded),
 /// decoded: escapes that are not UTF-8 become the replacement character, control characters
 /// are dropped, runs of spaces are one space, and anything past [`DEVICE_NAME_LIMIT`]
 /// characters is cut. Never fails: a name that cannot be read is simply shorter.
@@ -317,15 +317,9 @@ mod tests {
 
     #[test]
     fn flakyfy_android_label() {
-        assert_eq!(
-            app_label("Flakyfy", "Flakyfy/1.6 (Android)"),
-            "Flakyfy 1.6 (Android)"
-        );
-        assert_eq!(
-            app_label("Flakyfy", "Flakyfy/1.6.2 (Windows)"),
-            "Flakyfy 1.6.2 (Windows)"
-        );
-        assert_eq!(app_label("Flakyfy", "okhttp/4.12.0"), "Flakyfy");
+        assert_eq!(app_label("Octo", "Octo/1.6 (Android)"), "Octo 1.6 (Android)");
+        assert_eq!(app_label("Octo", "Octo/1.6.2 (Windows)"), "Octo 1.6.2 (Windows)");
+        assert_eq!(app_label("Octo", "okhttp/4.12.0"), "Octo");
     }
 
     #[test]
@@ -514,9 +508,9 @@ mod tests {
             name: "Pixel 9".into(),
             created: datetime::parse_utc("2026-10-20T18:00:00Z").expect("a date"),
             last_seen: None,
-            app: "Flakyfy 1.6 (Android)".into(),
+            app: "Octo 1.6 (Android)".into(),
             place: NetworkPlace::Away,
-            seen_apps: vec!["Flakyfy 1.6 (Android)".into()],
+            seen_apps: vec!["Octo 1.6 (Android)".into()],
             navidrome_jwt: None,
             quality: DeviceQualityMode::Account,
         };
@@ -530,8 +524,8 @@ mod tests {
 
     #[test]
     fn a_device_from_before_one_login_loads_without_its_kind_and_secret() {
-        let old = r#"{"Id":"d_1","Username":"alex","Name":"Pixel 9","Kind":"FlakyfyApp",
-            "Secret":"sealed:abc","Created":"2026-10-20T18:00:00Z","App":"Flakyfy"}"#;
+        let old = r#"{"Id":"d_1","Username":"alex","Name":"Pixel 9","Kind":"OctoApp",
+            "Secret":"sealed:abc","Created":"2026-10-20T18:00:00Z","App":"Octo"}"#;
         let device: Device = serde_json::from_str(old).expect("loads");
         assert_eq!(device.id, "d_1");
         let text = serde_json::to_string(&device).expect("serializes");

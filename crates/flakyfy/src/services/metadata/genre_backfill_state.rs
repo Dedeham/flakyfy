@@ -22,7 +22,7 @@ pub enum GenreBackfillScope {
     /// Only files Flakyfy downloaded, from .mappings.json. Rewriting these is rewriting
     /// Flakyfy's own output.
     #[default]
-    FlakyfyDownloads = 0,
+    OctoDownloads = 0,
 
     /// Every audio file under the music root, including rips and purchases Flakyfy never
     /// touched. Gated harder for that reason.
@@ -123,7 +123,7 @@ impl Default for GenreBackfillRun {
         Self {
             run_id: String::new(),
             status: GenreBackfillStatus::Idle,
-            scope: GenreBackfillScope::FlakyfyDownloads,
+            scope: GenreBackfillScope::OctoDownloads,
             dry_run: true,
             started_utc: None,
             finished_utc: None,

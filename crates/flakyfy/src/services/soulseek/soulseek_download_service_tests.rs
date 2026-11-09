@@ -243,11 +243,11 @@ fn a_peers_own_folder_called_incomplete_is_still_found() {
 #[test]
 fn excluded_names() {
     let cases: [(Option<&str>, &[&str]); 3] = [
-        (None, &["incomplete", ".flakyfy-incoming"]),
-        (Some("/app/incomplete"), &["incomplete", ".flakyfy-incoming"]),
+        (None, &["incomplete", ".octo-incoming"]),
+        (Some("/app/incomplete"), &["incomplete", ".octo-incoming"]),
         (
             Some(r"D:\slskd\Partial\"),
-            &["incomplete", "Partial", ".flakyfy-incoming"],
+            &["incomplete", "Partial", ".octo-incoming"],
         ),
     ];
     for (configured, expected) in cases {
@@ -264,7 +264,7 @@ fn a_file_in_another_downloads_job_folder_is_never_found_by_name() {
     let root = Root::new("flakyfy-incomplete-");
     // Another download's job folder holds a file with the very same name and size.
     root.write(
-        &format!(".flakyfy-incoming/slskd/0123456789abcdef/{INCOMPLETE_LEAF}"),
+        &format!(".octo-incoming/slskd/0123456789abcdef/{INCOMPLETE_LEAF}"),
         INCOMPLETE_SIZE,
     );
     assert_eq!(
@@ -342,7 +342,7 @@ fn a_name_that_only_looks_renamed_is_not() {
 // finding it there and nowhere else.
 
 const JOB_REMOTE: &str = r"Music\Artist\Album\03 - Song.flac";
-const JOB: &str = ".flakyfy-incoming/slskd/aaaa";
+const JOB: &str = ".octo-incoming/slskd/aaaa";
 
 #[test]
 fn the_file_in_its_own_job_folder_is_found() {
@@ -377,7 +377,7 @@ fn a_cleaned_up_name_is_found_by_its_exact_size() {
 #[test]
 fn the_same_file_in_another_job_or_the_music_root_is_never_taken() {
     let root = Root::new("flakyfy-parallel-");
-    root.write(".flakyfy-incoming/slskd/bbbb/03 - Song.flac", 1000);
+    root.write(".octo-incoming/slskd/bbbb/03 - Song.flac", 1000);
     root.write("Music/Artist/Album/03 - Song.flac", 1000);
     root.write("03 - Song.flac", 1000);
     assert_eq!(resolve_in_job(&[root.path()], JOB, JOB_REMOTE, 1000, false), None);
@@ -395,7 +395,7 @@ fn an_interrupted_transfer_needs_the_exact_size() {
 fn job_folders_are_dot_folders_and_unique() {
     let a = new_job_dir();
     let b = new_job_dir();
-    assert!(a.starts_with(".flakyfy-incoming/slskd/"), "{a}");
+    assert!(a.starts_with(".octo-incoming/slskd/"), "{a}");
     assert_ne!(a, b);
     assert!(!a.contains(".."), "{a}");
 }
@@ -1059,7 +1059,7 @@ fn placed_flacs(root: &Root) -> usize {
     files_under(&root.path())
         .expect("the root lists")
         .iter()
-        .filter(|f| f.ends_with(".flac") && !f.contains(".flakyfy-incoming"))
+        .filter(|f| f.ends_with(".flac") && !f.contains(".octo-incoming"))
         .count()
 }
 
@@ -1110,10 +1110,7 @@ async fn a_whole_folder_is_one_search_and_one_batch_and_every_song_lands() {
     let (user, files, destination) = &batches[0];
     assert_eq!(user, "albumpeer");
     assert_eq!(files.len(), 4);
-    assert!(
-        destination.starts_with(".flakyfy-incoming/slskd/"),
-        "{destination}"
-    );
+    assert!(destination.starts_with(".octo-incoming/slskd/"), "{destination}");
     assert_eq!(placed_flacs(&root), 4);
 }
 

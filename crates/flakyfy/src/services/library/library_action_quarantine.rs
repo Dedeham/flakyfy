@@ -1,4 +1,4 @@
-//! The library action trash, and the `<file>.flakyfy-action.json` manifest beside each quarantined
+//! The library action trash, and the `<file>.octo-action.json` manifest beside each quarantined
 //! file.
 
 use std::io;
@@ -110,7 +110,7 @@ pub struct LibraryActionQuarantine {
 }
 
 impl LibraryActionQuarantine {
-    pub const MANIFEST_SUFFIX: &'static str = ".flakyfy-action.json";
+    pub const MANIFEST_SUFFIX: &'static str = ".octo-action.json";
 
     pub fn new(settings: Arc<SettingsStore>) -> Self {
         LibraryActionQuarantine { settings }

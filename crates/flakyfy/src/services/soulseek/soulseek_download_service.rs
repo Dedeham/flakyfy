@@ -80,7 +80,7 @@ use flakyfy_core::lidarr::lidarr_track_fetcher::LidarrStep;
 /// Where the shim writes a download before Flakyfy has decided its name. A dot folder, which
 /// Navidrome's scanner skips (Scanner.IgnoreDotFolders, on by default), the same way it skips the
 /// library-action quarantine.
-pub const INCOMING_FOLDER_NAME: &str = ".flakyfy-incoming";
+pub const INCOMING_FOLDER_NAME: &str = ".octo-incoming";
 
 /// slskd's default name for the folder a transfer is written into before it is moved.
 pub const DEFAULT_INCOMPLETE_FOLDER_NAME: &str = "incomplete";

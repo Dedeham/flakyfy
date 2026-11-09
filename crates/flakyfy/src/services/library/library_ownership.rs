@@ -453,7 +453,7 @@ impl LibraryOwnership {
             return Ok(None);
         };
         let url = format!(
-            "{}/rest/search3?f=json&c=flakyfy&v=1.16.1&query={}&songCount=20&albumCount=0&artistCount=0&u={}&t={token}&s={salt}",
+            "{}/rest/search3?f=json&c=octo&v=1.16.1&query={}&songCount=20&albumCount=0&artistCount=0&u={}&t={token}&s={salt}",
             base_url.trim_end_matches('/'),
             escape_data_string(query),
             escape_data_string(&user),

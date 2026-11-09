@@ -575,7 +575,7 @@ impl GenreBackfillWorker {
 
     /// The files a run walks, in ordinal order.
     async fn enumerate(&self, scope: GenreBackfillScope) -> anyhow::Result<Vec<String>> {
-        if scope == GenreBackfillScope::FlakyfyDownloads {
+        if scope == GenreBackfillScope::OctoDownloads {
             let library = self
                 .library
                 .as_ref()

@@ -53,7 +53,7 @@ pub enum StreamPurpose {
     Play,
     /// A radio stream.
     Radio,
-    /// An offline copy the Flakyfy app keeps (`X-Flakyfy-Purpose: offline`).
+    /// An offline copy the Flakyfy app keeps (`X-Octo-Purpose: offline`).
     Offline,
     /// A file download.
     Download,

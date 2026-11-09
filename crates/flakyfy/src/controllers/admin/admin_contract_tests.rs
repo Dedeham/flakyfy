@@ -362,7 +362,7 @@ async fn admin_preflight_is_not_approved() {
         &[
             ("Origin", "http://evil.example"),
             ("Access-Control-Request-Method", "POST"),
-            ("Access-Control-Request-Headers", "X-Flakyfy-Admin"),
+            ("Access-Control-Request-Headers", "X-Octo-Admin"),
         ],
         None,
     )
@@ -401,7 +401,7 @@ async fn tag_preview_path_outside_the_music_folder_is_refused() {
             &app,
             Method::POST,
             "/api/admin/tags/preview",
-            &[("X-Flakyfy-Admin", "1"), ("X-Flakyfy-Browse-Token", &token)],
+            &[("X-Octo-Admin", "1"), ("X-Octo-Browse-Token", &token)],
             Some(&body),
         )
         .await;
@@ -418,7 +418,7 @@ async fn tag_preview_neither_a_path_nor_a_name_is_refused() {
         &app,
         Method::POST,
         "/api/admin/tags/preview",
-        &[("X-Flakyfy-Admin", "1"), ("X-Flakyfy-Browse-Token", &token)],
+        &[("X-Octo-Admin", "1"), ("X-Octo-Browse-Token", &token)],
         Some(r#"{"artist":"Only an artist"}"#),
     )
     .await;
@@ -462,7 +462,7 @@ async fn tag_preview_without_a_session_is_401_and_an_empty_body_is_a_validation_
         &app,
         Method::POST,
         "/api/admin/lastfm/radio/refresh",
-        &[("X-Flakyfy-Admin", "1")],
+        &[("X-Octo-Admin", "1")],
         None,
     )
     .await;
@@ -502,7 +502,7 @@ fn cookie_of(reply: &Reply) -> String {
     set_cookie
         .split(';')
         .next()
-        .and_then(|pair| pair.strip_prefix("flakyfy_browse="))
+        .and_then(|pair| pair.strip_prefix("octo_browse="))
         .expect("the browse cookie")
         .to_string()
 }
@@ -548,13 +548,13 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
     assert_eq!(
         reply.header("set-cookie"),
         Some(
-            format!("flakyfy_browse={token}; max-age=7776000; path=/api/admin; samesite=strict; httponly")
+            format!("octo_browse={token}; max-age=7776000; path=/api/admin; samesite=strict; httponly")
                 .as_str()
         )
     );
 
     // The cookie signs browse/session in and is renewed; the header alone does not.
-    let cookie = format!("flakyfy_browse={token}");
+    let cookie = format!("octo_browse={token}");
     let reply = send(
         &app,
         Method::GET,
@@ -572,7 +572,7 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         &app,
         Method::GET,
         "/api/admin/browse/session",
-        &[("X-Flakyfy-Browse-Token", &token)],
+        &[("X-Octo-Browse-Token", &token)],
         None,
     )
     .await;
@@ -587,10 +587,7 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         &app,
         Method::GET,
         "/api/admin/browse?path=/",
-        &[
-            ("Cookie", "flakyfy_browse=stale"),
-            ("X-Flakyfy-Browse-Token", &token),
-        ],
+        &[("Cookie", "octo_browse=stale"), ("X-Octo-Browse-Token", &token)],
         None,
     )
     .await;
@@ -600,7 +597,7 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         &app,
         Method::GET,
         "/api/admin/browse?path=/",
-        &[("X-Flakyfy-Browse-Token", &token)],
+        &[("X-Octo-Browse-Token", &token)],
         None,
     )
     .await;
@@ -615,14 +612,14 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         &app,
         Method::POST,
         "/api/admin/browse/signout",
-        &[("X-Flakyfy-Admin", "1"), ("Cookie", &cookie)],
+        &[("X-Octo-Admin", "1"), ("Cookie", &cookie)],
         None,
     )
     .await;
     assert_eq!(reply.text(), r#"{"ok":true,"ended":0}"#);
     assert_eq!(
         reply.header("set-cookie"),
-        Some("flakyfy_browse=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/api/admin")
+        Some("octo_browse=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/api/admin")
     );
     let reply = send(
         &app,
@@ -1066,7 +1063,7 @@ async fn status_reports_each_service() {
     let (_, app) = factory_at(&format!("http://{address}"));
     let body = get(&app, "/api/admin/status").await.json();
     assert_eq!(
-        body["flakyfy"],
+        body["octo"],
         serde_json::json!({"ok":true,"detail":"Flakyfy is responding","warning":false,"configured":true})
     );
     assert_eq!(body["services"]["navidrome"]["ok"], false);

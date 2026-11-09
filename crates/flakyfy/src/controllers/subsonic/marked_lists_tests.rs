@@ -1,5 +1,5 @@
 //! The lists Flakyfy marks for what they are, as clients see them: the listener's Review and
-//! Duplicates playlists carry the notice's painted cover and `flakyfyNotice`.
+//! Duplicates playlists carry the notice's painted cover and `octoNotice`.
 
 use std::sync::Arc;
 
@@ -164,14 +164,14 @@ async fn the_listeners_notice_playlists_carry_the_notice_cover_in_json() {
     let rows = rows(&get(&h.app, &format!("/rest/getPlaylists.view?{ALICE}&f=json")).await);
 
     assert_eq!(row(&rows, "p1")["coverArt"], "oc-notice-review");
-    assert_eq!(row(&rows, "p1")["flakyfyNotice"], "review");
+    assert_eq!(row(&rows, "p1")["octoNotice"], "review");
     assert_eq!(row(&rows, "p2")["coverArt"], "oc-notice-duplicates");
-    assert_eq!(row(&rows, "p2")["flakyfyNotice"], "duplicates");
+    assert_eq!(row(&rows, "p2")["octoNotice"], "duplicates");
     // Someone else's playlist of the same name, and the listener's other playlists, are theirs.
     assert_eq!(row(&rows, "p3")["coverArt"], "pl-p3");
-    assert!(row(&rows, "p3").get("flakyfyNotice").is_none());
+    assert!(row(&rows, "p3").get("octoNotice").is_none());
     assert_eq!(row(&rows, "p4")["coverArt"], "pl-p4");
-    assert!(row(&rows, "p4").get("flakyfyNotice").is_none());
+    assert!(row(&rows, "p4").get("octoNotice").is_none());
 }
 
 #[tokio::test]
@@ -183,10 +183,10 @@ async fn the_listeners_notice_playlists_carry_the_notice_cover_in_xml() {
         .text();
 
     assert!(xml.contains(r#"coverArt="oc-notice-review""#), "{xml}");
-    assert!(xml.contains(r#"flakyfyNotice="review""#), "{xml}");
-    assert!(xml.contains(r#"flakyfyNotice="duplicates""#), "{xml}");
+    assert!(xml.contains(r#"octoNotice="review""#), "{xml}");
+    assert!(xml.contains(r#"octoNotice="duplicates""#), "{xml}");
     assert!(xml.contains(r#"coverArt="pl-p3""#), "{xml}");
-    assert_eq!(xml.matches("flakyfyNotice=").count(), 2, "{xml}");
+    assert_eq!(xml.matches("octoNotice=").count(), 2, "{xml}");
 }
 
 #[tokio::test]
@@ -207,8 +207,8 @@ async fn one_notice_playlist_carries_it_too() {
         json["subsonic-response"]["playlist"]["coverArt"],
         "oc-notice-review"
     );
-    assert_eq!(json["subsonic-response"]["playlist"]["flakyfyNotice"], "review");
-    assert!(xml.contains(r#"flakyfyNotice="review""#), "{xml}");
+    assert_eq!(json["subsonic-response"]["playlist"]["octoNotice"], "review");
+    assert!(xml.contains(r#"octoNotice="review""#), "{xml}");
     assert_eq!(other["subsonic-response"]["playlist"]["coverArt"], "pl-p3");
 }
 
@@ -218,9 +218,9 @@ async fn a_notice_that_is_off_leaves_its_playlist_alone() {
 
     let rows = rows(&get(&h.app, &format!("/rest/getPlaylists.view?{ALICE}&f=json")).await);
 
-    assert_eq!(row(&rows, "p1")["flakyfyNotice"], "review");
+    assert_eq!(row(&rows, "p1")["octoNotice"], "review");
     assert_eq!(row(&rows, "p2")["coverArt"], "pl-p2");
-    assert!(row(&rows, "p2").get("flakyfyNotice").is_none());
+    assert!(row(&rows, "p2").get("octoNotice").is_none());
 }
 
 #[tokio::test]

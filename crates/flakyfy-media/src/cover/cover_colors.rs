@@ -1,5 +1,5 @@
 //! The color rules of the cover design, the same maths as the Flakyfy apps' covers
-//! (app.winters.flakyfy.covers) so a list looks the same wherever it is drawn. Colors
+//! (app.winters.octo.covers) so a list looks the same wherever it is drawn. Colors
 //! are 0xAARRGGBB ints; rounding is half up, as the apps round.
 
 use std::collections::HashMap;

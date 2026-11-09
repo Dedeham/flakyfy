@@ -74,8 +74,8 @@ fn assert_golden(reply: SubsonicReply, file: &str, name: &str) {
 }
 
 /// A recorded extensions list with the extensions added since the 2026.10.03.2 recording:
-/// flakyfyImports (versions 1 and 2) and flakyfyLists (versions 1 and 2) after the extensions it
-/// lists, and flakyfyAcquisitions at versions 1, 2 and 3.
+/// octoImports (versions 1 and 2) and octoLists (versions 1 and 2) after the extensions it
+/// lists, and octoAcquisitions at versions 1, 2 and 3.
 /// These golden tests keep the older recording and add those entries to it.
 fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
     let mut want = recorded(file, name);
@@ -83,11 +83,11 @@ fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
         let at = want.body.rfind("]}}").expect("the end of the list");
         want.body.insert_str(
             at,
-            r#",{"name":"flakyfyImports","versions":[1,2]},{"name":"flakyfyLists","versions":[1,2]}"#,
+            r#",{"name":"octoImports","versions":[1,2]},{"name":"octoLists","versions":[1,2]}"#,
         );
         (
-            r#"{"name":"flakyfyAcquisitions","versions":[1]}"#,
-            r#"{"name":"flakyfyAcquisitions","versions":[1,2,3]}"#,
+            r#"{"name":"octoAcquisitions","versions":[1]}"#,
+            r#"{"name":"octoAcquisitions","versions":[1,2,3]}"#,
         )
     } else {
         let at = want
@@ -97,18 +97,18 @@ fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
         want.body.insert_str(
             at,
             concat!(
-                "  <openSubsonicExtensions name=\"flakyfyImports\">\n    <versions>1</versions>\n    <versions>2</versions>\n  </openSubsonicExtensions>\n",
-                "  <openSubsonicExtensions name=\"flakyfyLists\">\n    <versions>1</versions>\n    <versions>2</versions>\n  </openSubsonicExtensions>\n",
+                "  <openSubsonicExtensions name=\"octoImports\">\n    <versions>1</versions>\n    <versions>2</versions>\n  </openSubsonicExtensions>\n",
+                "  <openSubsonicExtensions name=\"octoLists\">\n    <versions>1</versions>\n    <versions>2</versions>\n  </openSubsonicExtensions>\n",
             ),
         );
         (
-            "<openSubsonicExtensions name=\"flakyfyAcquisitions\">\n    <versions>1</versions>\n",
-            "<openSubsonicExtensions name=\"flakyfyAcquisitions\">\n    <versions>1</versions>\n    <versions>2</versions>\n    <versions>3</versions>\n",
+            "<openSubsonicExtensions name=\"octoAcquisitions\">\n    <versions>1</versions>\n",
+            "<openSubsonicExtensions name=\"octoAcquisitions\">\n    <versions>1</versions>\n    <versions>2</versions>\n    <versions>3</versions>\n",
         )
     };
     assert!(
         want.body.contains(old),
-        "{file}/{name}: flakyfyAcquisitions at version 1"
+        "{file}/{name}: octoAcquisitions at version 1"
     );
     want.body = want.body.replace(old, new);
     want.content_length = None;

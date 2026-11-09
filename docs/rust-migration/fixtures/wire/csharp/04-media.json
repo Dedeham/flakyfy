@@ -1093,7 +1093,7 @@
    "name": "cover-external-song-flakyfy-client",
    "request": {
     "method": "GET",
-    "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=Flakyfy&id=CwoXcVhGn95tWIOvqaFKt6",
+    "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=Octo&id=CwoXcVhGn95tWIOvqaFKt6",
     "headers": {},
     "body": null
    },
@@ -1233,7 +1233,7 @@
    "name": "cover-legacy-ext-album-flakyfy-client",
    "request": {
     "method": "GET",
-    "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=Flakyfy&id=ext-album-unknown",
+    "target": "/rest/getCoverArt?u=admin&p=parity-admin&v=1.16.1&c=Octo&id=ext-album-unknown",
     "headers": {},
     "body": null
    },

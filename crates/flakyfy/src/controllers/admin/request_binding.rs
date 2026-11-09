@@ -37,7 +37,7 @@ pub fn error(code: StatusCode, message: impl Into<String>) -> Response {
     error_json(code, &message.into())
 }
 
-/// The `X-Flakyfy-Browse-Token` header.
+/// The `X-Octo-Browse-Token` header.
 fn header_token(parts: &Parts) -> Option<String> {
     header_value(&parts.headers, BROWSE_TOKEN_HEADER)
 }
@@ -171,14 +171,14 @@ mod tests {
 
     #[test]
     fn enum_try_parse_reads_names_numbers_and_combinations() {
-        let members = ["FlakyfyDownloads", "WholeLibrary"];
+        let members = ["OctoDownloads", "WholeLibrary"];
         let cases: [(Option<&str>, Option<usize>); 9] = [
             (None, None),
             (Some("wholelibrary"), Some(1)),
-            (Some(" FlakyfyDownloads "), Some(0)),
+            (Some(" OctoDownloads "), Some(0)),
             (Some("1"), Some(1)),
             (Some("5"), None),
-            (Some("FlakyfyDownloads, WholeLibrary"), Some(1)),
+            (Some("OctoDownloads, WholeLibrary"), Some(1)),
             (Some(""), None),
             (Some("nope"), None),
             (Some("-1"), None),

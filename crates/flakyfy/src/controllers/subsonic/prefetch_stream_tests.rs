@@ -107,7 +107,7 @@ fn is_preview(reply: &Reply) -> bool {
 async fn an_flakyfy_app_gets_the_flac_of_a_song_downloaded_ahead() {
     let w = world(|_| {}).await;
     w.land();
-    let reply = w.play("Flakyfy", None).await;
+    let reply = w.play("Octo", None).await;
     assert_eq!(reply.status, StatusCode::OK);
     assert!(is_flac(&reply), "{:?}", reply.body);
     assert_eq!(reply.body.as_ref(), FLAC);
@@ -134,17 +134,17 @@ async fn another_app_gets_the_preview_unless_wait_for_lossless_is_on() {
 async fn prefetch_off_leaves_an_flakyfy_app_on_the_preview() {
     let w = world(|s| s.prefetch.enabled = false).await;
     w.land();
-    let reply = w.play("Flakyfy", None).await;
+    let reply = w.play("Octo", None).await;
     assert!(is_preview(&reply), "{:?}", reply.body);
 }
 
 #[tokio::test]
 async fn a_seek_after_the_file_lands_stays_on_the_preview() {
     let w = world(|_| {}).await;
-    let started = w.play("Flakyfy", None).await;
+    let started = w.play("Octo", None).await;
     assert!(is_preview(&started));
     w.land();
-    let seek = w.play("Flakyfy", Some("bytes=2-")).await;
+    let seek = w.play("Octo", Some("bytes=2-")).await;
     assert!(is_preview(&seek), "{:?}", seek.body);
     assert_eq!(
         w.streams
@@ -160,7 +160,7 @@ async fn a_seek_after_the_file_lands_stays_on_the_preview() {
 async fn a_later_range_with_no_play_started_on_the_flac_gets_the_preview() {
     let w = world(|_| {}).await;
     w.land();
-    let reply = w.play("Flakyfy", Some("bytes=500000-")).await;
+    let reply = w.play("Octo", Some("bytes=500000-")).await;
     assert!(is_preview(&reply), "{:?}", reply.body);
 }
 
@@ -168,9 +168,9 @@ async fn a_later_range_with_no_play_started_on_the_flac_gets_the_preview() {
 async fn a_play_that_started_on_the_flac_keeps_it_for_its_later_ranges() {
     let w = world(|_| {}).await;
     w.land();
-    let first = w.play("Flakyfy", None).await;
+    let first = w.play("Octo", None).await;
     assert!(is_flac(&first));
-    let later = w.play("Flakyfy", Some("bytes=5-")).await;
+    let later = w.play("Octo", Some("bytes=5-")).await;
     assert_eq!(later.status, StatusCode::PARTIAL_CONTENT);
     assert_eq!(later.body.as_ref(), &FLAC[5..]);
     assert!(w.streams.stream_calls().is_empty());
@@ -192,7 +192,7 @@ async fn a_caller_whose_audio_has_a_ceiling_gets_the_preview() {
     let mut request = Request::builder()
         .uri(format!(
             "/rest/stream?id=outside-1&{}",
-            auth("alex", "good", "Flakyfy")
+            auth("alex", "good", "Octo")
         ))
         .body(Body::empty())
         .expect("a request");
@@ -206,10 +206,10 @@ async fn a_caller_whose_audio_has_a_ceiling_gets_the_preview() {
 #[tokio::test]
 async fn with_wait_for_lossless_a_seek_after_the_file_lands_stays_on_the_preview() {
     let w = world(|s| s.subsonic.wait_for_lossless_on_play = true).await;
-    let started = w.play("Flakyfy", None).await;
+    let started = w.play("Octo", None).await;
     assert!(is_preview(&started), "{:?}", started.body);
     w.land();
-    let seek = w.play("Flakyfy", Some("bytes=2-")).await;
+    let seek = w.play("Octo", Some("bytes=2-")).await;
     assert!(is_preview(&seek), "{:?}", seek.body);
 }
 
@@ -217,7 +217,7 @@ async fn with_wait_for_lossless_a_seek_after_the_file_lands_stays_on_the_preview
 async fn with_wait_for_lossless_a_later_range_with_no_play_started_on_the_flac_gets_the_preview() {
     let w = world(|s| s.subsonic.wait_for_lossless_on_play = true).await;
     w.land();
-    let reply = w.play("Flakyfy", Some("bytes=500000-")).await;
+    let reply = w.play("Octo", Some("bytes=500000-")).await;
     assert!(is_preview(&reply), "{:?}", reply.body);
 }
 
@@ -225,9 +225,9 @@ async fn with_wait_for_lossless_a_later_range_with_no_play_started_on_the_flac_g
 async fn a_play_whose_file_is_gone_is_asked_to_start_again() {
     let w = world(|_| {}).await;
     let path = w.land();
-    assert!(is_flac(&w.play("Flakyfy", None).await));
+    assert!(is_flac(&w.play("Octo", None).await));
     std::fs::remove_file(&path).expect("swept");
-    let later = w.play("Flakyfy", Some("bytes=5-")).await;
+    let later = w.play("Octo", Some("bytes=5-")).await;
     assert_eq!(later.status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(!is_preview(&later), "never the preview's bytes after FLAC ones");
 }
@@ -237,13 +237,13 @@ async fn two_devices_of_one_listener_have_their_own_plays() {
     let w = world(|_| {}).await;
     w.land();
     let app = app(&w.state);
-    let uri = format!("/rest/stream?id=outside-1&{}", auth("alice", "good", "Flakyfy"));
+    let uri = format!("/rest/stream?id=outside-1&{}", auth("alice", "good", "Octo"));
     let started = send(&app, Method::GET, &uri, &[], Body::empty()).await;
     assert!(is_flac(&started));
     // The same listener's other app has started nothing: its later range is the preview's.
     let other = format!(
         "/rest/stream?id=outside-1&{}",
-        auth("alice", "good", "FlakyfyDesktop")
+        auth("alice", "good", "OctoDesktop")
     );
     let reply = send(&app, Method::GET, &other, &[("Range", "bytes=5-")], Body::empty()).await;
     assert!(is_preview(&reply), "{:?}", reply.body);
@@ -331,7 +331,7 @@ fn pipeline(
 async fn a_heart_during_a_play_on_the_flac_keeps_that_play_s_later_ranges_on_it() {
     let w = world(|_| {}).await;
     w.land();
-    assert!(is_flac(&w.play("Flakyfy", None).await));
+    assert!(is_flac(&w.play("Octo", None).await));
     let (pipeline, backend, music) = pipeline(&w);
     let kept = crate::services::i_download_service::IDownloadService::execute_acquisition(
         pipeline.as_ref(),
@@ -349,7 +349,7 @@ async fn a_heart_during_a_play_on_the_flac_keeps_that_play_s_later_ranges_on_it(
     .expect("kept");
     assert!(Path::new(&kept).starts_with(&music), "{kept}");
     assert_eq!(backend.transfers.load(std::sync::atomic::Ordering::SeqCst), 0);
-    let later = w.play("Flakyfy", Some("bytes=5-")).await;
+    let later = w.play("Octo", Some("bytes=5-")).await;
     assert_eq!(later.status, StatusCode::PARTIAL_CONTENT);
     assert_eq!(later.body.as_ref(), &FLAC[5..]);
 }
@@ -358,7 +358,7 @@ async fn a_heart_during_a_play_on_the_flac_keeps_that_play_s_later_ranges_on_it(
 async fn with_wait_for_lossless_a_ready_song_served_is_kept_in_the_library_by_its_play() {
     let w = world(|s| s.subsonic.wait_for_lossless_on_play = true).await;
     w.land();
-    assert!(is_flac(&w.play("Flakyfy", None).await));
+    assert!(is_flac(&w.play("Octo", None).await));
     // The play queued its own lossless copy, as a play with Wait for lossless on does.
     let queue = &w.state.track_acquisition_queue;
     assert!(queue.is_in_flight("soulseek", "song1"));
@@ -388,6 +388,6 @@ async fn with_wait_for_lossless_a_ready_song_served_is_kept_in_the_library_by_it
     assert!(Path::new(&kept).is_file());
     assert_eq!(backend.transfers.load(std::sync::atomic::Ordering::SeqCst), 0);
     // And the play goes on with the file it started on.
-    let later = w.play("Flakyfy", Some("bytes=5-")).await;
+    let later = w.play("Octo", Some("bytes=5-")).await;
     assert_eq!(later.body.as_ref(), &FLAC[5..]);
 }

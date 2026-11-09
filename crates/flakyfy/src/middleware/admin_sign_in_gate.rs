@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn the_query_is_read_as_a_dictionary() {
-        let parameters = query_dictionary(Some("u=admin&p=pw&U=again&c=flakyfy&c=two&empty="));
+        let parameters = query_dictionary(Some("u=admin&p=pw&U=again&c=octo&c=two&empty="));
         assert_eq!(parameters.get("u").map(String::as_str), Some("admin,again"));
         assert_eq!(parameters.get("c").map(String::as_str), Some("flakyfy,two"));
         assert_eq!(parameters.get("empty").map(String::as_str), Some(""));

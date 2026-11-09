@@ -1,7 +1,7 @@
 //! What a family member may do: five presets and per-member edits stored as a sparse map over
 //! the preset, so a preset change keeps the edits.
 //!
-//! [`Abilities`] serializes with the field names of the `flakyfyFamily` API
+//! [`Abilities`] serializes with the field names of the `octoFamily` API
 //! (`family.me.abilities`): camelCase, caps as kbps with `0` for no cap.
 
 use serde::de::{self, Deserializer, Visitor};
@@ -19,7 +19,7 @@ pub enum Preset {
 }
 
 /// Who a caller is to the family: a preset, or a Navidrome account Flakyfy does not manage
-/// (`role` in the `flakyfyFamily` API).
+/// (`role` in the `octoFamily` API).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Role {
     Owner,

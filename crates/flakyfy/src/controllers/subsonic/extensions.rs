@@ -91,10 +91,10 @@ pub async fn get_acquisitions(State(state): State<AppState>, req: Request) -> Ap
     Ok(builder.create_acquisitions_response(&rows).into_response())
 }
 
-/// Navidrome's extension list with flakyfyAcquisitions added, so a client can tell this server
-/// answers getAcquisitions before it asks, flakyfyLibraryActions while library actions are on,
-/// flakyfyTransitions while flakyfy-sonic makes transition profiles, flakyfyStations while radio
-/// stations are served as playlists, and flakyfyPlaces while the place data can be read.
+/// Navidrome's extension list with octoAcquisitions added, so a client can tell this server
+/// answers getAcquisitions before it asks, octoLibraryActions while library actions are on,
+/// octoTransitions while flakyfy-sonic makes transition profiles, octoStations while radio
+/// stations are served as playlists, and octoPlaces while the place data can be read.
 /// Relayed, then merged; no credentials are needed, as the OpenSubsonic spec has it.
 ///
 /// A caller whose audio has a ceiling (a family limit, or their own quality for where they
@@ -130,7 +130,7 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
     {
         reply.body = body;
     }
-    // flakyfyFamily is listed only while Family is on.
+    // octoFamily is listed only while Family is on.
     if settings.family.enabled {
         return super::family::with_family_extension(reply, &format).into_response();
     }
@@ -155,7 +155,7 @@ fn upgrade_source_name(state: &AppState) -> String {
     state.upgrade_sources.name()
 }
 
-/// flakyfyLibraryActions v1: what the caller may do to library files from the app, read from the
+/// octoLibraryActions v1: what the caller may do to library files from the app, read from the
 /// settings as they are now. Always JSON. Credentials are checked with a ping to Navidrome, as
 /// getAcquisitions checks them.
 pub async fn get_library_actions(State(state): State<AppState>, req: Request) -> Response {
@@ -184,7 +184,7 @@ pub async fn get_library_actions(State(state): State<AppState>, req: Request) ->
         .into_response()
 }
 
-/// flakyfyLibraryActions v3: the songs the server holds in its trash, newest first, for an app to
+/// octoLibraryActions v3: the songs the server holds in its trash, newest first, for an app to
 /// offer putting one back. Always JSON; credentials checked like getLibraryActions, and listed
 /// only to someone who could put them back.
 pub async fn get_library_trash(State(state): State<AppState>, req: Request) -> Response {
@@ -216,7 +216,7 @@ pub async fn get_library_trash(State(state): State<AppState>, req: Request) -> R
         .into_response()
 }
 
-/// flakyfyLibraryActions v2: the caller's upgrade jobs and how each is going, read by the apps while
+/// octoLibraryActions v2: the caller's upgrade jobs and how each is going, read by the apps while
 /// an upgrade they asked for is running. Always JSON; credentials checked like getLibraryActions.
 pub async fn get_upgrades(State(state): State<AppState>, req: Request) -> Response {
     let call = match SubsonicCall::read(&state, req).await {
@@ -253,7 +253,7 @@ pub async fn get_upgrades(State(state): State<AppState>, req: Request) -> Respon
         .into_response()
 }
 
-/// flakyfyLibraryActions v1: remove one song, exactly as putting it in the Delete action playlist
+/// octoLibraryActions v1: remove one song, exactly as putting it in the Delete action playlist
 /// does. The executor applies every gate: the master switch, the allowlist, Delete being on,
 /// the dry run, and a file it can prove is this song, which goes to quarantine.
 ///
@@ -472,7 +472,7 @@ async fn member_library_action(state: &AppState, user: &str, id: &str, action: &
         .into_response()
 }
 
-/// flakyfyLibraryActions v3: change a song's file without removing it, or put a removed one back.
+/// octoLibraryActions v3: change a song's file without removing it, or put a removed one back.
 /// retag writes the tags sent (title, artist, album, albumArtist, year, genre, track, disc,
 /// isrc; an empty one clears it), joinAlbum puts the song on the album of the song named by
 /// `like`, cover puts a found cover inside a file that has none (`preview=true` only says what
@@ -570,7 +570,7 @@ async fn is_caller_admin(call: &SubsonicCall, username: &str) -> bool {
         == Some(&Value::Bool(true))
 }
 
-/// flakyfyLibraryActions v2: queue a higher quality copy of one song, and answer at once. The same
+/// octoLibraryActions v2: queue a higher quality copy of one song, and answer at once. The same
 /// gates as the Better quality playlist, read now so the app hears a reason straight away; the
 /// executor checks them all again when the job runs. A job is listed in getUpgrades before this
 /// answers "queued".

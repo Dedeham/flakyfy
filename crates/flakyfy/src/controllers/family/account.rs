@@ -722,7 +722,7 @@ pub async fn cover(
                 ("t".into(), token),
                 ("s".into(), salt),
                 ("v".into(), "1.16.1".into()),
-                ("c".into(), "flakyfy".into()),
+                ("c".into(), "octo".into()),
             ],
             None => Vec::new(),
         },

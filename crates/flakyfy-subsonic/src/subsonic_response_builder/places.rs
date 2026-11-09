@@ -1,4 +1,4 @@
-//! getPlace (flakyfyPlaces): a postal code or a city as coordinates, in XML or JSON.
+//! getPlace (octoPlaces): a postal code or a city as coordinates, in XML or JSON.
 
 use flakyfy_core::places::Place;
 use serde_json::{Map, Value, json};
@@ -7,7 +7,7 @@ use super::{SUBSONIC_NAMESPACE, SUBSONIC_VERSION, SubsonicReply, SubsonicRespons
 
 /// getPlace: the coordinates of a postal code or a city, for the apps' "Live radio near you"
 /// on a device that has no location service.
-pub const PLACES_EXTENSION: &str = "flakyfyPlaces";
+pub const PLACES_EXTENSION: &str = "octoPlaces";
 pub const PLACES_EXTENSION_VERSION: i32 = 1;
 
 impl SubsonicResponseBuilder {
@@ -28,14 +28,14 @@ impl SubsonicResponseBuilder {
             return self.create_json_response(json!({
                 "status": "ok",
                 "version": SUBSONIC_VERSION,
-                "type": "flakyfy",
+                "type": "octo",
                 "openSubsonic": true,
                 "place": place,
             }));
         }
         SubsonicReply::xml(
             &envelope("ok")
-                .attr("type", "flakyfy")
+                .attr("type", "octo")
                 .attr("openSubsonic", "true")
                 .child(super::json_shape_to_xml(
                     Some(SUBSONIC_NAMESPACE),

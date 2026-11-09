@@ -269,13 +269,13 @@ pub fn count_years(songs: &[Node]) -> IndexMap<String, i32> {
     counts
 }
 
-/// What `flakyfyGroup` says a station row is.
+/// What `octoGroup` says a station row is.
 pub const STATION_GROUP: &str = "station";
 
-/// What `flakyfyGroup` says a Made for you list is.
+/// What `octoGroup` says a Made for you list is.
 pub const FOR_YOU_GROUP: &str = "forYou";
 
-/// The group an Flakyfy list row belongs to, as `flakyfyGroup` names it, from the list's kind: the
+/// The group an Flakyfy list row belongs to, as `octoGroup` names it, from the list's kind: the
 /// kind itself ("genre", "decade", "year", "country", "artist", "chart", "liked"), and
 /// "forYou" for the three Made for you lists.
 pub fn list_group(kind: &str) -> &str {

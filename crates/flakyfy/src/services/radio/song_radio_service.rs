@@ -83,7 +83,7 @@ impl SongRadioService {
 
     /// `listener`: who the radio is for, named the way scrobbles name them (RequestIdentity), so
     /// what they play teaches their own weights; None for nobody. `client_order`: the caller
-    /// mixes the radio itself (Flakyfy's apps send `flakyfyMix=client`) and wants the order of fit, so
+    /// mixes the radio itself (Flakyfy's apps send `octoMix=client`) and wants the order of fit, so
     /// outside songs are not placed.
     pub async fn build(
         &self,
@@ -238,7 +238,7 @@ impl SongRadioService {
             songs
         } else if client_order {
             // Flakyfy's own apps mix the radio themselves and ask for the order of fit
-            // (flakyfyMix=client).
+            // (octoMix=client).
             info!("Radio for '{} - {}': client order", seed.artist, seed.title);
             last_fm_radio_spacing::spread(
                 &songs,

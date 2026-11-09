@@ -170,7 +170,7 @@ mod tests {
                 "All 5 Soulseek peer attempts failed for 'The Killers - Mr. Brightside'",
             ),
             (
-                "Could not open /music/.flakyfy-incoming/abc.mp3 for reading",
+                "Could not open /music/.octo-incoming/abc.mp3 for reading",
                 "Could not open a path for reading",
             ),
             (

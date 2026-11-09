@@ -166,7 +166,7 @@ mod tests {
                 &app,
                 Method::GET,
                 "/api/admin/ambient",
-                &[("X-Flakyfy-Browse-Token", &token)],
+                &[("X-Octo-Browse-Token", &token)],
                 None,
             )
             .await;
@@ -201,7 +201,7 @@ mod tests {
             &app,
             Method::GET,
             "/api/admin/ambient",
-            &[("X-Flakyfy-Browse-Token", &token)],
+            &[("X-Octo-Browse-Token", &token)],
             None,
         )
         .await;

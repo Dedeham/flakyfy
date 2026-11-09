@@ -84,7 +84,7 @@ impl PlaceIndex {
         match self.open() {
             Ok(_) => true,
             Err(e) => {
-                self.warn_once(&e, "flakyfyPlaces is not listed and place lookups find nothing");
+                self.warn_once(&e, "octoPlaces is not listed and place lookups find nothing");
                 false
             }
         }

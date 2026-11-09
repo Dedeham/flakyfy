@@ -387,7 +387,7 @@ impl Fetch {
 
     /// Every file left in Mornye's job folders.
     fn left_in_job_folders(&self) -> Vec<String> {
-        let jobs = self.root.path().join(".flakyfy-incoming/spotiflac");
+        let jobs = self.root.path().join(".octo-incoming/spotiflac");
         if !jobs.is_dir() {
             return Vec::new();
         }
@@ -420,7 +420,7 @@ async fn a_found_file_passes_the_checks_and_lands_in_the_library() {
 
     assert!(path.ends_with(".flac"), "{path}");
     assert!(
-        !path.contains(".flakyfy-incoming"),
+        !path.contains(".octo-incoming"),
         "placed out of the job folder: {path}"
     );
     assert!(std::path::Path::new(&path).is_file());
@@ -447,7 +447,7 @@ async fn a_skipped_item_lands_like_a_done_one() {
 
     assert!(path.ends_with(".flac"), "{path}");
     assert!(
-        !path.contains(".flakyfy-incoming"),
+        !path.contains(".octo-incoming"),
         "placed out of the job folder: {path}"
     );
     assert!(std::path::Path::new(&path).is_file());

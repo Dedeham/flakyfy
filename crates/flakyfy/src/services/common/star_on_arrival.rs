@@ -126,7 +126,7 @@ pub struct StarOnArrival {
 
 impl StarOnArrival {
     /// What Flakyfy's own apps send as c. Their star is the Add button: a copy, not a like.
-    pub const FLAKYFY_APP_CLIENT: &'static str = "Flakyfy";
+    pub const FLAKYFY_APP_CLIENT: &'static str = "Octo";
 
     pub fn new(
         tracker: Arc<AcquisitionTracker>,

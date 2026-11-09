@@ -830,7 +830,7 @@ async fn the_owner_is_checked_with_exactly_the_sign_in_navidrome_then_reads() {
         // A family of its own each time, so no check is remembered from another case.
         let f = family(true).await;
         let device = format!("owner-device-{n}");
-        let mut headers: Vec<(&str, &str)> = vec![("X-Flakyfy-Device-Id", device.as_str())];
+        let mut headers: Vec<(&str, &str)> = vec![("X-Octo-Device-Id", device.as_str())];
         if let Some(ct) = case.content_type {
             headers.push(("Content-Type", ct));
         }

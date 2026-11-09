@@ -20,7 +20,7 @@ fn removed(id: &str, artist: &str, title: &str, copy: bool) -> LibraryActionEntr
         artist: artist.into(),
         album: "Discovery".into(),
         source_path: Some(format!("/music/{id}.flac")),
-        quarantine_path: Some(format!("/music/.flakyfy-trash/{id}.flac")),
+        quarantine_path: Some(format!("/music/.octo-trash/{id}.flac")),
         resolution: Some(PathSource::NativeApi),
         state: LibraryActionState::Applied,
         detail: Some("Removed.".into()),
@@ -59,11 +59,8 @@ async fn the_history_offers_allow_downloading_again_and_it_works_only_when_signe
     journal.record(removed("nd-2", "Daft Punk", "Aerodynamic", true));
     let token = state.browse_sessions.create("admin");
     let app = app(state.clone());
-    let anonymous = [("X-Flakyfy-Admin", "1")];
-    let signed_in = [
-        ("X-Flakyfy-Admin", "1"),
-        ("X-Flakyfy-Browse-Token", token.as_str()),
-    ];
+    let anonymous = [("X-Octo-Admin", "1")];
+    let signed_in = [("X-Octo-Admin", "1"), ("X-Octo-Browse-Token", token.as_str())];
 
     let history = send(&app, Method::GET, "/api/admin/library-actions", &signed_in, None).await;
     let rows = history.json()["entries"].as_array().expect("entries").clone();

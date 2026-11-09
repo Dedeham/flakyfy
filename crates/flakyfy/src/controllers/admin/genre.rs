@@ -36,12 +36,12 @@ pub fn routes() -> RouteSet {
         .route("/api/admin/genre/presets", get(get_genre_presets))
 }
 
-const SCOPES: [&str; 2] = ["FlakyfyDownloads", "WholeLibrary"];
+const SCOPES: [&str; 2] = ["OctoDownloads", "WholeLibrary"];
 const ALREADY_RUNNING: &str = "A genre backfill is already running.";
 
 fn scope_name(scope: GenreBackfillScope) -> &'static str {
     match scope {
-        GenreBackfillScope::FlakyfyDownloads => "FlakyfyDownloads",
+        GenreBackfillScope::OctoDownloads => "OctoDownloads",
         GenreBackfillScope::WholeLibrary => "WholeLibrary",
     }
 }
@@ -120,7 +120,7 @@ async fn start_genre_backfill(State(state): State<AppState>, request: Request) -
     }
     let scope = match enum_try_parse(&SCOPES, request.scope.as_deref()) {
         Some(1) => GenreBackfillScope::WholeLibrary,
-        _ => GenreBackfillScope::FlakyfyDownloads,
+        _ => GenreBackfillScope::OctoDownloads,
     };
     if !state.settings.current().genre.enabled {
         return browse.finish(error(

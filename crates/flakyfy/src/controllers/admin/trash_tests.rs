@@ -66,10 +66,7 @@ impl Dashboard {
             &self.app,
             method,
             path,
-            &[
-                ("X-Flakyfy-Admin", "1"),
-                ("X-Flakyfy-Browse-Token", token.as_str()),
-            ],
+            &[("X-Octo-Admin", "1"), ("X-Octo-Browse-Token", token.as_str())],
             body,
         )
         .await
@@ -83,7 +80,7 @@ fn trashed(root: &Path, id: &str, with_lyrics: bool) -> (LibraryActionEntry, Pat
         .join("Daft Punk")
         .join("Discovery")
         .join(format!("{id}.flac"));
-    let trash_dir = root.join(".flakyfy-trash").join("2026-10-04");
+    let trash_dir = root.join(".octo-trash").join("2026-10-04");
     std::fs::create_dir_all(&trash_dir).expect("the trash");
     let trashed = trash_dir.join(format!("{id}.flac"));
     std::fs::write(&trashed, "audio").expect("written");
@@ -106,7 +103,7 @@ fn trashed(root: &Path, id: &str, with_lyrics: bool) -> (LibraryActionEntry, Pat
         mappings: None,
     };
     let mut manifest_path = trashed.clone().into_os_string();
-    manifest_path.push(".flakyfy-action.json");
+    manifest_path.push(".octo-action.json");
     std::fs::write(&manifest_path, flakyfy_core::json::to_string(&manifest)).expect("written");
     let entry = LibraryActionEntry {
         key: LibraryActionJournal::make_key(LibraryAction::Delete, id, "1:2"),
@@ -248,7 +245,7 @@ fn replaced_by(
         .join("Massive Attack")
         .join("Mezzanine")
         .join(format!("{id}.mp3"));
-    let trash_dir = root.join(".flakyfy-trash").join("2026-10-10");
+    let trash_dir = root.join(".octo-trash").join("2026-10-10");
     let old = trash_dir
         .join("Massive Attack")
         .join("Mezzanine")
@@ -265,7 +262,7 @@ fn replaced_by(
         mappings: None,
     };
     let mut manifest_path = old.clone().into_os_string();
-    manifest_path.push(".flakyfy-action.json");
+    manifest_path.push(".octo-action.json");
     std::fs::write(&manifest_path, flakyfy_core::json::to_string(&manifest)).expect("written");
     let entry = LibraryActionEntry {
         key: LibraryActionJournal::make_key(action, id, "1:2"),

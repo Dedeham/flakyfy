@@ -1,10 +1,10 @@
 //! Where members' music lives, and what the owner is told about it.
 //!
-//! `Family:MembersPath` is `Auto` by default: a `.flakyfy-family` folder in the music folder Flakyfy
+//! `Family:MembersPath` is `Auto` by default: a `.octo-family` folder in the music folder Flakyfy
 //! shares with Navidrome (the one downloads go to: Navidrome's detected music folder, else
 //! `Library:DownloadPath`). Both containers already mount that folder at the same path, so a
 //! member's library works with no volume of its own. Navidrome skips folders whose names start
-//! with a dot, and the music folder's `.ndignore` lists `.flakyfy-family/` as well, so members'
+//! with a dot, and the music folder's `.ndignore` lists `.octo-family/` as well, so members'
 //! music stays out of the owner's library either way. A member's own library has its root
 //! inside the folder, and Navidrome reads `.ndignore` files from a library's root down, so the
 //! line never hides a member's music from that member.
@@ -36,7 +36,7 @@ pub const LEGACY_MEMBERS_PATH: &str = "/members";
 
 /// The line in the music folder's `.ndignore` that keeps the members folder out of the
 /// owner's library.
-pub const NDIGNORE_LINE: &str = ".flakyfy-family/";
+pub const NDIGNORE_LINE: &str = ".octo-family/";
 
 /// The enable body's `membersPath` for the folder next to the music.
 pub const NEXT_TO_MUSIC_CHOICE: &str = "NextToMusic";
@@ -104,7 +104,7 @@ pub struct MembersPlace {
     pub message: String,
 }
 
-/// A members folder named `.flakyfy-family` sits next to the music; any other is the owner's own.
+/// A members folder named `.octo-family` sits next to the music; any other is the owner's own.
 pub fn mode_of(path: &str) -> PlaceMode {
     if Path::new(path)
         .file_name()
@@ -161,7 +161,7 @@ pub fn next_to_music_message(path: &str, skips_dot_folders: Option<bool>) -> Str
 }
 
 /// Said when Navidrome scans folders whose names start with a dot.
-const DOT_FOLDERS_SCANNED: &str = "Navidrome is set to scan folders whose names start with a dot, and the .flakyfy-family/ line in your music folder's .ndignore still keeps members' music out of your library.";
+const DOT_FOLDERS_SCANNED: &str = "Navidrome is set to scan folders whose names start with a dot, and the .octo-family/ line in your music folder's .ndignore still keeps members' music out of your library.";
 
 /// What the owner reads about a members folder of their own choosing.
 pub fn custom_message(path: &str) -> String {
@@ -314,7 +314,7 @@ async fn check_writable(path: &str) -> FamilyResult<()> {
     let written = tokio::task::spawn_blocking(move || -> io::Result<()> {
         make_folder(&root)?;
         let probe = root.join(format!(
-            ".flakyfy-write-probe-{}",
+            ".octo-write-probe-{}",
             hex::encode(rand::random::<[u8; 6]>())
         ));
         std::fs::write(&probe, b"flakyfy")?;
@@ -416,7 +416,7 @@ pub fn ensure_ndignore(music_root: &Path) -> io::Result<bool> {
     text.push_str(newline);
 
     let temp = music_root.join(format!(
-        ".ndignore.flakyfy-{}",
+        ".ndignore.octo-{}",
         hex::encode(rand::random::<[u8; 6]>())
     ));
     let written = (|| -> io::Result<()> {

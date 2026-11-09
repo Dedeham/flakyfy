@@ -45,7 +45,7 @@ pub enum RequestOutcome {
 }
 
 /// One request, as `family-requests.json` keeps it (PascalCase like every Flakyfy state file).
-/// [`FamilyRequest::api_json`] gives the `flakyfyFamily` shape.
+/// [`FamilyRequest::api_json`] gives the `octoFamily` shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct FamilyRequest {

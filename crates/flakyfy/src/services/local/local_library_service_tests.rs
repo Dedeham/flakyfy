@@ -521,7 +521,7 @@ async fn get_scan_status_signs_in_as_the_admin_identity() {
         .collect();
     assert_eq!(
         asked,
-        ["f=json&c=flakyfy&v=1.16.1&u=the%20admin&t=tok&s=salt", "f=json"]
+        ["f=json&c=octo&v=1.16.1&u=the%20admin&t=tok&s=salt", "f=json"]
     );
 }
 

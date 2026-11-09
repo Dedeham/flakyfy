@@ -350,7 +350,7 @@ async fn endpoints_need_a_sign_in_and_apply_needs_the_music_path_typed() {
     .await;
     let (status, body) = send(
         Request::get("/api/admin/explicit/backfill")
-            .header("X-Flakyfy-Browse-Token", &token)
+            .header("X-Octo-Browse-Token", &token)
             .body(Body::empty())
             .expect("a request"),
     )
@@ -359,8 +359,8 @@ async fn endpoints_need_a_sign_in_and_apply_needs_the_music_path_typed() {
         Request::builder()
             .method(Method::POST)
             .uri("/api/admin/explicit/backfill/apply")
-            .header("X-Flakyfy-Browse-Token", &token)
-            .header("X-Flakyfy-Admin", "1")
+            .header("X-Octo-Browse-Token", &token)
+            .header("X-Octo-Admin", "1")
             .header("Content-Type", "application/json")
             .body(Body::from(r#"{"confirm":"wrong"}"#))
             .expect("a request"),

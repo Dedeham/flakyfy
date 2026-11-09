@@ -1,13 +1,13 @@
 // Flakyfy admin UI. Vanilla JS, no build step.
 
-// Every call to Flakyfy's admin API goes through here. Writes carry X-Flakyfy-Admin, which a page on
+// Every call to Flakyfy's admin API goes through here. Writes carry X-Octo-Admin, which a page on
 // another origin cannot add without a preflight Flakyfy refuses. A 401 that asks for a sign-in shows
 // the sign-in screen, and the call is sent again once someone has signed in.
 async function api(url, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const send = () => {
     const headers = new Headers(options.headers || {});
-    if (method !== 'GET' && method !== 'HEAD') headers.set('X-Flakyfy-Admin', '1');
+    if (method !== 'GET' && method !== 'HEAD') headers.set('X-Octo-Admin', '1');
     return fetch(url, { credentials: 'same-origin', ...options, headers });
   };
   // A write may have started work somewhere (a scan, a re-tag, a download), so the activity
@@ -67,7 +67,7 @@ function signInGate() {
       const r = await fetch(path, {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json', 'X-Flakyfy-Admin': '1' },
+        headers: { 'Content-Type': 'application/json', 'X-Octo-Admin': '1' },
         body: JSON.stringify(payload),
       }).catch(() => null);
       const data = r ? await r.json().catch(() => ({})) : {};
@@ -503,12 +503,12 @@ async function refreshStatus() {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
 
-    setStatusCard('flakyfy', data.flakyfy);
+    setStatusCard('flakyfy', data.octo);
     Object.entries(data.services || {}).forEach(([k, v]) => setStatusCard(k, v));
 
     // Update sidebar badge with bad count, if any. An optional service nobody set up reports
     // ok, so it never counts here.
-    const all = [data.flakyfy, ...Object.values(data.services || {})];
+    const all = [data.octo, ...Object.values(data.services || {})];
     const badCount = all.filter(s => !s?.ok).length;
     setStatusBadge(badCount > 0 ? String(badCount) : '',
       `${badCount} service${badCount === 1 ? '' : 's'} need${badCount === 1 ? 's' : ''} attention`);
@@ -1716,7 +1716,7 @@ let genreBackfillPoll = null;
 let lastBackfillRun = null;
 let backfillScopeInitialised = false;
 
-const backfillScopeLabels = { FlakyfyDownloads: 'downloads Flakyfy made', WholeLibrary: 'the whole library' };
+const backfillScopeLabels = { OctoDownloads: 'downloads Flakyfy made', WholeLibrary: 'the whole library' };
 
 async function genreBackfillFetch(url, options = {}, retry = true) {
   const response = await api(url, options);
@@ -1855,7 +1855,7 @@ function backfillNote(message, kind = 'ok') {
 }
 
 async function startGenreBackfill(dryRun, scopeOverride = null) {
-  const scope = scopeOverride ?? document.getElementById('genre-backfill-scope')?.value ?? 'FlakyfyDownloads';
+  const scope = scopeOverride ?? document.getElementById('genre-backfill-scope')?.value ?? 'OctoDownloads';
 
   let confirmPath = null;
   if (scope === 'WholeLibrary' && !dryRun) {
@@ -2137,7 +2137,7 @@ async function confirmTidyPath(run, action) {
 }
 
 document.getElementById('library-tidy-preview')?.addEventListener('click', async () => {
-  const scope = document.getElementById('library-tidy-scope')?.value ?? 'FlakyfyDownloads';
+  const scope = document.getElementById('library-tidy-scope')?.value ?? 'OctoDownloads';
   tidyTicked.clear();
   if (await postTidy('/api/admin/tidy/preview', { scope, excluded: tidyExcluded() })) {
     tidyNote('Previewing. Nothing is being written.', 'info');
@@ -3001,10 +3001,10 @@ document.getElementById('review-sweep-toggle')?.addEventListener('click', (event
   const start = button.dataset.paused === 'true';
   reviewSweepPost(button, `/api/admin/review-sweep/${start ? 'start' : 'pause'}`, start ? 'Carrying on.' : 'Paused.');
 });
-document.querySelectorAll('[data-recheck-flakyfy]').forEach(button => button.addEventListener('click', async (event) => {
+document.querySelectorAll('[data-recheck-octo]').forEach(button => button.addEventListener('click', async (event) => {
   const clicked = event.currentTarget;
   if (!(await askConfirm("Re-check Flakyfy's downloads?", 'Every song Flakyfy downloaded is checked once more, at least 60 an hour. Songs already answered in Review are not asked about again.', 'Re-check'))) return;
-  reviewSweepPost(clicked, '/api/admin/review-sweep/recheck-flakyfy', "Re-checking Flakyfy's downloads.");
+  reviewSweepPost(clicked, '/api/admin/review-sweep/recheck-octo', "Re-checking Flakyfy's downloads.");
 }));
 document.getElementById('review-sweep-reset')?.addEventListener('click', async (event) => {
   // Taken before the question: once it is awaited the event no longer says which button it was.
@@ -4828,7 +4828,7 @@ document.getElementById('tags-preview-run')?.addEventListener('click', async () 
 });
 
 // ────────────────────────────────────────────────────────────────
-// Download logs, Find songs and Recently removed: what the Flakyfy apps show, for every admin
+// Download logs, Find songs and Recently removed: what the Octo apps show, for every admin
 // ────────────────────────────────────────────────────────────────
 // Every call here needs a Navidrome admin's own sign-in (the recovery code is not enough: these
 // name peers and files), so a refusal opens the same Navidrome sign-in the Better quality page uses.
@@ -7966,7 +7966,7 @@ function impSendFile(file, onProgress, onSent) {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', impFor('/api/admin/imports/file'));
     xhr.withCredentials = true;
-    xhr.setRequestHeader('X-Flakyfy-Admin', '1');
+    xhr.setRequestHeader('X-Octo-Admin', '1');
     xhr.upload.addEventListener('progress', e => { if (e.lengthComputable) onProgress(e.loaded, e.total); });
     xhr.upload.addEventListener('load', onSent);
     xhr.addEventListener('load', () => {
@@ -8448,7 +8448,7 @@ impEl('imp-trickle-rows')?.addEventListener('click', async event => {
 impEl('imports-form')?.addEventListener('submit', () => setTimeout(loadImports, 800));
 
 // ────────────────────────────────────────────────────────────────
-// Library health: the Flakyfy app's checks and fixes, worked out on the server
+// Library health: the Octo app's checks and fixes, worked out on the server
 // ────────────────────────────────────────────────────────────────
 // GET /api/admin/health is the report; every fix is previewed first (POST .../preview), then
 // run on the server one song at a time (POST .../apply, .../lookup) while this page follows
@@ -9584,7 +9584,7 @@ async function loadFamily() {
         familyEl('span', { class: 'set-info' }, familyEl('span', { class: 'set-info-t' }, title), familyEl('span', { class: 'set-info-d' }, desc)),
         input);
     };
-    const nextToMusic = place.mode === 'NextToMusic' ? place.path : 'A .flakyfy-family folder in your music folder';
+    const nextToMusic = place.mode === 'NextToMusic' ? place.path : 'A .octo-family folder in your music folder';
     children.push(familyEl('p', null, 'Where members’ music goes. Each member gets their own folder there.'));
     children.push(familyEl('div', { class: 'set-card', role: 'radiogroup', 'aria-label': 'Where members’ music goes' },
       option('NextToMusic', 'Next to your music (recommended)', familyEl('code', null, nextToMusic)),
@@ -9691,7 +9691,7 @@ function artTile(album) {
     ? '<span class="cover-badge warn">Hidden</span>'
     : album.tall ? '<span class="cover-badge">Full screen</span>' : '';
   return `<button type="button" class="cover-tile art-tile" role="switch" aria-checked="${!album.hidden}" data-art-key="${esc(album.key)}"
-      aria-label="${esc(name)}" title="${esc(album.hidden ? 'Hidden in every app. Pick to show it again.' : 'Shown in the Flakyfy apps. Pick to hide it.')}">
+      aria-label="${esc(name)}" title="${esc(album.hidden ? 'Hidden in every app. Pick to show it again.' : 'Shown in the Octo apps. Pick to hide it.')}">
     <span class="cover-art">${art}${badges}</span>
     <span class="cover-title">${esc(album.album)}</span>
     <span class="cover-artist">${esc(album.artist)}</span>

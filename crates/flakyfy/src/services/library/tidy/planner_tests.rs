@@ -653,7 +653,7 @@ fn a_credit_navidrome_reads_as_several_artists_is_never_a_spelling() {
 
 #[test]
 fn dot_folders_are_never_touched() {
-    let plan = plan_of(&[song(".flakyfy-trash/Beyonce/A/01 - S.flac", "Beyonc\u{e9}").title("S (feat. X)")]);
+    let plan = plan_of(&[song(".octo-trash/Beyonce/A/01 - S.flac", "Beyonc\u{e9}").title("S (feat. X)")]);
     assert!(plan.retags.is_empty());
     assert!(plan.moves.is_empty());
 }

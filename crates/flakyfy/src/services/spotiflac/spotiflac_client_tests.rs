@@ -290,7 +290,7 @@ async fn a_ready_spotiflac_passes_and_the_folder_is_made() {
     assert!(
         texts(&report, "ok")
             .iter()
-            .any(|text| text.contains("/downloads/.flakyfy-incoming/spotiflac on Mornye's side")),
+            .any(|text| text.contains("/downloads/.octo-incoming/spotiflac on Mornye's side")),
         "{:?}",
         report.checks
     );
@@ -328,7 +328,7 @@ async fn a_download_is_asked_with_the_quality_the_extensions_and_the_folder() {
             "url": "https://open.spotify.com/track/abc",
             "quality": "HI_RES_LOSSLESS",
             "services": ["ext:one", "ext:two"],
-            "output_dir": "/downloads/.flakyfy-incoming/spotiflac/j1",
+            "output_dir": "/downloads/.octo-incoming/spotiflac/j1",
         })))
         .respond_with(
             ResponseTemplate::new(202)
@@ -348,7 +348,7 @@ async fn a_download_is_asked_with_the_quality_the_extensions_and_the_folder() {
             &connection(&server.uri(), ""),
             "https://open.spotify.com/track/abc",
             &settings,
-            "/downloads/.flakyfy-incoming/spotiflac/j1",
+            "/downloads/.octo-incoming/spotiflac/j1",
         )
         .await
         .expect("queued");

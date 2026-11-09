@@ -285,7 +285,7 @@
    "name": "by-id-external-flakyfy-client-json",
    "request": {
     "method": "GET",
-    "target": "/rest/getLyricsBySongId?u=admin&p=parity-admin&v=1.16.1&c=Flakyfy&f=json&id=yy5PCYFGn1qhbOho4j6OF1",
+    "target": "/rest/getLyricsBySongId?u=admin&p=parity-admin&v=1.16.1&c=Octo&f=json&id=yy5PCYFGn1qhbOho4j6OF1",
     "headers": {},
     "body": null
    },

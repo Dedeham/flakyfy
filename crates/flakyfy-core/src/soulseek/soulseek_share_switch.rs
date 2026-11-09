@@ -11,9 +11,9 @@ use crate::common::dotnet::{self, is_blank};
 
 /// The first line of the part of slskd.yml Flakyfy writes.
 pub const BLOCK_START: &str =
-    "# >>> Flakyfy: sharing. Flakyfy's dashboard writes this part (Soulseek page, Sharing); change it there.";
+    "# >>> Octo: sharing. Flakyfy's dashboard writes this part (Soulseek page, Sharing); change it there.";
 /// Its last line.
-pub const BLOCK_END: &str = "# <<< Flakyfy: sharing";
+pub const BLOCK_END: &str = "# <<< Octo: sharing";
 
 /// slskd's share summary: busy while a look runs or is finishing (ready is false from the start
 /// of a look until its index is saved and reloaded).

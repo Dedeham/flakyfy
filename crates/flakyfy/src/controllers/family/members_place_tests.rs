@@ -30,7 +30,7 @@ fn auto(s: &mut AppSettings) {
 async fn turning_on_persists_the_resolved_path() {
     let f = fam_with(auto, None).await;
     let music = music_of(&f);
-    let wanted = format!("{music}/.flakyfy-family");
+    let wanted = format!("{music}/.octo-family");
     assert_eq!(members_place::members_path(&f.state), wanted);
 
     let r = f
@@ -183,7 +183,7 @@ async fn custom_path_keeps_the_mount_message() {
 #[tokio::test]
 async fn navidrome_dot_folder_setting_reported() {
     let f = fam_with(auto, Some("required")).await;
-    let admin = format!("flakyfy_browse={}", f.state.browse_sessions.create("winters"));
+    let admin = format!("octo_browse={}", f.state.browse_sessions.create("winters"));
 
     // A Navidrome that does not offer its settings page: unknown.
     let summary = f.get("/api/admin/family", Some(&admin)).await;
@@ -224,7 +224,7 @@ async fn navidrome_dot_folder_setting_reported() {
     assert_eq!(on.status, StatusCode::OK, "{}", on.body);
     let on = on.json();
     assert_eq!(on["navidromeSkipsDotFolders"], false, "{on}");
-    let note = "the .flakyfy-family/ line in your music folder's .ndignore still keeps members' music out of your library";
+    let note = "the .octo-family/ line in your music folder's .ndignore still keeps members' music out of your library";
     assert!(on["message"].as_str().is_some_and(|m| m.contains(note)), "{on}");
     assert!(
         on["membersPlace"]["message"]

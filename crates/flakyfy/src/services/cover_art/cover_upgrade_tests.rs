@@ -710,7 +710,7 @@ async fn a_scan_of_the_whole_library_leaves_the_trash_out() {
     let kept = library.song("Discovery", "One More Time", Some(&jpeg(300, 10)), None, false);
     let trashed = library
         .music()
-        .join(".flakyfy-trash")
+        .join(".octo-trash")
         .join("2026-10-08")
         .join("Daft Punk")
         .join("Discovery");
@@ -726,7 +726,7 @@ async fn a_scan_of_the_whole_library_leaves_the_trash_out() {
         current
             .preview
             .iter()
-            .all(|row| !row.folder.contains(".flakyfy-trash")),
+            .all(|row| !row.folder.contains(".octo-trash")),
         "{:?}",
         current.preview
     );
@@ -1030,7 +1030,7 @@ async fn flakyfys_own_cover_jpg_keeps_its_mark() {
     let written = std::fs::read(&cover).expect("read");
     assert!(cover_image::is_flakyfy_cover(&written));
     assert_eq!(cover_image::measure(&written), Some((3000, 3000)));
-    assert!(!Path::new(&format!("{}.flakyfy-tmp", cover.display())).exists());
+    assert!(!Path::new(&format!("{}.octo-tmp", cover.display())).exists());
 }
 
 /// A PNG cover beside the songs is reported and left; it does not count as the album's cover.
@@ -1063,7 +1063,7 @@ async fn flakyfy_downloads_walk_the_mappings_and_a_write_asks_for_a_scan() {
     run(
         &worker,
         &store,
-        CoverUpgradeRequest::new(CoverUpgradeScope::FlakyfyDownloads, CoverUpgradeMode::Apply, true),
+        CoverUpgradeRequest::new(CoverUpgradeScope::OctoDownloads, CoverUpgradeMode::Apply, true),
     )
     .await;
     assert_eq!(store.current().status, CoverUpgradeStatus::Failed);
@@ -1092,7 +1092,7 @@ async fn flakyfy_downloads_walk_the_mappings_and_a_write_asks_for_a_scan() {
     run(
         &worker,
         &store,
-        CoverUpgradeRequest::new(CoverUpgradeScope::FlakyfyDownloads, CoverUpgradeMode::Apply, true),
+        CoverUpgradeRequest::new(CoverUpgradeScope::OctoDownloads, CoverUpgradeMode::Apply, true),
     )
     .await;
     assert_eq!(store.current().status, CoverUpgradeStatus::Completed);

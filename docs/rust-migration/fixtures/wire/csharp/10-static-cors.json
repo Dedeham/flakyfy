@@ -1253,7 +1253,7 @@
     "kind": "json",
     "size": 117,
     "sha256": "d237d2d0f5c49198d0175a66528eebed81aa0f3320fc6797ce57364be3a5b73b",
-    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Flakyfy-Admin header to opt in.\"}"
+    "text": "{\"error\":\"Admin changes must come from Flakyfy's dashboard. A script can send the X-Octo-Admin header to opt in.\"}"
    }
   },
   {

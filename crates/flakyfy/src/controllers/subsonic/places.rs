@@ -1,4 +1,4 @@
-//! getPlace (flakyfyPlaces): a postal code or a city as coordinates, for an app on a device with
+//! getPlace (octoPlaces): a postal code or a city as coordinates, for an app on a device with
 //! no location service (the desktop app), and coordinates as the nearest place, for the apps'
 //! "Live radio near you". Answered from the place data in the image (GeoNames), read a block at
 //! a time; nothing is asked of any outside service.

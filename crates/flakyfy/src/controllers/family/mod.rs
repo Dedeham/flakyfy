@@ -1,6 +1,6 @@
-//! The Family page's API, `/api/family/*`: JSON in and out, signed in with the `flakyfy_family`
+//! The Family page's API, `/api/family/*`: JSON in and out, signed in with the `octo_family`
 //! cookie (HttpOnly, SameSite=Strict, path `/api/family`). Every write carries
-//! `X-Flakyfy-Family: 1`, which a page on another site cannot add without a preflight that is
+//! `X-Octo-Family: 1`, which a page on another site cannot add without a preflight that is
 //! never approved. Members reach their own things; managers (the owner and anyone with Manage
 //! family) reach everyone's, and only from home when `Family:ManageFromAway` is off.
 //!
@@ -49,9 +49,9 @@ use crate::services::family::{FamilyService, Member};
 use flakyfy_subsonic::subsonic_request_parser::{RequestParts, RequestReading, read_request};
 
 /// The Family page's sign-in cookie.
-pub const COOKIE: &str = "flakyfy_family";
+pub const COOKIE: &str = "octo_family";
 /// The header every write carries.
-pub const WRITE_HEADER: &str = "X-Flakyfy-Family";
+pub const WRITE_HEADER: &str = "X-Octo-Family";
 /// The largest body a sign-in, a join or a password change may carry.
 pub const SIGN_IN_BODY: usize = 16 * 1024;
 
@@ -509,13 +509,13 @@ impl Web {
             "{COOKIE}={}; max-age={age}; path=/api/family{secure}; samesite=strict; httponly",
             flakyfy_core::common::dotnet::escape_data_string(token)
         ))
-        .unwrap_or_else(|_| HeaderValue::from_static("flakyfy_family="))
+        .unwrap_or_else(|_| HeaderValue::from_static("octo_family="))
     }
 
     /// The cookie that removes the sign-in.
     pub fn cookie_gone() -> HeaderValue {
         HeaderValue::from_static(
-            "flakyfy_family=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/api/family; samesite=strict; httponly",
+            "octo_family=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/api/family; samesite=strict; httponly",
         )
     }
 

@@ -169,7 +169,7 @@ fn build_owned(library: Vec<Candidate>, source: DownloadSource, better_quality: 
     };
     let harness = build(root.path(), settings, None, Some(Arc::new(metadata)), services);
     // The transfer lands an MP3 in the incoming folder.
-    let incoming = root.path().join(".flakyfy-incoming");
+    let incoming = root.path().join(".octo-incoming");
     harness.backend.land(move |_, track_id| {
         std::fs::create_dir_all(&incoming).expect("made");
         let landed = incoming.join(format!("{track_id}-{}.mp3", uuid::Uuid::new_v4().simple()));

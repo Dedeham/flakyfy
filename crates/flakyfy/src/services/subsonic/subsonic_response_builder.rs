@@ -125,7 +125,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "acquisitions": {
                 "acquisition": rows.iter().map(|row| Value::Object(acquisition_json(row))).collect::<Vec<_>>(),
             },
@@ -174,12 +174,12 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         );
         fields.insert("readonly".into(), true.into());
         fields.insert("validUntil".into(), millis(&mix.period_end_utc).into());
-        // flakyfyLists: which Made for you list this is, so the Flakyfy apps can put it on Home.
+        // octoLists: which Made for you list this is, so the Flakyfy apps can put it on Home.
         if for_you {
-            fields.insert("flakyfyList".into(), mix.kind.clone().into());
+            fields.insert("octoList".into(), mix.kind.clone().into());
         }
-        // flakyfyLists v2: which group of Flakyfy's lists this row belongs to, so apps can group them.
-        fields.insert("flakyfyGroup".into(), list_group(&mix.kind).into());
+        // octoLists v2: which group of Flakyfy's lists this row belongs to, so apps can group them.
+        fields.insert("octoGroup".into(), list_group(&mix.kind).into());
         fields
     }
 
@@ -217,7 +217,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "libraryAction": {
                 "id": song_id,
@@ -234,7 +234,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "libraryAction": {
                 "id": song_id,
@@ -254,7 +254,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "libraryTrash": {
                 "keepDays": keep_days,
@@ -279,7 +279,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "openSubsonic": true,
             "upgrades": jobs.iter().map(|(job, progress)| json!({
                 "id": job.navidrome_id,
@@ -316,7 +316,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "acquisition": json,
         }))
     }
@@ -325,7 +325,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "cleared": { "count": cleared },
         }))
     }
@@ -334,7 +334,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "foundSongs": found_songs_json(found),
         }))
     }
@@ -343,7 +343,7 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
         self.create_json_response(json!({
             "status": "ok",
             "version": SUBSONIC_VERSION,
-            "type": "flakyfy",
+            "type": "octo",
             "pick": pick_json(outcome),
         }))
     }
@@ -614,7 +614,7 @@ mod tests {
         assert_eq!(
             reply.text(),
             concat!(
-                r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"flakyfy","acquisitions":{"acquisition":[{"#,
+                r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","acquisitions":{"acquisition":[{"#,
                 r#""id":"deezer:1","artist":"A","title":null,"album":null,"state":"downloading","progress":0.25,"#,
                 r#""bytesDone":10,"bytesTotal":null,"source":null,"startedAt":"2026-10-04T08:07:45Z","#,
                 r#""updatedAt":"2026-10-04T08:07:45Z","error":null,"libraryId":null,"ahead":2,"note":null,"#,
@@ -630,7 +630,7 @@ mod tests {
             builder()
                 .create_library_action_outcome_response("s1", &outcome, DEFAULT_LIBRARY_ACTION)
                 .text(),
-            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"flakyfy","openSubsonic":true,"libraryAction":{"id":"s1","action":"remove","state":"rehearsed","detail":"dry run"}}}"#
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryAction":{"id":"s1","action":"remove","state":"rehearsed","detail":"dry run"}}}"#
         );
         let job = UpgradeJob {
             navidrome_id: "n1".into(),
@@ -642,7 +642,7 @@ mod tests {
         };
         assert_eq!(
             builder().create_upgrades_response(&[(job, Some(0.5))]).text(),
-            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"flakyfy","openSubsonic":true,"upgrades":[{"id":"n1","title":"T","artist":null,"album":null,"state":"working","detail":null,"progress":0.5,"updatedAt":"2026-10-04T08:07:45.1234567Z","acquisition":null,"picked":null}]}}"#
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"upgrades":[{"id":"n1","title":"T","artist":null,"album":null,"state":"working","detail":null,"progress":0.5,"updatedAt":"2026-10-04T08:07:45.1234567Z","acquisition":null,"picked":null}]}}"#
         );
     }
 
@@ -670,7 +670,7 @@ mod tests {
             builder()
                 .create_generated_playlist_response("json", &mix, &settings, &entries)
                 .text(),
-            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","playlist":{"id":"og1","name":"Rock mix","owner":"alice","public":false,"songCount":1,"duration":200,"comment":"Generated by Flakyfy from your library","created":"2026-10-01T00:00:00.000Z","changed":"2026-10-01T00:00:00.000Z","coverArt":"og1_2c10","readonly":true,"validUntil":"2026-10-08T00:00:00.000Z","flakyfyGroup":"genre","entry":[{"id":"n1","duration":200}]}}}"#
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","playlist":{"id":"og1","name":"Rock mix","owner":"alice","public":false,"songCount":1,"duration":200,"comment":"Generated by Flakyfy from your library","created":"2026-10-01T00:00:00.000Z","changed":"2026-10-01T00:00:00.000Z","coverArt":"og1_2c10","readonly":true,"validUntil":"2026-10-08T00:00:00.000Z","octoGroup":"genre","entry":[{"id":"n1","duration":200}]}}}"#
         );
     }
 }

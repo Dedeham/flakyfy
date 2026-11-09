@@ -18,7 +18,7 @@ use crate::services::state_file;
 pub enum TidyScope {
     /// Files Flakyfy downloaded, from its mappings.
     #[default]
-    FlakyfyDownloads,
+    OctoDownloads,
     /// Every audio file under the music folder. Apply asks for the path typed back.
     WholeLibrary,
 }
@@ -26,7 +26,7 @@ pub enum TidyScope {
 impl TidyScope {
     pub fn name(self) -> &'static str {
         match self {
-            TidyScope::FlakyfyDownloads => "FlakyfyDownloads",
+            TidyScope::OctoDownloads => "OctoDownloads",
             TidyScope::WholeLibrary => "WholeLibrary",
         }
     }
@@ -34,7 +34,7 @@ impl TidyScope {
     pub fn parse(value: Option<&str>) -> TidyScope {
         match value.map(str::trim) {
             Some(value) if value.eq_ignore_ascii_case("WholeLibrary") => TidyScope::WholeLibrary,
-            _ => TidyScope::FlakyfyDownloads,
+            _ => TidyScope::OctoDownloads,
         }
     }
 }

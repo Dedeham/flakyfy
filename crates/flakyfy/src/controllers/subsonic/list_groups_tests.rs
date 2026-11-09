@@ -1,4 +1,4 @@
-//! Every Flakyfy list row says which group it belongs to (`flakyfyGroup`): getPlaylists and getPlaylist
+//! Every Flakyfy list row says which group it belongs to (`octoGroup`): getPlaylists and getPlaylist
 //! carry it in JSON and XML for Liked Songs, Made for you and every kind of mix. Chart and station
 //! rows are checked where those lists are made (`top_songs_tests`, `route_tests::radio`).
 
@@ -126,7 +126,7 @@ async fn groups_app() -> (MockServer, App) {
     (server, app(&state))
 }
 
-/// The Flakyfy rows of getPlaylists as (name, flakyfyGroup, flakyfyList), once the mixes are counted.
+/// The Flakyfy rows of getPlaylists as (name, octoGroup, octoList), once the mixes are counted.
 async fn flakyfy_rows(app: &App) -> Vec<(String, String, Option<String>)> {
     let mut rows = Vec::new();
     for _ in 0..100 {
@@ -141,8 +141,8 @@ async fn flakyfy_rows(app: &App) -> Vec<(String, String, Option<String>)> {
                     .map(|row| {
                         (
                             row["name"].as_str().unwrap_or_default().to_string(),
-                            row["flakyfyGroup"].as_str().unwrap_or("(none)").to_string(),
-                            row["flakyfyList"].as_str().map(str::to_string),
+                            row["octoGroup"].as_str().unwrap_or("(none)").to_string(),
+                            row["octoList"].as_str().map(str::to_string),
                         )
                     })
                     .collect()
@@ -179,7 +179,7 @@ async fn every_flakyfy_list_row_says_its_group_in_json_and_xml() {
             ("Bad Bunny Mix", "artist"),
         ]
     );
-    // flakyfyList is as it was: Made for you and Liked Songs only.
+    // octoList is as it was: Made for you and Liked Songs only.
     let lists: Vec<Option<&str>> = rows.iter().map(|(_, _, list)| list.as_deref()).collect();
     assert_eq!(
         lists,
@@ -201,10 +201,7 @@ async fn every_flakyfy_list_row_says_its_group_in_json_and_xml() {
             .split("<playlist ")
             .find(|row| row.contains(&format!(r#"name="{name}""#)))
             .unwrap_or_else(|| panic!("{name} in {xml}"));
-        assert!(
-            row.contains(&format!(r#"flakyfyGroup="{group}""#)),
-            "{name}: {row}"
-        );
+        assert!(row.contains(&format!(r#"octoGroup="{group}""#)), "{name}: {row}");
     }
 }
 
@@ -232,8 +229,8 @@ async fn get_playlist_carries_the_group_of_a_year_and_an_artist_mix() {
             .json();
         let playlist: &Value = &detail["subsonic-response"]["playlist"];
         assert_eq!(playlist["name"], name);
-        assert_eq!(playlist["flakyfyGroup"], group, "{name}");
-        assert!(playlist.get("flakyfyList").is_none(), "{name}");
+        assert_eq!(playlist["octoGroup"], group, "{name}");
+        assert!(playlist.get("octoList").is_none(), "{name}");
         let entries = playlist["entry"].as_array().expect("entries");
         assert_eq!(entries.len(), songs, "{name}");
         assert!(
@@ -244,9 +241,6 @@ async fn get_playlist_carries_the_group_of_a_year_and_an_artist_mix() {
         let xml = get(&app, &format!("/rest/getPlaylist.view?{AUTH}&id={id}"))
             .await
             .text();
-        assert!(
-            xml.contains(&format!(r#"flakyfyGroup="{group}""#)),
-            "{name}: {xml}"
-        );
+        assert!(xml.contains(&format!(r#"octoGroup="{group}""#)), "{name}: {xml}");
     }
 }

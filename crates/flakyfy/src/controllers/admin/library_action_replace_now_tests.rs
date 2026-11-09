@@ -117,8 +117,8 @@ async fn replace_now(state: &AppState, headers: &[(&str, &str)], key: &str) -> R
 
 fn signed_in(token: &str) -> [(&'static str, String); 2] {
     [
-        ("X-Flakyfy-Admin", "1".to_string()),
-        ("Cookie", format!("flakyfy_browse={token}")),
+        ("X-Octo-Admin", "1".to_string()),
+        ("Cookie", format!("octo_browse={token}")),
     ]
 }
 
@@ -131,7 +131,7 @@ async fn as_admin(state: &AppState, token: &str, key: &str) -> Reply {
 #[tokio::test]
 async fn the_questions_say_their_key_whether_they_are_open_and_the_song_navidrome_shows() {
     let (state, token, key) = asked(replacing());
-    let cookie = format!("flakyfy_browse={token}");
+    let cookie = format!("octo_browse={token}");
     let list = |state: AppState| {
         let cookie = cookie.clone();
         async move {
@@ -163,7 +163,7 @@ async fn replace_now_needs_the_dashboard_sign_in() {
     let (state, _, key) = asked(replacing());
     state.notice_queue.set_navidrome_id(&key, "nd-1");
 
-    let refused = replace_now(&state, &[("X-Flakyfy-Admin", "1")], &key).await;
+    let refused = replace_now(&state, &[("X-Octo-Admin", "1")], &key).await;
 
     assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
 }
@@ -227,7 +227,7 @@ async fn replace_now_answers_only_an_open_question_navidrome_shows() {
 async fn replace_now_answers_only_a_question_put_to_the_person_signed_in() {
     let (state, token, key) = asked_of("bob", replacing(), None);
     state.notice_queue.set_navidrome_id(&key, "nd-1");
-    let cookie = format!("flakyfy_browse={token}");
+    let cookie = format!("octo_browse={token}");
     let listed = send(
         &app(state.clone()),
         Method::GET,

@@ -1,4 +1,4 @@
-//! flakyfyImports v1, the import page for the Flakyfy apps, the same lists and trickle the dashboard
+//! octoImports v1, the import page for the Flakyfy apps, the same lists and trickle the dashboard
 //! shows, for whoever the app signed in as. Every call checks the caller's sign-in with Navidrome
 //! first, as getUpgrades does, and answers JSON. Version 2 adds getImportServices (where to
 //! export a library to a file), importFile and importText.
@@ -44,7 +44,7 @@ fn flakyfy_answer(state: &AppState, key: &str, value: Value) -> SubsonicReply {
     state.subsonic_response_builder.create_json_response(json!({
         "status": "ok",
         "version": SUBSONIC_VERSION,
-        "type": "flakyfy",
+        "type": "octo",
         "openSubsonic": true,
         key: value,
     }))
@@ -120,7 +120,7 @@ pub async fn get_import(State(state): State<AppState>, req: Request) -> AppResul
     })
 }
 
-/// Where the caller can bring their music from (flakyfyImports 2).
+/// Where the caller can bring their music from (octoImports 2).
 pub async fn get_import_services(State(state): State<AppState>, req: Request) -> AppResult {
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
@@ -133,7 +133,7 @@ pub async fn get_import_services(State(state): State<AppState>, req: Request) ->
     Ok(flakyfy_answer(&state, "importServices", services).into_response())
 }
 
-/// A pasted list, one song a line (flakyfyImports 2): `text`, and `name`, "Pasted list" when not
+/// A pasted list, one song a line (octoImports 2): `text`, and `name`, "Pasted list" when not
 /// given.
 pub async fn import_text(State(state): State<AppState>, req: Request) -> AppResult {
     let call = match SubsonicCall::read(&state, req).await {
@@ -156,7 +156,7 @@ pub async fn import_text(State(state): State<AppState>, req: Request) -> AppResu
     answer_action(&state, "importText", &result)
 }
 
-/// An exported file (flakyfyImports 2): a multipart form with the file in `file`, up to 64 MB,
+/// An exported file (octoImports 2): a multipart form with the file in `file`, up to 64 MB,
 /// read as the dashboard's file import reads it. `name` names it when the part has no file
 /// name.
 pub async fn import_file(State(state): State<AppState>, req: Request) -> AppResult {

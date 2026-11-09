@@ -972,7 +972,7 @@ fn directory_name(path: &str) -> Option<String> {
     }
 }
 
-// ".flakyfy-trash/2026-10-03", the part of the quarantine path a person can find again.
+// ".octo-trash/2026-10-03", the part of the quarantine path a person can find again.
 fn kept_folder(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty()).collect();

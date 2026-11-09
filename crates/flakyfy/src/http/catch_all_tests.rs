@@ -300,7 +300,7 @@ async fn a_saved_play_queue_is_relayed_as_it_came_and_read_for_the_songs_fetched
         .respond_with(ok_json(r#"{"subsonic-response":{"status":"ok"}}"#))
         .mount(&server)
         .await;
-    let uri = "/rest/savePlayQueue?id=lib-1&id=lib-2&id=lib-3&current=lib-2&u=alice&t=tok&s=salt&v=1.16.1&c=Flakyfy&f=json";
+    let uri = "/rest/savePlayQueue?id=lib-1&id=lib-2&id=lib-3&current=lib-2&u=alice&t=tok&s=salt&v=1.16.1&c=Octo&f=json";
 
     let (off, _) = prefetch_state(&server.uri(), false);
     let before = send(&app(off), Method::GET, uri, &[], "").await;
@@ -335,7 +335,7 @@ async fn a_saved_queue_that_starts_with_an_outside_song_is_answered_as_before_an
     let (on, outside_on) = prefetch_state(&server.uri(), true);
     assert_eq!(outside, outside_on, "the registry's ids are the routing's");
     let uri = format!(
-        "/rest/savePlayQueueByIndex?id={outside}&currentIndex=0&u=alice&t=tok&s=salt&v=1.16.1&c=Flakyfy&f=json"
+        "/rest/savePlayQueueByIndex?id={outside}&currentIndex=0&u=alice&t=tok&s=salt&v=1.16.1&c=Octo&f=json"
     );
     let before = send(&app(off), Method::GET, &uri, &[], "").await;
     let after = send(&app(on.clone()), Method::GET, &uri, &[], "").await;

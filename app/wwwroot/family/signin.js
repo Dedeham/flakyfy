@@ -2,7 +2,7 @@
  * The page a sign-in hand-over QR code opens on a new device:
  * /family/signin#t=<token>&k=<key>&s=<server>&h=<home>, with `u=<username>` when the app adds
  * it. Everything stays in the part after #, which browsers never send to a server, and this
- * page sends nothing either: it hands the same values to the Flakyfy app, which redeems the token
+ * page sends nothing either: it hands the same values to the Octo app, which redeems the token
  * and opens the sealed sign-in with the key.
  *
  * On Android the app opens at once through an intent link that comes back here (with back=1)
@@ -39,7 +39,7 @@
       el('div', null, el('h1', { tabindex: '-1' }, text), lede ? el('p', null, lede) : null));
   }
 
-  // What the Flakyfy app takes: the hand-over token, the key, the server and the home address.
+  // What the Octo app takes: the hand-over token, the key, the server and the home address.
   function handOverQuery() {
     var q = new URLSearchParams();
     q.set('t', token);
@@ -56,7 +56,7 @@
       var fallback = location.origin + '/family/signin#' + handOverQuery() + '&back=1';
       return F.intentLink('handover', handOverQuery(), fallback);
     }
-    if (platform === 'desktop') return 'flakyfy://handover?' + handOverQuery();
+    if (platform === 'desktop') return 'octo://handover?' + handOverQuery();
     return null;
   }
 
@@ -69,7 +69,7 @@
     rows.push(F.row('Password', 'The one you chose', { plain: true }));
     return card(
       el('h2', { class: 'info-card-title' }, 'With another app'),
-      el('p', { class: 'fam-card-desc' }, 'This code signs in the Flakyfy app only. In Symfonium, Feishin or any Subsonic app, type your login: the server below, your username and your password.'),
+      el('p', { class: 'fam-card-desc' }, 'This code signs in the Octo app only. In Symfonium, Feishin or any Subsonic app, type your login: the server below, your username and your password.'),
       el('div', { class: 'fam-gap fam-pop-stack' },
         F.table.apply(null, rows),
         el('section', { class: 'fam-pop-block' },
@@ -88,7 +88,7 @@
     }
     var link = openLink();
     var flakyfy = card(
-      el('h2', { class: 'info-card-title' }, 'With the Flakyfy app'),
+      el('h2', { class: 'info-card-title' }, 'With the Octo app'),
       el('p', { class: 'fam-card-desc' }, link
         ? 'Press Open in Flakyfy, then allow it on your other device. If nothing happens, Flakyfy is not installed yet: see Get Flakyfy below.'
         : 'Flakyfy has no app for this device yet, so use another app below.'),

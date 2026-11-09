@@ -1,4 +1,4 @@
-//! flakyfyAcquisitions version 3, the apps' downloads drawer. One download's whole log, clearing
+//! octoAcquisitions version 3, the apps' downloads drawer. One download's whole log, clearing
 //! finished ones, and Find songs (a search run again by hand, every copy listed, one picked, and
 //! a library song replaced anyway once the person says so).
 //! Always JSON, and every call is checked with a ping to Navidrome as getAcquisitions is. Each
@@ -163,7 +163,7 @@ pub async fn get_found_songs(State(state): State<AppState>, req: Request) -> App
 /// Fetches exactly one copy a Find songs search listed, by its id there (copy). The copy's place
 /// on the list (candidate) still works for older apps, once the search has ended.
 ///
-/// `anyway` (flakyfyAcquisitions version 3): an app that sends it can ask the person. With
+/// `anyway` (octoAcquisitions version 3): an app that sends it can ask the person. With
 /// `anyway=false`, a copy that would replace a library song but is no better than it, or is the
 /// plain song in place of another take, answers `confirm` with the words to ask; picking it
 /// again with `anyway=true` replaces the song anyway. Without it the pick is refused as before.

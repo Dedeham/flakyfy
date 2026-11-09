@@ -29,7 +29,7 @@ pub const TOKEN_COOKIES: [&str; 2] = ["mornye_web_token", "spotiflac_web_token"]
 
 /// Where Mornye's downloads land, under Flakyfy's music folder: a dot folder, which Navidrome's
 /// scanner skips.
-pub const SPOTIFLAC_FOLDER: &str = ".flakyfy-incoming/spotiflac";
+pub const SPOTIFLAC_FOLDER: &str = ".octo-incoming/spotiflac";
 
 /// How long one call to Mornye's API may take.
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -422,7 +422,7 @@ pub fn make_shared_folder(path: &str) -> std::io::Result<()> {
         // The folder and its parents up to the incoming folder.
         for _ in 0..3 {
             let _ = std::fs::set_permissions(at, std::fs::Permissions::from_mode(0o777));
-            if at.file_name().is_some_and(|name| name == ".flakyfy-incoming") {
+            if at.file_name().is_some_and(|name| name == ".octo-incoming") {
                 break;
             }
             match at.parent() {

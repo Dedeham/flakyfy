@@ -130,7 +130,7 @@ struct HeartLine {
 
 /// The platform a play came from: the app's name when it says (an iPhone app's Mac build names
 /// the Mac in its agent), then the User-Agent's own words in its parentheses
-/// (`Flakyfy/1.9.0 (Android)` is android; Android is checked before Linux, since Android's own agents
+/// (`Octo/1.9.0 (Android)` is android; Android is checked before Linux, since Android's own agents
 /// name both).
 pub fn platform_of(user_agent: &str, client: &str) -> &'static str {
     let app = client.trim().to_ascii_lowercase();

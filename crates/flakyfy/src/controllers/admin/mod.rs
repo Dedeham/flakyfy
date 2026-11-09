@@ -42,6 +42,7 @@ pub mod spotiflac;
 pub mod system;
 pub mod tidy;
 pub mod trash;
+pub mod unsure;
 pub mod update;
 pub mod upgrades;
 
@@ -144,6 +145,7 @@ pub fn routes() -> RouteSet {
 pub fn library_and_job_routes() -> RouteSet {
     RouteSet::new()
         .merge(library_actions::routes())
+        .merge(unsure::routes())
         .merge(trash::routes())
         .merge(health::routes())
         .merge(animated_art::routes())

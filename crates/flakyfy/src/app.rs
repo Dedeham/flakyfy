@@ -105,6 +105,7 @@ use crate::services::library::library_youtube_check::{
 use crate::services::library::navidrome_song_list;
 use crate::services::library::tidy::worker::ListSongs;
 use crate::services::library::tidy::{TidyJournal, TidyServices, TidyStore, TidyWorker};
+use crate::services::library::unsure_songs::UnsureStore;
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{ChartPlaylistService, LibraryMatchCache};
 use crate::services::library::{
@@ -1340,6 +1341,7 @@ struct Stores {
     notice_queue: Arc<NoticeQueue>,
     review_sweep_store: Arc<ReviewSweepStore>,
     youtube_check_store: Arc<YoutubeCheckStore>,
+    unsure_store: Arc<UnsureStore>,
     identity_sweep_store: Arc<IdentitySweepStore>,
     lidarr_pending: Arc<LidarrPendingAlbums>,
     family_vault: Arc<FamilyVault>,
@@ -1458,6 +1460,7 @@ impl Stores {
             youtube_check_store: Arc::new(YoutubeCheckStore::new(Some(
                 config_dir.join("youtube-check.json"),
             ))),
+            unsure_store: Arc::new(UnsureStore::new(Some(config_dir.join("youtube-unsure.json")))),
             identity_sweep_store: Arc::new(IdentitySweepStore::new(Some(
                 config_dir.join("identity-sweep.json"),
             ))),
@@ -1511,6 +1514,8 @@ impl Stores {
         workers.register("YoutubeCheckStore", move |token| {
             youtube_check.clone().run_flusher(token)
         });
+        let unsure = self.unsure_store.clone();
+        workers.register("UnsureStore", move |token| unsure.clone().run_flusher(token));
         let identities = self.identity_sweep_store.clone();
         workers.register("IdentitySweepStore", move |token| {
             identities.clone().run_flusher(token)
@@ -2590,7 +2595,8 @@ impl LibraryJobs {
                 fingerprint_sweep_verifier.clone(),
             )
             // Replacing, when switched on, by the sweep's own rule and toward its day's count.
-            .with_replacing(library_review_sweep_worker.clone()),
+            .with_replacing(library_review_sweep_worker.clone())
+            .with_unsure_store(stores.unsure_store.clone()),
         );
         LibraryJobs {
             upgrade_worker,
@@ -4135,6 +4141,7 @@ mod tests {
             "QualityUpgradeWorker",
             "LibraryReviewSweepWorker",
             "YoutubeCheckStore",
+            "UnsureStore",
             "LibraryYoutubeCheck",
             "IdentitySweepStore",
             "LibraryIdentitySweep",

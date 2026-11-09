@@ -312,6 +312,7 @@ services:
       # Let that check replace what it clearly hears as another song, by the sweep's preview rule
       # and within the same daily limit. Off by default.
       LibraryActions__YoutubeCheckAutoReplace: ${LIBRARY_ACTIONS_YOUTUBE_CHECK_AUTO_REPLACE:-false}
+      LibraryActions__YoutubeUnsureAutoReplace: ${LIBRARY_ACTIONS_YOUTUBE_UNSURE_AUTO_REPLACE:-false}
       # Recordings the library holds more than once, side by side, the copy worth keeping first.
       # Flakyfy only points them out; nothing is removed unless you remove it.
       LibraryActions__DuplicatesEnabled: ${LIBRARY_ACTIONS_DUPLICATES:-false}

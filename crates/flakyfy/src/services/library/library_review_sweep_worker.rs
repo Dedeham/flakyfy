@@ -1640,16 +1640,23 @@ impl LibraryReviewSweepWorker {
         witness: PreviewWitness,
     ) -> Replacing {
         let today = self.store.read(|s| s.today(self.clock.now()));
-        if self.notices.reviewed_paths().contains(path)
-            || Self::decide_for_youtube_check(
-                question,
-                file,
-                &self.settings.current(),
-                keeper,
-                today,
-                witness,
-            ) != AutoReplace::Replace
-        {
+        let decided =
+            Self::decide_for_youtube_check(question, file, &self.settings.current(), keeper, today, witness);
+        self.replace_as_decided(decided, keeper, path, file, question)
+            .await
+    }
+
+    /// What a replacing decided on still has to pass: nobody was asked about the file already, and
+    /// it is not one of Flakyfy's own downloads.
+    async fn replace_as_decided(
+        &self,
+        decided: AutoReplace,
+        keeper: &str,
+        path: &str,
+        file: &SweptFile,
+        question: &VerificationResult,
+    ) -> Replacing {
+        if decided != AutoReplace::Replace || self.notices.reviewed_paths().contains(path) {
             return Replacing::Declined;
         }
         let full = get_full_path(path);
@@ -1663,6 +1670,24 @@ impl LibraryReviewSweepWorker {
             return Replacing::Declined;
         }
         self.replace(keeper, path, file, question, false).await
+    }
+
+    /// [`Self::replace_for_youtube_check`] for a song a rule someone accepted takes as another,
+    /// behind `YoutubeUnsureAutoReplace`, by the same steps and toward the same day's count.
+    pub async fn replace_for_unsure(
+        &self,
+        keeper: &str,
+        path: &str,
+        file: &SweptFile,
+        question: &VerificationResult,
+        witness: PreviewWitness,
+    ) -> Replacing {
+        let today = self.store.read(|s| s.today(self.clock.now()));
+        let settings = self.settings.current();
+        let switches = (false, settings.library_actions.youtube_unsure_auto_replace);
+        let decided = Self::decide_by(question, file, &settings, keeper, today, Some(witness), switches);
+        self.replace_as_decided(decided, keeper, path, file, question)
+            .await
     }
 
     /// Counts one replacement, or one that failed, and writes it at once: the day's cap and

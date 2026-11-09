@@ -13,7 +13,7 @@
 //! tried again, but not for ever: a song that cannot be answered after two rests, while the shim
 //! itself answers, is counted as having no copy.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -43,15 +43,17 @@ use super::library_review_sweep_worker::{
 use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::{NoticeOrigin, NoticeQueue};
 use super::quality_upgrade_worker::compare_ordinal;
+use super::unsure_songs::{HeardVideo, RuleAction, UnsureReason, UnsureStore, videos_disagree};
 use crate::services::common::IAcquisitionActivity;
 use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::fingerprint::preview_check::{
-    self, FILE_SECONDS, Heard, PreviewFacts, PreviewFailure, PreviewRequest, PreviewSource,
+    self, FILE_SECONDS, Heard, LENGTH_SLACK_SECONDS, PreviewFacts, PreviewFailure, PreviewRequest,
+    PreviewSource,
 };
 use crate::services::library::library_walk;
 use crate::services::state_file;
 use crate::services::you_tube::YouTubeResolver;
-use crate::services::you_tube::you_tube_resolver::Failure;
+use crate::services::you_tube::you_tube_resolver::{Failure, Lookup};
 
 /// What AcoustID says of one library file.
 #[derive(Debug, Clone, PartialEq)]
@@ -67,7 +69,7 @@ enum AcoustIdAnswer {
 }
 
 /// What the preview says of one library file.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Compared {
     /// Nothing to compare with: no video for the song, a file fpcalc cannot read, or too little
     /// audio. An answer: asking again would not change it.
@@ -85,6 +87,8 @@ pub enum Compared {
         heard: Heard,
         bit_error: f64,
         album_agrees: bool,
+        /// The video it was compared with, kept when the check could not say.
+        video: Option<Box<HeardVideo>>,
     },
 }
 
@@ -98,6 +102,12 @@ pub trait YoutubeChecker: Send + Sync {
     async fn shim_answers(&self) -> bool {
         true
     }
+
+    /// The file of `song` against other videos of it than those in `skip`, for a song the check
+    /// could not settle. Empty when there is no other to compare with.
+    async fn another_look(&self, _path: &Path, _song: &Song, _skip: &[String]) -> Vec<HeardVideo> {
+        Vec::new()
+    }
 }
 
 /// [`hear`] with the app's fingerprinter, shim and settings.
@@ -110,18 +120,7 @@ pub struct AppYoutubeChecker {
 #[async_trait]
 impl YoutubeChecker for AppYoutubeChecker {
     async fn check(&self, path: &Path, song: &Song) -> Compared {
-        // The length narrows YouTube Music's rows to the song's own and says whether the preview
-        // can be believed; a file that does not say how long it is is looked up by its names.
-        let owned = path.to_path_buf();
-        let seconds = tokio::task::spawn_blocking(move || {
-            TagFile::open(&owned)
-                .ok()
-                .map(|file| file.duration_seconds())
-                .filter(|seconds| *seconds > 0)
-        })
-        .await
-        .ok()
-        .flatten();
+        let seconds = file_seconds(path).await;
         let request = PreviewRequest {
             artist: &song.artist,
             title: &song.title,
@@ -158,6 +157,84 @@ impl YoutubeChecker for AppYoutubeChecker {
     async fn shim_answers(&self) -> bool {
         self.youtube.busy().await.is_some()
     }
+
+    async fn another_look(&self, path: &Path, song: &Song, skip: &[String]) -> Vec<HeardVideo> {
+        let seconds = file_seconds(path).await;
+        let request = PreviewRequest {
+            artist: &song.artist,
+            title: &song.title,
+            seconds,
+            video_id: None,
+            background: true,
+        };
+        let timeout = self
+            .settings
+            .current()
+            .soulseek
+            .effective_fingerprint_timeout_seconds();
+        let query = format!("{} {}", song.artist, song.title);
+        let mut skip = skip.to_vec();
+        let mut heard = Vec::new();
+        // Most videos that turned out to be the song were other YouTube Music rows, so those
+        // first, then what a search ranks next.
+        let mut rows = self
+            .youtube
+            .music_rows_for_song(&song.artist, &song.title)
+            .await
+            .into_iter();
+        for _ in 0..LibraryYoutubeCheck::ANOTHER_LOOK_VIDEOS {
+            let row = rows.find(|row| {
+                !row.video_id.is_empty()
+                    && !skip.contains(&row.video_id)
+                    && row
+                        .duration
+                        .zip(seconds)
+                        .is_none_or(|(got, want)| (got - want).abs() <= 30)
+            });
+            let hit = match row {
+                Some(row) => row,
+                None => match self.youtube.search_ranked(&query, seconds, &skip).await {
+                    Lookup::Found(hit) if !hit.video_id.is_empty() => hit,
+                    _ => break,
+                },
+            };
+            skip.push(hit.video_id.clone());
+            let channel = hit.channel.clone();
+            let facts = PreviewFacts::from_hit(hit, channel);
+            let answer = hear(
+                self.youtube.as_ref(),
+                &self.fingerprinter,
+                path,
+                &request,
+                &song.album,
+                facts,
+                timeout,
+            )
+            .await;
+            if let Compared::Heard {
+                video: Some(video), ..
+            } = answer
+            {
+                heard.push(*video);
+            }
+        }
+        heard
+    }
+}
+
+/// The length narrows YouTube Music's rows to the song's own and says whether the preview can be
+/// believed; a file that does not say how long it is is looked up by its names.
+async fn file_seconds(path: &Path) -> Option<i32> {
+    let owned = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        TagFile::open(&owned)
+            .ok()
+            .map(|file| file.duration_seconds())
+            .filter(|seconds| *seconds > 0)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// The file at `path`, tagged with `album`, against `preview`, as [`preview_check::check`] compares
@@ -214,10 +291,34 @@ pub async fn hear(
             " (a preview that may not be the song)"
         }
     );
+    let album_agrees = LibraryReviewSweepWorker::preview_album_agrees(preview.album.as_deref(), album);
+    let length_off = matches!(
+        (request.seconds, preview.seconds),
+        (Some(want), Some(got)) if want > 0 && got > 0 && (want - got).abs() > LENGTH_SLACK_SECONDS
+    );
+    let reason = if trusted {
+        UnsureReason::Between
+    } else if length_off {
+        UnsureReason::Length
+    } else {
+        UnsureReason::Name
+    };
     Compared::Heard {
         heard: verdict,
         bit_error: comparison.bit_error,
-        album_agrees: LibraryReviewSweepWorker::preview_album_agrees(preview.album.as_deref(), album),
+        album_agrees,
+        video: Some(Box::new(HeardVideo {
+            video_id: preview.video_id,
+            title: preview.title,
+            artist: preview.artist,
+            album: preview.album,
+            seconds: preview.seconds,
+            bit_error: comparison.bit_error,
+            offset_seconds: comparison.offset_seconds,
+            trusted,
+            reason,
+            rejected: false,
+        })),
     }
 }
 
@@ -405,6 +506,8 @@ pub struct LibraryYoutubeCheck {
     /// The review sweep, whose rule and steps replace a song the check clearly hears as another
     /// when `YoutubeCheckAutoReplace` is on. None only ever asks.
     replacing: Option<Arc<LibraryReviewSweepWorker>>,
+    /// The songs it could not settle, for a person to hear and answer.
+    unsure: Arc<UnsureStore>,
 
     files: Mutex<Option<Arc<Vec<String>>>>,
     /// Changes when a run starts, so work in flight for the last one drops its result.
@@ -444,6 +547,8 @@ impl LibraryYoutubeCheck {
     pub const MAX_LOOKUP_MISSES: i32 = 3;
     /// Reads of one song fpcalc may fail before it is counted as having no copy.
     pub const MAX_UNREADABLE_TRIES: i32 = 3;
+    /// How many more videos one further look at an unsure song compares.
+    pub const ANOTHER_LOOK_VIDEOS: usize = 3;
 
     pub fn new(
         store: Arc<YoutubeCheckStore>,
@@ -466,6 +571,7 @@ impl LibraryYoutubeCheck {
             identities: None,
             acoustid: None,
             replacing: None,
+            unsure: Arc::new(UnsureStore::new(None)),
             files: Mutex::new(None),
             generation: AtomicI32::new(0),
             unavailable_in_a_row: AtomicI32::new(0),
@@ -500,8 +606,49 @@ impl LibraryYoutubeCheck {
         self
     }
 
+    /// Where the songs it could not settle are kept.
+    pub fn with_unsure_store(mut self, unsure: Arc<UnsureStore>) -> Self {
+        self.unsure = unsure;
+        self
+    }
+
     pub fn store(&self) -> &Arc<YoutubeCheckStore> {
         &self.store
+    }
+
+    pub fn unsure(&self) -> &Arc<UnsureStore> {
+        &self.unsure
+    }
+
+    /// The full path of a library-relative one.
+    pub fn full_path_of(&self, relative: &str) -> String {
+        full_path(&(self.music_root)(), relative)
+    }
+
+    /// Compares the unsure song `id` with videos it was not compared with yet. How many were
+    /// found, None when there is no such song or file.
+    pub async fn look_again(&self, id: u64) -> Option<usize> {
+        let song = self.unsure.song(id)?;
+        let full = self.full_path_of(&song.path);
+        let read = full.clone();
+        let swept = tokio::task::spawn_blocking(move || {
+            std::fs::metadata(&read)
+                .is_ok_and(|m| m.is_file())
+                .then(|| LibraryReviewSweepWorker::read_tags(&read))
+        })
+        .await
+        .ok()
+        .flatten()?;
+        let skip: Vec<String> = song.videos.iter().map(|video| video.video_id.clone()).collect();
+        let found = self
+            .checker
+            .another_look(Path::new(&full), &swept.song, &skip)
+            .await;
+        let count = found.len();
+        for video in found {
+            self.unsure.add_video(id, video);
+        }
+        Some(count)
     }
 
     fn shared_view(&self) -> Option<ScopeView> {
@@ -670,8 +817,11 @@ impl LibraryYoutubeCheck {
         let cursor = self.store.read(|s| s.cursor.clone());
         let view = self.shared_view();
         let settled = self.notices.settled_paths();
+        let answered = self.unsure.settled_stamps();
         let looked = root.clone();
-        let next = tokio::task::spawn_blocking(move || next_target(&files, &looked, &cursor, view, &settled));
+        let next = tokio::task::spawn_blocking(move || {
+            next_target(&files, &looked, &cursor, view, &settled, &answered)
+        });
         let Ok(next) = next.await else {
             return Self::IDLE_CHECK;
         };
@@ -828,6 +978,7 @@ impl LibraryYoutubeCheck {
                 heard,
                 bit_error,
                 album_agrees,
+                video,
             } => match heard {
                 Heard::Mismatch => {
                     match self
@@ -859,7 +1010,14 @@ impl LibraryYoutubeCheck {
                     }
                 }
                 Heard::Match => alike = 1,
-                Heard::Unclear => unsure = 1,
+                Heard::Unclear => {
+                    unsure = 1;
+                    if let Some(video) = video {
+                        (asked, replaced) = self
+                            .note_unsure(keeper, &full, target, &swept, acoustid_question, *video)
+                            .await;
+                    }
+                }
             },
             Compared::NoCopy | Compared::Unavailable | Compared::Busy | Compared::FileUnreadable => {
                 no_copy = 1
@@ -881,6 +1039,103 @@ impl LibraryYoutubeCheck {
     pub const QUESTION: &str = "Sounds nothing like the song on YouTube";
     /// What is added to an open question AcoustID could not settle.
     pub const FINDING: &str = "it sounds nothing like the song on YouTube";
+
+    /// What a question raised by an accepted rule about an unsure song says.
+    pub const UNSURE_QUESTION: &str = "A rule you accepted takes this unsure song as another song";
+
+    /// Keeps a song the check could not settle, and does what an accepted rule says of it. Whether
+    /// a question was raised, and whether it was replaced.
+    async fn note_unsure(
+        &self,
+        keeper: &str,
+        full: &str,
+        target: &str,
+        file: &SweptFile,
+        acoustid_question: Option<VerificationResult>,
+        video: HeardVideo,
+    ) -> (bool, bool) {
+        let read = full.to_string();
+        let stamp = tokio::task::spawn_blocking(move || stamp_of(&read))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let action = self
+            .unsure
+            .record(target, &file.song, &stamp, video, self.clock.now());
+        self.unsure.flush();
+        let ask = || {
+            self.notices
+                .add_library_question(keeper, full, &file.song, Self::UNSURE_QUESTION)
+        };
+        match action {
+            RuleAction::Wait | RuleAction::Settled => (false, false),
+            RuleAction::Ask => (ask(), false),
+            RuleAction::Replace => {
+                if self
+                    .replace_unsure(keeper, full, target, file, acoustid_question)
+                    .await
+                {
+                    (false, true)
+                } else {
+                    (ask(), false)
+                }
+            }
+        }
+    }
+
+    /// Replaces an unsure song under an accepted rule only when at least two videos clearly
+    /// disagree with it and none sounds like it, AcoustID has never heard it, and every gate of
+    /// the review sweep's replacing passes. False leaves it a question.
+    async fn replace_unsure(
+        &self,
+        keeper: &str,
+        full: &str,
+        target: &str,
+        file: &SweptFile,
+        acoustid_question: Option<VerificationResult>,
+    ) -> bool {
+        let (Some(sweep), Some(question)) = (self.replacing.as_ref(), acoustid_question) else {
+            return false;
+        };
+        if question.reason != InconclusiveReason::NoEntry {
+            return false;
+        }
+        let Some(song) = self.unsure.song_at(target) else {
+            return false;
+        };
+        let skip: Vec<String> = song.videos.iter().map(|video| video.video_id.clone()).collect();
+        for video in self
+            .checker
+            .another_look(Path::new(full), &file.song, &skip)
+            .await
+        {
+            self.unsure.add_video(song.id, video);
+        }
+        let Some(bit_error) = self
+            .unsure
+            .song(song.id)
+            .and_then(|song| videos_disagree(&song, LibraryReviewSweepWorker::PREVIEW_REPLACE_FROM))
+        else {
+            return false;
+        };
+        let question = VerificationResult {
+            reason: InconclusiveReason::DiffersFromYouTube,
+            evidence: Some(format!("{}% of its bits differ", (bit_error * 100.0).round())),
+            ..question
+        };
+        // Two videos stand in for the row from the file's own album the sweep's rule asks for.
+        let witness = PreviewWitness {
+            bit_error,
+            album_agrees: true,
+        };
+        matches!(
+            sweep
+                .replace_for_unsure(keeper, full, file, &question, witness)
+                .await,
+            Replacing::Done
+        )
+    }
 
     /// What AcoustID says of the song: the tag check's answer when the file is unchanged since,
     /// else a lookup of its own, in AcoustID's background lane.
@@ -1016,12 +1271,21 @@ fn next_target(
     cursor: &str,
     view: Option<ScopeView>,
     settled: &HashSet<String>,
+    answered: &HashMap<String, String>,
 ) -> Option<String> {
     files[first_after(files, cursor)..].iter().find_map(|relative| {
         let full = full_path(root, relative);
         let there = std::fs::metadata(&full).is_ok_and(|m| m.is_file());
-        (there && LibraryYoutubeCheck::in_shared(view.as_ref(), &full) && !settled.contains(&full))
-            .then(|| relative.clone())
+        let still_answered = || {
+            answered
+                .get(relative)
+                .is_some_and(|stamp| stamp_of(&full).as_deref() == Some(stamp))
+        };
+        (there
+            && LibraryYoutubeCheck::in_shared(view.as_ref(), &full)
+            && !settled.contains(&full)
+            && !still_answered())
+        .then(|| relative.clone())
     })
 }
 

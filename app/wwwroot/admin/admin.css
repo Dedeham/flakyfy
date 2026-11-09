@@ -2834,3 +2834,12 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .logo-preview { width: 64px; height: 64px; object-fit: contain; flex: none; }
 .logo-actions { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .logo-file-label { font-weight: 600; }
+
+/* Unsure songs: a song next to its YouTube video. */
+.unsure-list { display: grid; gap: 4px; width: 100%; }
+.unsure-card { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--hairline); }
+.unsure-players { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 8px; }
+.unsure-player { display: grid; gap: 4px; font-size: 13px; }
+.unsure-player audio { width: 100%; }
+.unsure-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.unsure-pick select { max-width: 100%; }

@@ -298,6 +298,12 @@ pub struct LibraryActionSettings {
     /// starred or rated, is still asked about.
     /// Environment variable: LIBRARY_ACTIONS_YOUTUBE_CHECK_AUTO_REPLACE
     pub youtube_check_auto_replace: bool,
+    /// Lets a rule of kind "replace" someone accepted in the list of unsure songs replace a song
+    /// through Wrong song, when at least two videos clearly disagree with it and none sounds like
+    /// it. Off by default, and does nothing until such a rule exists; the gates of
+    /// ReviewSweepAutoReplacePreview all still apply, toward the same daily limit and breaker.
+    /// Environment variable: LIBRARY_ACTIONS_YOUTUBE_UNSURE_AUTO_REPLACE
+    pub youtube_unsure_auto_replace: bool,
 
     /// A "Duplicates" playlist per allowed user: recordings the library holds more than once,
     /// side by side, the copy worth keeping first. Flakyfy only points them out; nothing is removed
@@ -367,6 +373,7 @@ impl Default for LibraryActionSettings {
             tag_check_per_hour: 60,
             youtube_check_per_hour: 30,
             youtube_check_auto_replace: false,
+            youtube_unsure_auto_replace: false,
             duplicates_enabled: false,
             duplicates_playlist_name: "Duplicates".to_string(),
             duplicates_scan_hours: 24,

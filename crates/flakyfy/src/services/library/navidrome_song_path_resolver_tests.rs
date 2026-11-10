@@ -189,6 +189,57 @@ fn candidate_paths_prefers_library_path_then_the_music_root() {
     );
 }
 
+/// Navidrome's library root can be a PARENT of the music root, so its relative path carries
+/// extra leading segments the real file does not have under our root.
+#[test]
+fn verify_navidrome_library_root_above_the_music_root_resolves() {
+    let f = Fixture::new();
+    f.write_file("octo/Some Artist/some song.flac", 2048);
+
+    let resolved = resolver()
+        .verify(
+            &candidate(
+                Some("trending/octo/Some Artist/some song.flac"),
+                2048,
+                "flac",
+                None,
+            ),
+            &f.root,
+            false,
+        )
+        .expect("resolved");
+
+    assert!(
+        resolved
+            .absolute_path
+            .ends_with("/octo/Some Artist/some song.flac")
+    );
+}
+
+/// Safety: the longest existing suffix wins, and a same-named file of another size is refused.
+#[test]
+fn verify_navidrome_library_root_above_the_music_root_prefers_longest_suffix_and_checks_size() {
+    let f = Fixture::new();
+    f.write_file("octo/Some Artist/some song.flac", 2048);
+    f.write_file("Some Artist/some song.flac", 2048);
+    let native = "trending/octo/Some Artist/some song.flac";
+
+    let resolved = resolver()
+        .verify(&candidate(Some(native), 2048, "flac", None), &f.root, false)
+        .expect("resolved");
+    assert!(
+        resolved
+            .absolute_path
+            .ends_with("/octo/Some Artist/some song.flac")
+    );
+
+    assert!(
+        resolver()
+            .verify(&candidate(Some(native), 9999, "flac", None), &f.root, false)
+            .is_none()
+    );
+}
+
 /// A pre-0.58 Navidrome stored absolute paths. If the two containers mount the library at
 /// different places, the tail is the only part still worth trying.
 #[test]

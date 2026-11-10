@@ -975,8 +975,7 @@ impl LibraryReviewSweepWorker {
                 Self::IDLE_CHECK,
             );
         }
-        let admin = current.subsonic.admin_username.clone();
-        let Some(keeper) = Self::keeper(&settings, admin.as_deref()) else {
+        let Some(keeper) = Self::keeper(&settings) else {
             return self.hold(
                 "Paused",
                 Some("Nobody is on the library actions allowlist to ask."),
@@ -985,8 +984,7 @@ impl LibraryReviewSweepWorker {
         };
         let open = self.notices.open_count(NoticeOrigin::LibrarySweep);
         if open >= Self::MAX_OPEN_QUESTIONS {
-            let reason =
-                format!("{open} library questions are waiting in Review. Answer some and it carries on.");
+            let reason = self.notices.pause_reason(open, &keeper);
             return self.hold("Paused", Some(&reason), Self::IDLE_CHECK);
         }
         if self.activity.is_busy() {
@@ -2053,12 +2051,9 @@ impl LibraryReviewSweepWorker {
         }
     }
 
-    /// The Navidrome admin when they may answer, otherwise the first allowed user. One person,
-    /// because a library file has no requester to ask instead.
-    pub fn keeper(settings: &LibraryActionSettings, admin_username: Option<&str>) -> Option<String> {
-        if settings.is_allowed(admin_username) {
-            return admin_username.map(|admin| admin.trim().to_string());
-        }
+    /// The first person on the allowlist, so its order says who answers. One person, because a
+    /// library file has no requester to ask instead.
+    pub fn keeper(settings: &LibraryActionSettings) -> Option<String> {
         settings
             .allowed_users
             .iter()
@@ -2215,10 +2210,7 @@ impl LibraryReviewSweepWorker {
         let files = self.files.lock().clone();
         let recheck_files = self.recheck_files.lock().clone();
         let (state, reason) = self.hold.lock().clone();
-        let keeper = Self::keeper(
-            &settings.library_actions,
-            settings.subsonic.admin_username.as_deref(),
-        );
+        let keeper = Self::keeper(&settings.library_actions);
         let now = self.clock.now();
         let threshold = settings.soulseek.effective_min_match_score();
         let default_threshold = SoulseekSettings::default().effective_min_match_score();

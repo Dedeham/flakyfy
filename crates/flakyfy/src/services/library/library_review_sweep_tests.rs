@@ -234,7 +234,7 @@ fn settings_of(per_hour: i32) -> LibraryActionSettings {
         enabled: true,
         review_enabled: true,
         review_sweep_per_hour: per_hour,
-        allowed_users: vec!["alice".into(), "bob".into()],
+        allowed_users: vec!["bob".into(), "alice".into()],
         ..Default::default()
     }
 }
@@ -597,14 +597,16 @@ async fn only_the_keeper_is_asked() {
 }
 
 #[test]
-fn keeper_is_the_allowed_admin_else_the_first_allowed_user() {
-    for (admin, expected) in [(Some("bob"), "bob"), (Some("root"), "alice"), (None, "alice")] {
-        assert_eq!(
-            LibraryReviewSweepWorker::keeper(&settings_of(60), admin).as_deref(),
-            Some(expected),
-            "{admin:?}"
-        );
-    }
+fn keeper_is_the_first_name_on_the_allowlist() {
+    let mut settings = settings_of(60);
+    settings.allowed_users = vec![" ".into(), " alice ".into(), "bob".into()];
+    assert_eq!(
+        LibraryReviewSweepWorker::keeper(&settings).as_deref(),
+        Some("alice")
+    );
+
+    settings.allowed_users.clear();
+    assert_eq!(LibraryReviewSweepWorker::keeper(&settings), None);
 }
 
 #[tokio::test]

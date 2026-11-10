@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 use super::duplicate_fixer::duplicates_comment;
 use super::library_action_playlist_worker::PlaylistRow;
 use super::notice_queue::{NamedEnum, NoticeEntry, NoticeOrigin, NoticeQueue, NoticeState};
-use super::{NavidromePlaylistApi, NavidromeSongPathResolver};
+use super::{LibraryReviewSweepWorker, NavidromePlaylistApi, NavidromeSongPathResolver};
 use crate::services::fingerprint::{AcoustIdClient, MusicBrainzClient};
 use crate::services::subsonic::NavidromeIdentityService;
 
@@ -35,6 +35,37 @@ pub struct NoticePlan {
 pub struct NoticeReconcile;
 
 impl NoticeReconcile {
+    /// Questions nobody can be shown go to the person asked about library songs: someone off the
+    /// allowlist is never swept, and someone with no Review playlist has nowhere to see them.
+    /// A failed read of the playlists says nothing about anyone, so it moves nothing.
+    pub fn hand_over(queue: &NoticeQueue, settings: &LibraryActionSettings, playlists: &[PlaylistRow]) {
+        if !settings.review_enabled || playlists.is_empty() {
+            return;
+        }
+        let Some(keeper) = LibraryReviewSweepWorker::keeper(settings) else {
+            return;
+        };
+        let title = settings.notice_title(NoticeKind::Review);
+        let has_review = |user: &str| {
+            playlists.iter().any(|row| {
+                dotnet::eq_ignore_case(&row.owner, user) && dotnet::eq_ignore_case(&row.name, &title)
+            })
+        };
+        if !has_review(&keeper) {
+            if queue.note_keeper_without_playlist(true) {
+                warn!("{keeper} is asked about library songs but has no {title} playlist to see them in");
+            }
+            return;
+        }
+        queue.note_keeper_without_playlist(false);
+        let moved = queue.hand_over(&keeper, |user| {
+            settings.is_allowed(Some(user)) && has_review(user)
+        });
+        if moved > 0 {
+            info!("{moved} question(s) nobody could see went to {keeper}");
+        }
+    }
+
     pub fn plan(entries: &[NoticeEntry], present: &HashSet<String>, max: i32) -> NoticePlan {
         let listed = |entry: &NoticeEntry| entry.navidrome_id.as_ref().is_some_and(|id| present.contains(id));
 
@@ -244,6 +275,7 @@ impl NoticePlaylistWorker {
         self.resolve_ids().await;
 
         let playlists = self.api.list_playlists().await;
+        NoticeReconcile::hand_over(&self.queue, settings, &playlists);
         for user in settings
             .allowed_users
             .iter()

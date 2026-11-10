@@ -631,8 +631,8 @@ before they existed.
 `LIBRARY_ACTIONS_REVIEW_SWEEP_PER_HOUR` (0, the default, is off) has Review check music that
 was already in the library too, that many songs an hour, and only while nothing is
 downloading. It needs download verification on (`SLSKD_VERIFY_DOWNLOADS`) and an AcoustID key
-(`ACOUSTID_API_KEY`). It asks one person, the library keeper: the Navidrome admin when they are
-on the allowlist, otherwise the first allowed user. Besides the usual questions it asks when AcoustID
+(`ACOUSTID_API_KEY`). It asks one person, the library keeper: the first name on the allowlist. A question for someone
+with no Review playlist, or who left the allowlist, goes to the keeper too. Besides the usual questions it asks when AcoustID
 is sure a song is something else, or when a song runs much longer or shorter than the
 recording it matched; those are questions too, never acted on by themselves. It stops while 50
 of its questions wait for an answer, and a Keep on one sends nothing to AcoustID, since its

@@ -517,10 +517,7 @@ async fn get_youtube_check(State(state): State<AppState>) -> Response {
 async fn start_youtube_check(State(state): State<AppState>) -> Response {
     let current = state.settings.current();
     let settings = &current.library_actions;
-    let keeper = crate::services::library::LibraryReviewSweepWorker::keeper(
-        settings,
-        current.subsonic.admin_username.as_deref(),
-    );
+    let keeper = crate::services::library::LibraryReviewSweepWorker::keeper(settings);
     if !settings.enabled
         || !settings.review_enabled
         || settings.effective_youtube_check_per_hour() == 0

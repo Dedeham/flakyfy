@@ -1404,10 +1404,7 @@ impl LibraryIdentitySweep {
         if settings.library_actions.dry_run {
             return None;
         }
-        let user = LibraryReviewSweepWorker::keeper(
-            &settings.library_actions,
-            settings.subsonic.admin_username.as_deref(),
-        )?;
+        let user = LibraryReviewSweepWorker::keeper(&settings.library_actions)?;
         if edits.refusal(&user).is_some() {
             return None;
         }

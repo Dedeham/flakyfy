@@ -301,6 +301,8 @@ pub struct NoticeQueue {
     entries: Mutex<DotnetDictionary<NoticeEntry>>,
     flush_lock: Mutex<()>,
     dirty: AtomicBool,
+    /// The person asked about library songs has no Review playlist, so nothing can be shown to them.
+    keeper_without_playlist: AtomicBool,
 }
 
 impl Default for NoticeQueue {
@@ -331,6 +333,7 @@ impl NoticeQueue {
             entries: Mutex::new(DotnetDictionary::new()),
             flush_lock: Mutex::new(()),
             dirty: AtomicBool::new(false),
+            keeper_without_playlist: AtomicBool::new(false),
         };
         if let Some(path) = queue.path.clone() {
             queue.load(&path);
@@ -705,6 +708,71 @@ impl NoticeQueue {
             .values()
             .filter(|entry| entry.is_open() && entry.origin == origin)
             .count()
+    }
+
+    /// Records whether the person asked has no Review playlist. True when that is newly so.
+    pub fn note_keeper_without_playlist(&self, without: bool) -> bool {
+        let before = self.keeper_without_playlist.swap(without, Ordering::SeqCst);
+        without && !before
+    }
+
+    /// Why a check stopped at `open` questions, and what would start it again.
+    pub fn pause_reason(&self, open: usize, keeper: &str) -> String {
+        if self.keeper_without_playlist.load(Ordering::SeqCst) {
+            format!(
+                "{open} library questions are waiting for {keeper}, who has no Review playlist yet. \
+                 Put the person who answers first under Who may trigger actions, or open the \
+                 playlists in an app signed in as {keeper}."
+            )
+        } else {
+            format!(
+                "{open} library questions are waiting in {keeper}'s Review playlist. Answer some and it carries on."
+            )
+        }
+    }
+
+    /// Gives `keeper` every open Review question for someone `reachable` says cannot be shown it,
+    /// to be asked afresh. A file `keeper` was already asked about is closed instead, since a file
+    /// is asked about once per person. How many changed.
+    pub fn hand_over(&self, keeper: &str, reachable: impl Fn(&str) -> bool) -> usize {
+        let keeper = keeper.trim();
+        let mut changed = 0;
+        {
+            let mut entries = self.entries.lock();
+            let stranded: Vec<String> = entries
+                .values()
+                .filter(|entry| {
+                    entry.kind == NoticeKind::Review
+                        && entry.is_open()
+                        && !entry.is_for(keeper)
+                        && !reachable(&entry.username)
+                })
+                .map(|entry| entry.key.clone())
+                .collect();
+            for key in stranded {
+                let Some(mut entry) = entries.remove(&key) else {
+                    continue;
+                };
+                let new_key = Self::review_key(keeper, &entry.local_path);
+                if entries.contains_key(&new_key) {
+                    entry.state = NoticeState::Dismissed;
+                    entry.resolved_utc = Some(Utc::now());
+                    entry.fingerprint = None;
+                    entries.set(key, entry);
+                } else {
+                    entry.key = new_key.clone();
+                    entry.username = keeper.to_string();
+                    entry.state = NoticeState::Waiting;
+                    entry.queued_utc = None;
+                    entries.set(new_key, entry);
+                }
+                changed += 1;
+            }
+        }
+        if changed > 0 {
+            self.mark_dirty();
+        }
+        changed
     }
 
     pub fn for_user(&self, username: &str, kind: NoticeKind) -> Vec<NoticeEntry> {

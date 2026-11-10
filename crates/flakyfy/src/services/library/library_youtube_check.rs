@@ -754,8 +754,7 @@ impl LibraryYoutubeCheck {
         if self.store.read(|s| s.paused) {
             return self.hold("Paused", Some("Paused from the dashboard."), Self::IDLE_CHECK);
         }
-        let admin = current.subsonic.admin_username.clone();
-        let Some(keeper) = LibraryReviewSweepWorker::keeper(&actions, admin.as_deref()) else {
+        let Some(keeper) = LibraryReviewSweepWorker::keeper(&actions) else {
             return self.hold(
                 "Paused",
                 Some("Nobody is on the library actions allowlist to ask."),
@@ -764,8 +763,7 @@ impl LibraryYoutubeCheck {
         };
         let open = self.notices.open_count(NoticeOrigin::LibrarySweep);
         if open >= Self::MAX_OPEN_QUESTIONS {
-            let reason =
-                format!("{open} library questions are waiting in Review. Answer some and it carries on.");
+            let reason = self.notices.pause_reason(open, &keeper);
             return self.hold("Paused", Some(&reason), Self::IDLE_CHECK);
         }
         if self.activity.is_busy() {
@@ -1255,7 +1253,7 @@ impl LibraryYoutubeCheck {
             no_copy: s.no_copy,
             known: s.known,
             open: self.notices.open_count(NoticeOrigin::LibrarySweep),
-            keeper: LibraryReviewSweepWorker::keeper(actions, current.subsonic.admin_username.as_deref()),
+            keeper: LibraryReviewSweepWorker::keeper(actions),
             per_hour: actions.effective_youtube_check_per_hour(),
             started_utc: s.started_utc,
             finished_utc: s.finished_utc,

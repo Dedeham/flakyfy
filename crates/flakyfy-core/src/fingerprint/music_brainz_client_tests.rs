@@ -49,14 +49,70 @@ fn falls_back_to_soundtrack_only_without_studio_album() {
       {"date":"2021-09-17","release-group":{"id":"toem","primary-type":"Album","secondary-types":["Soundtrack"]}},
       {"date":"2020-01-01","release-group":{"id":"best-of","primary-type":"Album","secondary-types":["Compilation"]}}]}]}
     "#;
-    let both = r#"
+    // A film score released after the studio album never takes the song from it.
+    let score_later = r#"
     {"recordings":[{"title":"Song","releases":[
-      {"date":"1990-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
-      {"date":"1995-01-01","release-group":{"id":"studio","primary-type":"Album"}}]}]}
+      {"date":"1995-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
+      {"date":"1990-01-01","release-group":{"id":"studio","primary-type":"Album"}}]}]}
     "#;
 
     assert_eq!(studio(soundtrack_only, "Blub").as_deref(), Some("toem"));
-    assert_eq!(studio(both, "Song").as_deref(), Some("studio"));
+    assert_eq!(studio(score_later, "Song").as_deref(), Some("studio"));
+}
+
+#[test]
+fn an_album_that_is_also_a_soundtrack_and_came_first_beats_a_later_plain_album() {
+    let search = r#"
+    {"recordings":[{"title":"Zelda","releases":[
+      {"date":"1965-08-06","release-group":{"id":"help","primary-type":"Album","secondary-types":["Soundtrack"]}},
+      {"date":"1966-06-14","release-group":{"id":"us-lp","primary-type":"Album"}},
+      {"date":"1966-12-10","release-group":{"id":"oldies","primary-type":"Album","secondary-types":["Compilation"]}},
+      {"date":"1964-01-01","release-group":{"id":"concert","primary-type":"Album","secondary-types":["Live"]}}]}]}
+    "#;
+
+    assert_eq!(studio(search, "Zelda").as_deref(), Some("help"));
+}
+
+#[test]
+fn the_original_album_comes_from_the_recording_lookup_when_the_search_misses_it() {
+    let id = "11111111-2222-3333-4444-555555555555";
+    let mut search: Value = serde_json::from_str(&format!(
+        r#"{{"recordings":[
+          {{"id":"{id}","title":"Zelda","releases":[
+            {{"date":"1966-06-14","release-group":{{"id":"us-lp","primary-type":"Album"}}}}]}},
+          {{"id":"not-an-id","title":"Zelda","releases":[]}},
+          {{"id":"99999999-2222-3333-4444-555555555555","title":"Other","releases":[]}}]}}"#
+    ))
+    .unwrap();
+    // A recording lookup answers with the same shape as one search recording.
+    let lookup: Value = serde_json::from_str(
+        r#"{"title":"Zelda","releases":[
+          {"date":"1965-08-06","status":"Official","release-group":{"id":"help","primary-type":"Album","secondary-types":["Soundtrack"]}},
+          {"date":"1966-06-14","status":"Official","release-group":{"id":"us-lp","primary-type":"Album"}}]}"#,
+    )
+    .unwrap();
+
+    assert_eq!(studio_album_recording_ids(&search, "Zelda"), vec![id.to_string()]);
+    assert_eq!(
+        pick_studio_album(&search, "Zelda").unwrap().as_deref(),
+        Some("us-lp")
+    );
+    search["recordings"].as_array_mut().unwrap().push(lookup);
+    assert_eq!(
+        pick_studio_album(&search, "Zelda").unwrap().as_deref(),
+        Some("help")
+    );
+}
+
+#[test]
+fn no_more_than_three_recordings_are_looked_up() {
+    let recordings: Vec<String> = (1..=5)
+        .map(|n| format!(r#"{{"id":"0000000{n}-2222-3333-4444-555555555555","title":"Zelda"}}"#))
+        .collect();
+    let search: Value =
+        serde_json::from_str(&format!(r#"{{"recordings":[{}]}}"#, recordings.join(","))).unwrap();
+
+    assert_eq!(studio_album_recording_ids(&search, "Zelda").len(), 3);
 }
 
 #[test]
@@ -109,7 +165,7 @@ fn a_year_only_date_never_beats_a_full_date_of_the_same_year() {
 }
 
 #[test]
-fn a_mixtape_ranks_after_a_studio_album_and_before_a_soundtrack() {
+fn a_mixtape_ranks_after_a_studio_album_and_a_soundtrack_album() {
     let all_three = r#"
     {"recordings":[{"title":"Song","releases":[
       {"date":"1990-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
@@ -122,8 +178,9 @@ fn a_mixtape_ranks_after_a_studio_album_and_before_a_soundtrack() {
       {"date":"1991-01-01","release-group":{"id":"tape","primary-type":"Album","secondary-types":["Mixtape/Street"]}}]}]}
     "#;
 
-    assert_eq!(studio(all_three, "Song").as_deref(), Some("studio"));
-    assert_eq!(studio(mixtape_and_soundtrack, "Song").as_deref(), Some("tape"));
+    // A soundtrack album ties with a plain album (earliest wins); a mixtape only comes after both.
+    assert_eq!(studio(all_three, "Song").as_deref(), Some("film"));
+    assert_eq!(studio(mixtape_and_soundtrack, "Song").as_deref(), Some("film"));
 }
 
 // ---- Search queries ----------------------------------------------------------------------

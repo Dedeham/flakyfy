@@ -367,8 +367,8 @@ impl MusicBrainzClient {
         Ok(Some(pure::parse_recording_facts(&doc)?))
     }
 
-    /// The release group of the oldest official studio album a song appears on, or of a
-    /// soundtrack when no studio album has it. None when MusicBrainz knows neither.
+    /// The release group of the oldest official album (or album-and-soundtrack) a song appears
+    /// on, or of a mixtape when none has it. None when MusicBrainz knows neither.
     pub async fn find_studio_album(
         &self,
         artist: &str,
@@ -377,10 +377,25 @@ impl MusicBrainzClient {
         let Some((url, plain_title)) = pure::studio_album_search(artist, title) else {
             return Ok(None);
         };
-        match self.get(&url, "studio album search").await? {
-            Some(doc) => Ok(pure::pick_studio_album(&doc, &plain_title)?),
-            None => Ok(None),
+        let Some(mut doc) = self.get(&url, "studio album search").await? else {
+            return Ok(None);
+        };
+        // The search can leave out the original album; each matched recording's own lookup lists
+        // all its releases. At most three extra calls; one that fails leaves the search's answer.
+        let mut looked_up = Vec::new();
+        for id in pure::studio_album_recording_ids(&doc, &plain_title) {
+            let lookup = pure::recording_facts_url(&id);
+            if let Some(Ok(Some(found))) = match lookup {
+                Some(url) => Some(self.get(&url, "studio album recording lookup").await),
+                None => None,
+            } {
+                looked_up.push(found);
+            }
         }
+        if let Some(Value::Array(all)) = doc.get_mut("recordings") {
+            all.extend(looked_up);
+        }
+        Ok(pure::pick_studio_album(&doc, &plain_title)?)
     }
 
     /// Where the artist with this MusicBrainz id is from: a two-letter country, empty when

@@ -102,8 +102,29 @@ pub fn studio_album_search(artist: &str, title: &str) -> Option<(String, String)
     ))
 }
 
-/// The release group of the oldest official studio album a song appears on, else of a mixtape,
-/// else of a soundtrack. None when the answer names none of them.
+/// The ids of the first few recordings in a search answer that are this song, whose own lookup
+/// lists every release (the search lists only some, and can miss the original album).
+pub fn studio_album_recording_ids(root: &Value, title: &str) -> Vec<String> {
+    let wanted = SongIdentity::key(title);
+    let recordings = root.get("recordings").and_then(Value::as_array);
+    recordings
+        .into_iter()
+        .flatten()
+        .filter(|r| {
+            r.get("title")
+                .and_then(Value::as_str)
+                .is_some_and(|t| SongIdentity::key(t) == wanted)
+        })
+        .filter_map(|r| r.get("id").and_then(Value::as_str))
+        .filter(|id| is_mbid(id))
+        .take(3)
+        .map(str::to_string)
+        .collect()
+}
+
+/// The release group of the oldest official album a song appears on (an album that is also a
+/// soundtrack, like "Help!", counts as an album), else of a mixtape. None when the answer names
+/// none of them.
 pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<String>> {
     let Some(recordings @ Value::Array(_)) = try_get_property(root, "recordings")? else {
         return Ok(None);
@@ -147,7 +168,8 @@ pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<Stri
             let rank = match secondary.as_slice() {
                 [] => 0,
                 [Some("Mixtape/Street")] => 1,
-                [Some("Soundtrack")] => 2,
+                // Ties with a plain album: the earliest release date decides.
+                [Some("Soundtrack")] => 0,
                 _ => -1,
             };
             if rank < 0 || rank > group_rank {

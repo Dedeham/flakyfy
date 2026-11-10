@@ -819,3 +819,62 @@ async fn a_big_code_answer_keeps_25_releases_a_recording_and_drops_its_dj_mix_se
         CandidateSources::from_isrc_lookup(&whole)
     );
 }
+
+const REC: &str = "11111111-2222-3333-4444-555555555555";
+
+// What the studio album search answers: the recording is on the later plain LP only.
+fn studio_search_answer() -> String {
+    format!(
+        r#"{{"count":1,"offset":0,"recordings":[{{"id":"{REC}","title":"Zelda","length":125000,
+        "releases":[{{"id":"r-us","title":"Zelda and Friends","status":"Official","date":"1966-06-14",
+          "release-group":{{"id":"g-us","title":"Zelda and Friends","primary-type":"Album","secondary-types":[]}}}}]}}]}}"#
+    )
+}
+
+// What `recording/<id>?inc=releases+release-groups` answers: every release, the original too.
+const RECORDING_LOOKUP_ANSWER: &str = r#"
+{"id":"11111111-2222-3333-4444-555555555555","title":"Zelda","length":125000,"disambiguation":"","video":false,
+ "releases":[
+  {"id":"r-orig","title":"Roll On!","status":"Official","date":"1965-08-06","country":"GB",
+   "release-group":{"id":"g-orig","title":"Roll On!","primary-type":"Album","secondary-types":["Soundtrack"],
+     "first-release-date":"1965-08-06"}},
+  {"id":"r-us","title":"Zelda and Friends","status":"Official","date":"1966-06-14","country":"US",
+   "release-group":{"id":"g-us","title":"Zelda and Friends","primary-type":"Album","secondary-types":[],
+     "first-release-date":"1966-06-14"}}]}
+"#;
+
+async fn studio_album_client(lookup: ResponseTemplate) -> (MusicBrainzClient, MockServer) {
+    let server = MockServer::builder().start().await;
+    Mock::given(path("/ws/2/recording/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(studio_search_answer()))
+        .mount(&server)
+        .await;
+    Mock::given(path(format!("/ws/2/recording/{REC}")))
+        .respond_with(lookup)
+        .mount(&server)
+        .await;
+    let base = Url::parse(&format!("{}/ws/2/", server.uri())).expect("parses");
+    (MusicBrainzClient::with_base_url(base), server)
+}
+
+#[tokio::test]
+async fn the_studio_album_is_found_through_the_recording_lookup_when_the_search_misses_it() {
+    let (client, server) =
+        studio_album_client(ResponseTemplate::new(200).set_body_string(RECORDING_LOOKUP_ANSWER)).await;
+
+    let found = client.find_studio_album("The Band", "Zelda").await.expect("asks");
+
+    assert_eq!(found.as_deref(), Some("g-orig"));
+    let calls = calls(&server).await;
+    assert_eq!(calls.len(), 2);
+    assert!(calls[1].contains(&format!("recording/{REC}?inc=releases+release-groups&fmt=json")));
+}
+
+#[tokio::test]
+async fn a_failed_recording_lookup_leaves_the_searchs_own_pick() {
+    let (client, _server) = studio_album_client(ResponseTemplate::new(500)).await;
+
+    let found = client.find_studio_album("The Band", "Zelda").await.expect("asks");
+
+    assert_eq!(found.as_deref(), Some("g-us"));
+}

@@ -198,7 +198,7 @@ scripts/updater/install-updater.sh --remove
 Without the helper, **About** shows the command for the new release. From the Flakyfy folder:
 
 ```bash
-git fetch --tags && git checkout --detach 2026.11.09.2
+git fetch --tags && git checkout --detach 2026.11.10
 docker compose pull flakyfy yt-dlp-shim flakyfy-sonic || docker compose --profile source build flakyfy-source yt-dlp-shim-source flakyfy-sonic-source
 docker compose up -d
 ```

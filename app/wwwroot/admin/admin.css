@@ -15,6 +15,9 @@
  *   Corners    8 row / 12 control / 14 field / 22 panel; buttons are pills
  *   Motion     80 press / 140 hover / 160 swap / 200 card, on the apps' spring curve
  */
+/* Inter 4.1 (OFL), served from here so no page asks a third party for its font. */
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('fonts/InterVariable.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: italic; font-weight: 100 900; font-display: swap; src: url('fonts/InterVariable-Italic.woff2') format('woff2'); }
 
 /* The hidden attribute must actually hide. Any class that sets `display` is an author style and
  * so outranks the browser's own [hidden] rule no matter how specific it looks: .set-row's
@@ -196,9 +199,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
   font-size: var(--t-table);
   line-height: 1.5;
-}
-@supports (font-variation-settings: normal) {
-  :root { --font: 'Inter var', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
 }
 
 a { color: var(--accent-hover); text-decoration: none; transition: color var(--t-hover); }

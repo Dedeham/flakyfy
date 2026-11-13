@@ -49,3 +49,9 @@ colored.
 
 Flakyfy's own logo is not in the sprite. It marks what came through Flakyfy, so the dashboard shows it
 once, beside the name.
+
+## Font
+
+`app/wwwroot/admin/fonts/InterVariable.woff2` and `InterVariable-Italic.woff2` are Inter 4.1 from the
+official release (github.com/rsms/inter, SIL Open Font License 1.1, text in `fonts/LICENSE.txt`). The
+dashboards serve them themselves, so no page asks a third party for a font.

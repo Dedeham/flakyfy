@@ -154,6 +154,7 @@ fn view(state: &AppState, view: ReleaseCheckView) -> Value {
             "dir": h.dir,
             "installedUtc": utc_opt(&h.installed_utc),
             "outdated": h.outdated(),
+            "flakyfys": h.is_flakyfys(),
         }),
     };
     json!({

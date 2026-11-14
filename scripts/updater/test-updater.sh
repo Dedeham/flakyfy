@@ -218,6 +218,7 @@ expect_compose() { # name, the compose commands wanted, in order, joined with |
 fresh; request 2026.10.04
 check "updates to a newer release" "done" 2026.10.04 ""
 expect "describes itself as version 2 in a clone" test "$(helper_says version) $(helper_says mode)" = "2 git"
+expect "names itself as Flakyfy's helper" test "$(helper_says product)" = flakyfy
 expect_compose "pulls Flakyfy and its sidecars, builds nothing, then restarts" "pull flakyfy|pull yt-dlp-shim|pull flakyfy-sonic|up -d"
 expect "says what it now runs" test "$(status_of step)" = "Flakyfy now runs 2026.10.04"
 expect "without the spotiflac profile Mornye is never got ready" never 'compose build spotiflac|image inspect'

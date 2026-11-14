@@ -287,6 +287,40 @@ async fn check_now_is_honored_once_a_minute() {
     assert_eq!(f.requests().await.len(), 2);
 }
 
+/// An install moved over from Octo may still have Octo's repository saved in its settings; a
+/// Flakyfy server never updates to an Octo release, so it asks for Flakyfy's instead.
+#[tokio::test]
+async fn octos_repository_left_in_the_settings_asks_for_flakyfys_releases() {
+    let f = Fixture::new().await;
+    f.answer(ok(RELEASES)).await;
+    for repo in ["winters27/octo", "Winters27/Octo/", " winters27/octo "] {
+        let view = f
+            .check_with(
+                "2026.10.01",
+                UpdateSettings {
+                    repo: repo.into(),
+                    ..Default::default()
+                },
+            )
+            .check(true)
+            .await;
+
+        assert_eq!(view.repo, "dedeham/flakyfy", "{repo}");
+        assert_eq!(
+            view.latest.as_ref().map(|n| n.tag.as_str()),
+            Some("2026.10.02.1"),
+            "{repo}"
+        );
+    }
+    let requests = f.requests().await;
+    assert!(!requests.is_empty());
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.url.path() == "/repos/dedeham/flakyfy/releases")
+    );
+}
+
 #[tokio::test]
 async fn a_malformed_repo_is_refused_without_asking() {
     let f = Fixture::new().await;

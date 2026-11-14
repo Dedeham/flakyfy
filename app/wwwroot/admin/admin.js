@@ -8813,6 +8813,14 @@ function renderUpdate() {
     byId('update-helper-old-where').textContent = info.helper?.dir ? `in ${info.helper.dir}` : 'in your Flakyfy folder';
     byId('update-reinstall-command').textContent = info.reinstallCommand || 'scripts/updater/install-updater.sh';
   }
+  // A helper that does not name itself Flakyfy's may be an Octo install's. Flakyfy's own from
+  // before 2026.11.15 names itself after its next update, so this only advises.
+  const foreign = byId('update-helper-foreign');
+  foreign.hidden = !helper || helperOld || info.helper?.flakyfys !== false || active;
+  if (!foreign.hidden) {
+    byId('update-helper-foreign-where').textContent = info.helper?.dir ? `in ${info.helper.dir}` : 'in your Flakyfy folder';
+    byId('update-reinstall-command-foreign').textContent = info.reinstallCommand || 'scripts/updater/install-updater.sh';
+  }
   byId('update-notes').hidden = !latest;
   byId('update-check').hidden = !info.enabled;
   byId('update-check').disabled = active;

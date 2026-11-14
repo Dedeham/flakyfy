@@ -259,7 +259,7 @@ folder_version() {
 describe() {
   local installed=""
   [ -f "$HELPER" ] && installed="$(value_of installed "$HELPER")"
-  write_file "$HELPER" "version=$HELPER_VERSION" "mode=$1" "dir=$FLAKYFY_DIR" "installed=${installed:-$(now)}"
+  write_file "$HELPER" "version=$HELPER_VERSION" "mode=$1" "dir=$FLAKYFY_DIR" "installed=${installed:-$(now)}" "product=flakyfy"
 }
 
 # Waits until the Flakyfy container has stayed up for 20 seconds in a row.

@@ -23,6 +23,9 @@ pub struct UpdateHelperInfo {
     pub mode: String,
     pub dir: Option<String>,
     pub installed_utc: Option<DateTime<Utc>>,
+    /// Whose helper it is: Flakyfy's writes `product=flakyfy`. Octo's helper, and Flakyfy's
+    /// before 2026.11.15, write none.
+    pub product: Option<String>,
 }
 
 impl UpdateHelperInfo {
@@ -34,6 +37,15 @@ impl UpdateHelperInfo {
     /// True when the helper is older than [`Self::NEEDED`], or names no version.
     pub fn outdated(&self) -> bool {
         self.version.parse::<u32>().map_or(true, |v| v < Self::NEEDED)
+    }
+
+    /// True when the helper says it is Flakyfy's. One that does not may be an Octo install's,
+    /// which speaks of Octo and cannot reach a Flakyfy release; Flakyfy's own from before
+    /// 2026.11.15 names itself after its next update, which reinstalls it.
+    pub fn is_flakyfys(&self) -> bool {
+        self.product
+            .as_deref()
+            .is_some_and(|p| p.eq_ignore_ascii_case("flakyfy"))
     }
 }
 
@@ -145,6 +157,7 @@ impl UpdateHost {
             mode: mode.to_string(),
             dir: values.get("dir").filter(|dir| !dir.is_empty()).cloned(),
             installed_utc: time(values.get("installed")),
+            product: values.get("product").filter(|p| !p.is_empty()).cloned(),
         })
     }
 
@@ -508,6 +521,27 @@ mod tests {
     }
 
     #[test]
+    fn only_a_helper_that_names_flakyfy_is_flakyfys() {
+        for (lines, flakyfys) in [
+            (&["version=2", "mode=git", "product=flakyfy"][..], true),
+            (&["version=2", "mode=git", "product=Flakyfy"][..], true),
+            (&["version=2", "mode=git"][..], false),
+            (&["version=2", "mode=git", "product="][..], false),
+            (&["version=2", "mode=git", "product=octo"][..], false),
+        ] {
+            let fixture = Fixture::new();
+            fixture.write_file("helper", lines);
+            let helper = fixture.host().helper().expect("installed");
+
+            assert_eq!(helper.is_flakyfys(), flakyfys, "{lines:?}");
+            assert!(
+                !helper.outdated(),
+                "naming itself or not, a version 2 helper still updates"
+            );
+        }
+    }
+
+    #[test]
     fn a_helper_from_before_version_two_is_outdated() {
         // Version 1 picked image mode once Flakyfy was pulled, pulled the release its old compose
         // file named, and reported the update done. A file without a version is version 1's.
@@ -586,6 +620,7 @@ mod tests {
                 mode: "build".into(),
                 dir: Some("/opt/flakyfy".into()),
                 installed_utc: Some(utc(2026, 9, 30, 12, 0, 0)),
+                product: None,
             }
         );
 

@@ -3442,6 +3442,12 @@
               <button type="button" class="btn btn-ghost" id="update-reinstall-copy"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
             </div>
           </div>
+          <div class="notice notice-warn update-helper-old" id="update-helper-foreign" role="status" hidden>
+            <p><strong>This update helper does not say it is Flakyfy's.</strong> It may be the one an Octo install set up, which speaks of Octo and cannot update Flakyfy. If its messages name Octo or an update fails, reinstall it <span id="update-helper-foreign-where">in your Flakyfy folder</span>; that also removes Octo's helper:</p>
+            <div class="update-command">
+              <code id="update-reinstall-command-foreign">scripts/updater/install-updater.sh</code>
+            </div>
+          </div>
           <ol class="update-steps" id="update-steps" hidden></ol>
           <pre class="update-log" id="update-log" hidden></pre>
           <div class="update-manual" id="update-manual" hidden>

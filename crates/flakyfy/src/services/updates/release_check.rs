@@ -397,11 +397,15 @@ impl ReleaseCheck {
         Ok(())
     }
 
+    /// The repository whose releases count. Blank, or Octo's (an install moved over from Octo may
+    /// still have it saved in its settings), means Flakyfy's: a Flakyfy server can never update to
+    /// an Octo release, whose images and names are not Flakyfy's.
     fn repo(settings: &UpdateSettings) -> String {
-        if settings.repo.trim().is_empty() {
+        let repo = settings.repo.trim().trim_matches('/');
+        if repo.is_empty() || eq_ignore_case(repo, "winters27/octo") {
             "dedeham/flakyfy".to_string()
         } else {
-            settings.repo.trim().trim_matches('/').to_string()
+            repo.to_string()
         }
     }
 

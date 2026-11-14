@@ -564,7 +564,7 @@ document.querySelectorAll('[data-status-action]').forEach(button => {
 });
 
 // What a blank AcoustID key means on this server: a built-in key when this build carries one
-// (Flakyfy's published images do not), else AcoustID off until a key is added. Unknown (an older server)
+// (Flakyfy's published images do), else AcoustID off until a key is added. Unknown (an older server)
 // leaves the page's own words.
 const ACOUSTID_KEY_HELP = {
   builtIn: 'Left blank, Flakyfy uses its own key; your own key takes its place. Type off to turn AcoustID off; the length check and its memory of rejected files still work.',

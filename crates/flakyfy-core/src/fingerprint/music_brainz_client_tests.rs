@@ -1,186 +1,18 @@
-//! Tests for the MusicBrainz query builders and the readers of its answers: the studio album
-//! pick, the search queries, and the ISRCs of a recording lookup.
+//! Tests for the MusicBrainz query builders and the readers of its answers: release dates, the
+//! search queries, and the ISRCs of a recording lookup.
 
 use super::*;
 
-fn studio(json: &str, title: &str) -> Option<String> {
-    let doc: Value = serde_json::from_str(json).expect("test JSON parses");
-    pick_studio_album(&doc, title).expect("the answer reads")
-}
-
-// ---- Studio album pick -----------------------------------------------------------------
-
-#[test]
-fn picks_earliest_studio_album_over_singles_compilations_and_other_recordings() {
-    let search = r#"
-    {"recordings":[
-      {"title":"Zukunft Pink","releases":[
-        {"date":"2022-10-20","release-group":{"id":"single","primary-type":"Single"}},
-        {"date":"2023-02-10","release-group":{"id":"bravo","primary-type":"Album","secondary-types":["Compilation"]}}]},
-      {"title":"Zukunft Pink","releases":[
-        {"date":"2024-06-21","release-group":{"id":"love-songs","primary-type":"Album"}},
-        {"date":"","release-group":{"id":"empty-date","primary-type":"Album","secondary-types":[]}},
-        {"release-group":{"id":"undated","primary-type":"Album","secondary-types":[]}}]},
-      {"title":"Zukunft Pink (Remix)","releases":[
-        {"date":"1999-01-01","release-group":{"id":"remix-album","primary-type":"Album"}}]}
-    ]}
-    "#;
-
-    assert_eq!(studio(search, "Zukunft Pink").as_deref(), Some("love-songs"));
-}
-
-#[test]
-fn matches_title_ignoring_punctuation_and_case() {
-    let search = r#"
-    {"recordings":[{"title":"They Don't Care About Us","releases":[
-      {"date":"1995-06-20","release-group":{"id":"history","primary-type":"Album"}}]}]}
-    "#;
-
-    assert_eq!(
-        studio(search, "They Dont Care About Us").as_deref(),
-        Some("history")
-    );
-}
-
-#[test]
-fn falls_back_to_soundtrack_only_without_studio_album() {
-    let soundtrack_only = r#"
-    {"recordings":[{"title":"Blub","releases":[
-      {"date":"2021-09-17","release-group":{"id":"toem","primary-type":"Album","secondary-types":["Soundtrack"]}},
-      {"date":"2020-01-01","release-group":{"id":"best-of","primary-type":"Album","secondary-types":["Compilation"]}}]}]}
-    "#;
-    // A film score released after the studio album never takes the song from it.
-    let score_later = r#"
-    {"recordings":[{"title":"Song","releases":[
-      {"date":"1995-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
-      {"date":"1990-01-01","release-group":{"id":"studio","primary-type":"Album"}}]}]}
-    "#;
-
-    assert_eq!(studio(soundtrack_only, "Blub").as_deref(), Some("toem"));
-    assert_eq!(studio(score_later, "Song").as_deref(), Some("studio"));
-}
-
-#[test]
-fn an_album_that_is_also_a_soundtrack_and_came_first_beats_a_later_plain_album() {
-    let search = r#"
-    {"recordings":[{"title":"Zelda","releases":[
-      {"date":"1965-08-06","release-group":{"id":"help","primary-type":"Album","secondary-types":["Soundtrack"]}},
-      {"date":"1966-06-14","release-group":{"id":"us-lp","primary-type":"Album"}},
-      {"date":"1966-12-10","release-group":{"id":"oldies","primary-type":"Album","secondary-types":["Compilation"]}},
-      {"date":"1964-01-01","release-group":{"id":"concert","primary-type":"Album","secondary-types":["Live"]}}]}]}
-    "#;
-
-    assert_eq!(studio(search, "Zelda").as_deref(), Some("help"));
-}
-
-#[test]
-fn the_original_album_comes_from_the_recording_lookup_when_the_search_misses_it() {
-    let id = "11111111-2222-3333-4444-555555555555";
-    let mut search: Value = serde_json::from_str(&format!(
-        r#"{{"recordings":[
-          {{"id":"{id}","title":"Zelda","releases":[
-            {{"date":"1966-06-14","release-group":{{"id":"us-lp","primary-type":"Album"}}}}]}},
-          {{"id":"not-an-id","title":"Zelda","releases":[]}},
-          {{"id":"99999999-2222-3333-4444-555555555555","title":"Other","releases":[]}}]}}"#
-    ))
-    .unwrap();
-    // A recording lookup answers with the same shape as one search recording.
-    let lookup: Value = serde_json::from_str(
-        r#"{"title":"Zelda","releases":[
-          {"date":"1965-08-06","status":"Official","release-group":{"id":"help","primary-type":"Album","secondary-types":["Soundtrack"]}},
-          {"date":"1966-06-14","status":"Official","release-group":{"id":"us-lp","primary-type":"Album"}}]}"#,
-    )
-    .unwrap();
-
-    assert_eq!(studio_album_recording_ids(&search, "Zelda"), vec![id.to_string()]);
-    assert_eq!(
-        pick_studio_album(&search, "Zelda").unwrap().as_deref(),
-        Some("us-lp")
-    );
-    search["recordings"].as_array_mut().unwrap().push(lookup);
-    assert_eq!(
-        pick_studio_album(&search, "Zelda").unwrap().as_deref(),
-        Some("help")
-    );
-}
-
-#[test]
-fn no_more_than_three_recordings_are_looked_up() {
-    let recordings: Vec<String> = (1..=5)
-        .map(|n| format!(r#"{{"id":"0000000{n}-2222-3333-4444-555555555555","title":"Zelda"}}"#))
-        .collect();
-    let search: Value =
-        serde_json::from_str(&format!(r#"{{"recordings":[{}]}}"#, recordings.join(","))).unwrap();
-
-    assert_eq!(studio_album_recording_ids(&search, "Zelda").len(), 3);
-}
-
-#[test]
-fn returns_null_when_only_singles_and_compilations() {
-    let search = r#"
-    {"recordings":[{"title":"Zukunft Pink","releases":[
-      {"date":"2022-10-20","release-group":{"id":"single","primary-type":"Single"}},
-      {"date":"2023-02-10","release-group":{"id":"bravo","primary-type":"Album","secondary-types":["Compilation"]}}]}]}
-    "#;
-
-    assert_eq!(studio(search, "Zukunft Pink"), None);
-}
-
-#[test]
-fn a_bootleg_or_promotion_release_never_becomes_the_heart_album() {
-    let search = r#"
-    {"recordings":[{"title":"Empire State of Mind","releases":[
-      {"date":"2009-01-01","status":"Bootleg","release-group":{"id":"bootleg-tape","primary-type":"Album"}},
-      {"date":"2009-02-01","status":"Promotion","release-group":{"id":"promo","primary-type":"Album"}},
-      {"date":"2009-09-08","status":"Official","release-group":{"id":"blueprint-3","primary-type":"Album"}}]}]}
-    "#;
-
-    assert_eq!(
-        studio(search, "Empire State of Mind").as_deref(),
-        Some("blueprint-3")
-    );
-}
+// ---- Release dates -----------------------------------------------------------------------
 
 #[test]
 fn a_year_only_date_never_beats_a_full_date_of_the_same_year() {
-    let year_first = r#"
-    {"recordings":[{"title":"Song","releases":[
-      {"date":"2009","status":"Official","release-group":{"id":"year-only","primary-type":"Album"}},
-      {"date":"2009-09-08","status":"Official","release-group":{"id":"full-date","primary-type":"Album"}}]}]}
-    "#;
-    let full_first = r#"
-    {"recordings":[{"title":"Song","releases":[
-      {"date":"2009-09-08","status":"Official","release-group":{"id":"full-date","primary-type":"Album"}},
-      {"date":"2009","status":"Official","release-group":{"id":"year-only","primary-type":"Album"}}]}]}
-    "#;
-    let earlier_year = r#"
-    {"recordings":[{"title":"Song","releases":[
-      {"date":"2009-09-08","status":"Official","release-group":{"id":"full-date","primary-type":"Album"}},
-      {"date":"2008","status":"Official","release-group":{"id":"year-before","primary-type":"Album"}}]}]}
-    "#;
-
-    assert_eq!(studio(year_first, "Song").as_deref(), Some("full-date"));
-    assert_eq!(studio(full_first, "Song").as_deref(), Some("full-date"));
-    assert_eq!(studio(earlier_year, "Song").as_deref(), Some("year-before"));
-}
-
-#[test]
-fn a_mixtape_ranks_after_a_studio_album_and_a_soundtrack_album() {
-    let all_three = r#"
-    {"recordings":[{"title":"Song","releases":[
-      {"date":"1990-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
-      {"date":"1991-01-01","release-group":{"id":"tape","primary-type":"Album","secondary-types":["Mixtape/Street"]}},
-      {"date":"1995-01-01","release-group":{"id":"studio","primary-type":"Album"}}]}]}
-    "#;
-    let mixtape_and_soundtrack = r#"
-    {"recordings":[{"title":"Song","releases":[
-      {"date":"1990-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
-      {"date":"1991-01-01","release-group":{"id":"tape","primary-type":"Album","secondary-types":["Mixtape/Street"]}}]}]}
-    "#;
-
-    // A soundtrack album ties with a plain album (earliest wins); a mixtape only comes after both.
-    assert_eq!(studio(all_three, "Song").as_deref(), Some("film"));
-    assert_eq!(studio(mixtape_and_soundtrack, "Song").as_deref(), Some("film"));
+    assert!(is_earlier_date("2009-09-08", "2009"));
+    assert!(!is_earlier_date("2009", "2009-09-08"));
+    assert!(is_earlier_date("2008", "2009-09-08"));
+    assert!(!is_earlier_date("2009-09-08", "2008"));
+    assert!(is_earlier_date("2009-09", "2009-10-01"));
+    assert!(!is_earlier_date("2009-09-08", "2009-09-08"));
 }
 
 // ---- Search queries ----------------------------------------------------------------------
@@ -277,26 +109,16 @@ fn parse_isrcs_reads_a_recording_lookup() {
     assert!(parse_isrcs(&none).expect("reads").is_empty());
 }
 
-// ---- The recording and studio album queries, and pick ------------------------------------
+// ---- The recording query, and pick --------------------------------------------------------
 
 #[test]
-fn find_recording_and_studio_album_queries_keep_their_shape() {
+fn the_recording_query_keeps_its_shape() {
     let url = find_recording_url("Massive Attack", "Tear\"drop", 330).expect("asks");
     assert_eq!(
         query(&url),
         "recording:\"Tear\\\"drop\" AND artist:\"Massive Attack\""
     );
     assert!(find_recording_url("A", "B", 0).is_none());
-
-    let (url, plain) =
-        studio_album_search("Michael Jackson", "They Don't Care About Us (feat. X)").expect("asks");
-    assert_eq!(
-        plain,
-        SongIdentity::strip_features("They Don't Care About Us (feat. X)")
-    );
-    assert!(query(&url).starts_with("recording:(They Don t Care About Us"));
-    assert!(url.ends_with("&fmt=json&limit=50"));
-    assert!(studio_album_search("A", "!!!").is_none());
 }
 
 #[test]

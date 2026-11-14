@@ -387,7 +387,8 @@ impl NavidromeSongPathResolver {
     /// Every way the reported path can be joined onto a real directory, in confidence order.
     /// libraryPath first because it is Navidrome's own root and is correct when the two
     /// containers share a mount; then Flakyfy's effective root, which is what the shipped compose
-    /// file produces since both mount the same directory at /music; then the rooted-path case.
+    /// file produces since both mount the same directory at /music; then a rooted path as given;
+    /// then the path's shorter tails under the music root.
     pub(crate) fn candidate_paths(candidate: &Candidate, root: &str) -> Vec<String> {
         let mut paths = Vec::new();
         let Some(raw_path) = candidate.raw_path.as_deref().filter(|p| !p.trim().is_empty()) else {
@@ -408,11 +409,9 @@ impl NavidromeSongPathResolver {
 
         let relative = segments.join("/");
 
-        let mut has_library_root = false;
         if let Some(library_path) = candidate.library_path.as_deref().filter(|l| !l.is_empty())
             && Path::new(library_path).is_dir()
         {
-            has_library_root = true;
             paths.push(combine(library_path, &relative));
         }
 
@@ -420,20 +419,18 @@ impl NavidromeSongPathResolver {
 
         if raw_path.starts_with('/') {
             paths.push(raw_path.to_string()); // same mount point
-            // Different mount: keep the tail that still looks like Artist/Album/File.
-            let tail = &segments[segments.len().saturating_sub(3)..];
-            paths.push(combine(root, &tail.join("/")));
         }
-
-        // Navidrome's library root can sit ABOVE the music root (`trending/octo/Artist/x.flac`
-        // for a file at `<root>/octo/Artist/x.flac`), so also try dropping leading segments,
-        // longest suffix first. Skipped when libraryPath is known: then the relative path is
-        // exact. verify() still demands size and suffix agreement, so a wrong guess is refused.
-        if !has_library_root {
-            for i in 1..segments.len() {
-                let path = combine(root, &segments[i..].join("/"));
-                if !paths.contains(&path) {
-                    paths.push(path);
+        // A different mount, or a Navidrome library root above the music root
+        // (`trending/octo/Artist/x.flac` for a file at `<root>/Artist/x.flac`): every tail of the
+        // path under the music root, longest first, so a file at any depth (a flat
+        // `Artist - Title`, an `Artist/Album/Disc 2/` one) is found whatever the other side's own
+        // folders were. Only with a reported size, since a shorter tail can name a different song
+        // of the same file name and the size check is what refuses it.
+        if candidate.size > 0 {
+            for start in 1..segments.len() {
+                let tail = combine(root, &segments[start..].join("/"));
+                if !paths.contains(&tail) {
+                    paths.push(tail);
                 }
             }
         }

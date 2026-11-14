@@ -136,6 +136,7 @@ impl YoutubeChecker for AppYoutubeChecker {
             Err(Failure::Busy) => return Compared::Busy,
             // A lookup could not answer: not an answer, so the song is tried again.
             Err(Failure::Unreachable | Failure::Other) => return Compared::Unavailable,
+            Err(Failure::Gone | Failure::Refused) => return Compared::Unavailable,
         };
         let timeout = self
             .settings
@@ -737,7 +738,7 @@ impl LibraryYoutubeCheck {
         if !self.store.read(|s| s.running) {
             return self.hold(
                 "Idle",
-                Some("Press the button to compare every song with its YouTube preview once."),
+                Some("Press the button to compare every song with its YouTube stream once."),
                 Self::IDLE_CHECK,
             );
         }
@@ -836,7 +837,7 @@ impl LibraryYoutubeCheck {
             info!("YouTube check of the library finished");
             return self.hold(
                 "Done",
-                Some("Every song has been compared with its YouTube preview."),
+                Some("Every song has been compared with its YouTube stream."),
                 Self::IDLE_CHECK,
             );
         };
@@ -979,12 +980,16 @@ impl LibraryYoutubeCheck {
                 video,
             } => match heard {
                 Heard::Mismatch => {
+                    let mut pick_in_find_songs = false;
                     match self
                         .replace(keeper, &full, &swept, acoustid_question, bit_error, album_agrees)
                         .await
                     {
                         Replacing::Done => replaced = true,
-                        Replacing::Declined => {}
+                        // Mornye's pause passes the song over in the sweep; this check looks at a
+                        // song once, so it asks about it as for a declined replacing.
+                        Replacing::Declined | Replacing::SkipsForMornye => {}
+                        Replacing::PickInFindSongs => pick_in_find_songs = true,
                         // Soulseek is out: the song is tried again, without counting it.
                         Replacing::Waits => {
                             return self.hold(
@@ -993,13 +998,25 @@ impl LibraryYoutubeCheck {
                                 interval,
                             );
                         }
+                        Replacing::WaitsForMornye => {
+                            return self.hold(
+                                "Waiting",
+                                Some(
+                                    "Mornye could not pass its check and no other source can be asked; trying that song again once one can.",
+                                ),
+                                interval,
+                            );
+                        }
                     }
+                    let question = if pick_in_find_songs {
+                        crate::services::library::library_review_sweep_worker::PICK_IN_FIND_SONGS
+                    } else {
+                        Self::QUESTION
+                    };
                     // An open question AcoustID could not settle about this file hears it first.
                     asked = !replaced
                         && (self.notices.add_finding(&full, Self::FINDING)
-                            || self
-                                .notices
-                                .add_library_question(keeper, &full, &song, Self::QUESTION));
+                            || self.notices.add_library_question(keeper, &full, &song, question));
                     if asked {
                         info!(
                             "Asking {keeper} about '{} - {}' from the library: it sounds nothing like the song on YouTube ({bit_error:.3} of its bits differ)",

@@ -183,6 +183,13 @@ impl LibraryActionRatingWorker {
     /// The channel is bounded: a full queue drops the new rating and says so.
     pub fn try_enqueue(&self, request: RatingActionRequest) -> Result<(), RatingIgnored> {
         self.check(Some(&request.username))?;
+        // Keep touches no file, so it is answered now: queued, it waited behind every earlier
+        // rating's replacement, which can spend minutes finding and downloading its file.
+        if request.action == LibraryAction::Keep {
+            let executor = self.executor.clone();
+            tokio::spawn(async move { Self::act(&executor, &request).await });
+            return Ok(());
+        }
         match self.sender.try_send(request) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => Err(RatingIgnored::QueueFull),
@@ -252,33 +259,39 @@ impl LibraryActionRatingWorker {
                 _ = stopping.cancelled() => break,
             };
             let request = self.refreshed(request);
-            // Per-item handling is mandatory: one failed action must not stop the worker.
-            match self.executor.apply(Self::to_action_request(&request)).await {
-                Ok(outcome) => {
-                    info!(
-                        "Library action {} from a rating by {}: {} - {}",
-                        action_name(request.action),
-                        request.username,
-                        outcome.state.name(),
-                        outcome.detail.as_deref().unwrap_or("")
-                    );
-
-                    // Only clear a rating the action actually consumed. Leaving it set on a
-                    // failure means the user can see it did not take, rather than the rating
-                    // vanishing and nothing having happened. Keep never clears it: five stars is
-                    // also what someone who loves a track gives it, and Keep changed nothing that
-                    // needs undoing.
-                    if outcome.consumed() && request.action != LibraryAction::Keep {
-                        self.clear_rating(&request).await;
-                    }
-                }
-                Err(e) => error!(
-                    "Library action from a rating failed for {}: {e:#}",
-                    request.navidrome_id
-                ),
+            // Only clear a rating the action actually consumed. Leaving it set on a failure
+            // means the user can see it did not take, rather than the rating vanishing and
+            // nothing having happened. Keep never clears it: five stars is also what someone
+            // who loves a track gives it, and Keep changed nothing that needs undoing.
+            if Self::act(&self.executor, &request).await && request.action != LibraryAction::Keep {
+                self.clear_rating(&request).await;
             }
         }
         Ok(())
+    }
+
+    /// Applies one rating's action and logs how it went. True when the action consumed the
+    /// rating. A failed action is logged and answers false: it must never stop the worker.
+    async fn act(executor: &Arc<LibraryActionExecutor>, request: &RatingActionRequest) -> bool {
+        match executor.apply(Self::to_action_request(request)).await {
+            Ok(outcome) => {
+                info!(
+                    "Library action {} from a rating by {}: {} - {}",
+                    action_name(request.action),
+                    request.username,
+                    outcome.state.name(),
+                    outcome.detail.as_deref().unwrap_or("")
+                );
+                outcome.consumed()
+            }
+            Err(e) => {
+                error!(
+                    "Library action from a rating failed for {}: {e:#}",
+                    request.navidrome_id
+                );
+                false
+            }
+        }
     }
 
     /// The executor's request, with the rater's own sign-in, so a replaced song keeps the
@@ -474,6 +487,36 @@ mod tests {
         let _ = running.await;
 
         assert_eq!(responder.ids(), ["nd-delete"]);
+    }
+
+    /// A replacement can spend minutes finding and downloading its file, and the worker takes
+    /// nothing else off the queue meanwhile. Keep touches no file, so it is answered at once.
+    #[tokio::test]
+    async fn a_keep_is_answered_while_the_worker_is_busy() {
+        let (navidrome, _) = navidrome().await;
+        let settings = store(on(&navidrome));
+        let notices = asked_about("alice", "nd-keep");
+        let worker = LibraryActionRatingWorker::new(
+            executor(
+                &settings,
+                Extras {
+                    notices: Some(notices.clone()),
+                    ..Default::default()
+                },
+            ),
+            SubsonicProxyService::new(settings.clone()),
+            settings,
+        );
+        // The loop is never started, as when it is still inside an earlier rating's replacement.
+        assert_eq!(
+            worker.try_enqueue(rating(LibraryAction::Delete, "nd-slow")),
+            Ok(())
+        );
+
+        assert_eq!(worker.try_enqueue(rating(LibraryAction::Keep, "nd-keep")), Ok(()));
+
+        until(|| !notices.is_queued("alice", "nd-keep")).await;
+        assert_eq!(worker.pending(), 1);
     }
 
     /// Each sign-in a rating can come with clears the rating as that person: u, t and s as

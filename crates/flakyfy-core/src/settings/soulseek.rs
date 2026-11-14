@@ -548,36 +548,46 @@ mod acoust_id_key_tests {
         assert!(example.contains("ACOUSTID_API_KEY=off"));
     }
 
-    /// Flakyfy's published images carry no AcoustID key of their own (unlike Octo's): each install
-    /// sets ACOUSTID_API_KEY, so the workflow neither requires nor passes a key, and no secret is a
-    /// build argument. A build from source given the `acoustid_key` build secret still gets it the
-    /// safe way: the Dockerfile mounts the secret as a file into the server's build step alone (no
-    /// `env=`, which an older BuildKit cannot build), reads the key from that file only, never
-    /// prints it or its hash, checks it again when required, and the compile refuses a blank key.
+    /// The published server image is built with Flakyfy's own AcoustID key from the repository's
+    /// secret, and its build refuses to go on when that key is blank: the workflow checks the
+    /// secret before building and hands the key to the server's build only as a build secret
+    /// (never a build argument, which an image's history and provenance keep), with the
+    /// requirement and the key's hash as build arguments and the provenance kept to its minimum;
+    /// the Dockerfile mounts the secret as a file into the server's build step alone (no `env=`,
+    /// which an older BuildKit cannot build), reads the key from that file only, never prints it
+    /// or its hash, checks it again, and the compile refuses a blank key.
     #[test]
-    fn the_published_image_carries_no_built_in_acoustid_key() {
+    fn the_published_image_is_built_with_flakyfys_own_acoustid_key() {
         let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let read =
             |name: &str| std::fs::read_to_string(repo.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
         let workflow = read(".github/workflows/docker.yml");
         assert!(
-            !workflow.contains("ACOUSTID_APPLICATION_KEY"),
-            "the workflow passes no key"
+            workflow.contains(
+                "FLAKYFY_ACOUSTID_APPLICATION_KEY: ${{ secrets.FLAKYFY_ACOUSTID_APPLICATION_KEY }}"
+            )
         );
-        assert!(
-            !workflow.contains("REQUIRE_ACOUSTID_KEY"),
-            "the workflow requires no key"
-        );
-        assert!(!workflow.contains("acoustid_key"), "the workflow mounts no key");
+        assert!(workflow.contains("'FLAKYFY_REQUIRE_ACOUSTID_KEY=1'"));
+        assert!(workflow.contains("arg=FLAKYFY_ACOUSTID_KEY_SHA256="));
+        let check = workflow
+            .find("name: Flakyfy's own AcoustID key is set")
+            .expect("the check of the secret");
         let build = workflow
             .find("name: Build and push by digest")
             .expect("the image build");
+        assert!(check < build, "the secret is checked before the build");
         let step = &workflow[build..];
         let step = &step[..step.find("\n      - name:").unwrap_or(step.len())];
         let args = &step[step.find("build-args:").expect("the build arguments")..];
+        let args = &args[..args.find("\n          secrets:").expect("the secrets after them")];
         assert!(
             !args.contains("secrets."),
             "no secret is a build argument: {args}"
+        );
+        assert!(args.contains("${{ steps.acoustid.outputs.arg }}"));
+        assert!(
+            step.contains("format('acoustid_key={0}', secrets.FLAKYFY_ACOUSTID_APPLICATION_KEY)"),
+            "the key is a build secret"
         );
         assert!(step.contains("provenance: mode=min"));
 

@@ -744,11 +744,11 @@ the copies are on purpose and stops Flakyfy asking about them. The library is wa
 and the dashboard can start a walk at once.
 
 `SLSKD_VERIFY_DOWNLOADS` (on by default) fingerprints each finished download with Chromaprint
-and identifies it through AcoustID before it joins the library. Flakyfy's images carry no
-AcoustID key of their own (Octo's do): set your own free key from
-https://acoustid.org/new-application in `ACOUSTID_API_KEY` (or Settings). While it is blank,
-AcoustID is off and a heart is checked against the catalog's preview clip alone;
-`ACOUSTID_API_KEY=off` keeps it off. A file identified as a different recording is
+and identifies it through AcoustID before it joins the library. Flakyfy's published images bring
+Flakyfy's own AcoustID key, which a blank `ACOUSTID_API_KEY` uses. Your own free key from
+https://acoustid.org/new-application in `ACOUSTID_API_KEY` (or Settings) always takes its place
+and gets a faster lane of its own; an update never changes a key you set.
+`ACOUSTID_API_KEY=off` turns AcoustID off. A file identified as a different recording is
 deleted and its peer and filename are remembered in `/app/config/rejected-peers.json`, so that
 exact file is never downloaded again; entries lapse after 30 days and the Soulseek admin page
 can forget them all at once. `SLSKD_MIN_MATCH_SCORE` (50-99, default 85) is how sure AcoustID
@@ -976,7 +976,7 @@ Set `LIDARR_URL` and `LIDARR_API_KEY`, restart Flakyfy, then open the **Lidarr**
 
 The selected Lidarr root and Flakyfy's effective Navidrome library root must expose the same underlying files. Their container paths may differ: Flakyfy translates the imported path relative to the selected Lidarr root. For example, Lidarr `/data/music/Artist/Album/file.flac` can map to Flakyfy `/music/Artist/Album/file.flac` when both mounts point at the same host directory.
 
-A heart downloads the song you heard. When the artist has no music in your Lidarr yet, Flakyfy asks Lidarr for the album you were listening from; otherwise your other sources look for it. A download is kept only when its sound proves it is the recording you heard: AcoustID must be certain, or it must be the very master you played, moment by moment. A file's own tags can rule it out but never prove it. When nothing can be proven yet, Flakyfy keeps the version you heard and keeps looking for a better copy it can prove. A song you heart without playing waits for one play. Hearting a whole album keeps the tracks Flakyfy can prove and holds the rest until you play them, or until you choose Keep these anyway. Flakyfy's images carry no AcoustID key of their own: set yours in Settings, or hearts are checked against the catalog's preview clip alone. Tick On Grab and On Health Restored in Lidarr's webhook.
+A heart downloads the song you heard. When the artist has no music in your Lidarr yet, Flakyfy asks Lidarr for the album you were listening from; otherwise your other sources look for it. A download is kept only when its sound proves it is the recording you heard: AcoustID must be certain, or it must be the very master you played, moment by moment. A file's own tags can rule it out but never prove it. When nothing can be proven yet, Flakyfy keeps the version you heard and keeps looking for a better copy it can prove. A song you heart without playing waits for one play. Hearting a whole album keeps the tracks Flakyfy can prove and holds the rest until you play them, or until you choose Keep these anyway. Flakyfy's published images bring Flakyfy's own AcoustID key, used while yours is blank; your own key in Settings takes its place. Tick On Grab and On Health Restored in Lidarr's webhook.
 
 Those two webhook events (beside On Release Import, in Lidarr's Settings, Connect, on the webhook pointed at Flakyfy) let a heart waiting for Lidarr's indexers go on the moment they search again; without them Flakyfy still reads Lidarr's health at the import poll pace. Such a heart needs nothing from you: it goes on by itself once the indexers search again. A kept copy waiting for Lidarr's download needs nothing from you either: it plays from where it waits, and joins your library once Lidarr's download for that artist is over. A song held while AcoustID is off and a hearted album's held tracks are listed under In progress on the dashboard's Fetched songs page, with Keep anyway or Keep these anyway for the person they wait for. While Record who asked is off, the dashboard lists those people as Listener 1, Listener 2 and so on, never by name.
 

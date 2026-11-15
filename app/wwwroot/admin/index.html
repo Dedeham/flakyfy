@@ -39,6 +39,11 @@
             <svg class="icon" aria-hidden="true"><use href="#i-tray-arrow-down"/></svg>
             <span>Fetched songs</span>
           </button>
+          <button class="sidebar-nav-item" data-tab="actions">
+            <svg class="icon" aria-hidden="true"><use href="#i-clipboard-text"/></svg>
+            <span>Actions</span>
+            <span class="sidebar-nav-badge" data-actions-badge></span>
+          </button>
           <button class="sidebar-nav-item" data-tab="listening">
             <svg class="icon" aria-hidden="true"><use href="#i-headphones"/></svg>
             <span>Listening</span>
@@ -388,6 +393,33 @@
       </section>
 
       <!-- ─── FETCHED SONGS ──────────────────────────────────── -->
+      <section data-pane="actions">
+        <header class="page-header">
+          <div>
+            <h1>Actions</h1>
+            <p>Everything Flakyfy is working on, in one place. Stop a job here, or open its page for the details.</p>
+          </div>
+        </header>
+
+        <div class="set-section">
+          <div class="set-head">
+            <h3 class="set-title" id="actions-title">Running now</h3>
+          </div>
+          <div class="set-card actions-list" id="actions-running"></div>
+        </div>
+
+        <div class="set-section">
+          <div class="set-head actions-head">
+            <div>
+              <h3 class="set-title">Finished</h3>
+              <p class="set-desc">What ended while this page was open. Reloading the page starts the list again.</p>
+            </div>
+            <button class="btn btn-ghost btn-sm" type="button" id="actions-clear" hidden>Clear finished</button>
+          </div>
+          <div class="set-card actions-list" id="actions-finished"></div>
+        </div>
+      </section>
+
       <section data-pane="fetched">
         <header class="page-header">
           <div>

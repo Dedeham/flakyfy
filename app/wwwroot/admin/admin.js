@@ -360,7 +360,7 @@ function renderActivity(items) {
     }
     if (running && item.kind === 'scan' && now - activitySeen.get(key).firstRunningAt < ACTIVITY_SCAN_GRACE) continue;
     if (activityDismissed.get(key) === item.id) continue;
-    if (activityPageOpen(item.page)) continue;
+    if (activityPageOpen(item.page) || activityPageOpen('actions')) continue;
 
     live.add(key);
     let el = activityCards.querySelector(`[data-act-key="${CSS.escape(key)}"]`);
@@ -409,6 +409,7 @@ async function activityTick() {
     if (r.ok) items = (await r.json()).items || [];
   } catch { /* Flakyfy away: the status cards say so */ }
   renderActivity(items);
+  renderActions(items);
   if (document.hidden) return;
   const busy = items.some(item => item.state === 'running') || Date.now() < activityFastUntil;
   activityTimer = setTimeout(activityTick, busy ? ACTIVITY_FAST : ACTIVITY_IDLE);
@@ -437,6 +438,153 @@ activityCards?.addEventListener('click', e => {
   }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) activityTick(); });
+
+// ────────────────────────────────────────────────────────────────
+// Actions: every job in one list, with its stop button
+// ────────────────────────────────────────────────────────────────
+// The jobs the activity cards show, from the same answer, as rows that stay: what runs now, and
+// what this page saw end. The server lists a finished job for two minutes; the page keeps the
+// last ACTIONS_KEPT it saw until it is reloaded or cleared.
+const ACTIONS_KEPT = 50;
+const actionsEnded = new Map();   // item id -> item, in the order they ended
+let actionsListed = new Map();    // job key -> the ended item id the last answer listed for it
+let actionsCleared = new Set();   // ended ids cleared while the server still lists them
+let actionsRunning = [];
+const actionsDrawn = new Map();   // list id -> the html it shows
+
+// How a kind of job is stopped: the call its own page makes, and what that page says after. A
+// kind that is not here has no stop (a download on its way, a scan), so its row only opens its
+// page. Better quality has no one run to stop: its waiting songs are taken back instead.
+const ACTION_STOP = {
+  genre: { path: '/api/admin/genre/backfill/cancel', said: 'Stopping after the current file.' },
+  tidy: { path: '/api/admin/tidy/cancel', said: 'Stopping after the current file.' },
+  covers: { path: '/api/admin/covers/upgrade/cancel', said: 'Stopping after the current album.' },
+  lyrics: { path: '/api/admin/lyrics/library/cancel', said: 'Stopping after the current song.' },
+  upgrades: { ask: 'The songs still waiting are taken back. The one being fetched finishes, and your copy stays until the new one passes every check.' },
+};
+const ACTION_STATE = { running: 'Running', done: 'Done', stopped: 'Stopped', failed: 'Failed' };
+
+// A stop needs the Navidrome sign-in its own page needs; asked for once, then tried again.
+async function actionsFetch(path, options = {}) {
+  let response = await api(path, options);
+  if (response.status === 401 && await browseAuthenticate(document.createElement('div'))) {
+    response = await api(path, options);
+  }
+  if (response.ok) return response;
+  if (response.status === 401) throw new Error('This needs a Navidrome admin sign-in.');
+  const body = await response.json().catch(() => ({}));
+  throw new Error(body.error || `Could not stop: HTTP ${response.status}`);
+}
+
+async function actionStop(item) {
+  const stop = ACTION_STOP[item.kind];
+  if (stop.path) {
+    await actionsFetch(stop.path, { method: 'POST' });
+    return stop.said;
+  }
+  const view = await (await actionsFetch('/api/admin/upgrades')).json();
+  const ids = (view.jobs || []).filter(job => ['queued', 'waiting'].includes(job.state)).map(job => job.id);
+  if (!ids.length) return 'Nothing is waiting to be taken back. The song being fetched finishes.';
+  const response = await actionsFetch('/api/admin/upgrades/cancel', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+  });
+  const { cancelled = 0 } = await response.json().catch(() => ({}));
+  return `Took back ${cancelled} ${cancelled === 1 ? 'song' : 'songs'}. The song being fetched finishes.`;
+}
+
+function actionRowHtml(item) {
+  const running = item.state === 'running';
+  const fraction = activityFraction(item);
+  const mark = item.state === 'done' ? icon('i-check-circle')
+    : item.state === 'failed' ? icon('i-warning-circle')
+    : activityIcon(item);
+  const bar = !running ? ''
+    : fraction === null
+      ? '<div class="act-bar indeterminate" aria-hidden="true"><span></span></div>'
+      : `<div class="act-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fraction * 100)}"><span style="width:${(fraction * 100).toFixed(1)}%"></span></div>`;
+  const when = running
+    ? (item.startedUtc ? `started ${relativeTime(item.startedUtc)}` : '')
+    : (item.finishedUtc ? relativeTime(item.finishedUtc) : '');
+  const title = escapeHtml(item.title);
+  const stop = running && ACTION_STOP[item.kind]
+    ? `<button class="btn btn-ghost btn-sm" type="button" data-action-stop aria-label="Stop: ${title}">Stop</button>` : '';
+  const open = document.querySelector(`section[data-pane="${item.page}"]`)
+    ? `<button class="btn btn-ghost btn-sm" type="button" data-action-open="${escapeHtml(item.page)}" aria-label="Open the page of: ${title}">Open</button>` : '';
+  return `<div class="action-row" data-state="${escapeHtml(item.state)}" data-action-id="${escapeHtml(item.id)}">
+      <span class="act-mark">${mark}</span>
+      <div class="act-text">
+        <span class="act-title">${title}</span>
+        <span class="act-line">${escapeHtml([activityLine(item), when].filter(Boolean).join(' · '))}</span>
+        ${bar}
+      </div>
+      <span class="action-state">${ACTION_STATE[item.state] || escapeHtml(item.state)}</span>
+      <span class="action-buttons">${stop}${open}</span>
+    </div>`;
+}
+
+// A list is redrawn only when it changed, and the keyboard stays on the button it was on.
+function drawActions(id, items, empty) {
+  const list = document.getElementById(id);
+  if (!list) return;
+  const html = items.length ? items.map(actionRowHtml).join('') : stateBlock('empty', empty);
+  if (actionsDrawn.get(id) === html) return;
+  const held = list.contains(document.activeElement) ? document.activeElement : null;
+  const heldRow = held?.closest('[data-action-id]')?.dataset.actionId;
+  const heldButton = held?.hasAttribute('data-action-stop') ? '[data-action-stop]' : '[data-action-open]';
+  actionsDrawn.set(id, html);
+  list.innerHTML = html;
+  if (heldRow) list.querySelector(`[data-action-id="${CSS.escape(heldRow)}"] ${heldButton}`)?.focus();
+}
+
+function renderActions(items) {
+  actionsRunning = items.filter(item => item.state === 'running');
+  const listed = new Map();
+  for (const item of items) {
+    if (item.state === 'running') continue;
+    const key = activityKey(item);
+    listed.set(key, item.id);
+    // A batch that grew (one more song added) is listed under a new id: it is still one row.
+    const before = actionsListed.get(key);
+    if (before && before !== item.id) actionsEnded.delete(before);
+    if (!actionsCleared.has(item.id)) actionsEnded.set(item.id, item);
+  }
+  actionsListed = listed;
+  for (const id of [...actionsEnded.keys()].slice(0, Math.max(0, actionsEnded.size - ACTIONS_KEPT))) actionsEnded.delete(id);
+
+  const badge = document.querySelector('[data-actions-badge]');
+  if (badge) {
+    badge.textContent = actionsRunning.length ? String(actionsRunning.length) : '';
+    badge.classList.toggle('good', actionsRunning.length > 0);
+  }
+  if (!activityPageOpen('actions')) return;
+  drawActions('actions-running', actionsRunning, 'Nothing is running.');
+  drawActions('actions-finished', [...actionsEnded.values()].reverse(), 'Nothing has finished since this page was opened.');
+  const clear = document.getElementById('actions-clear');
+  if (clear) clear.hidden = actionsEnded.size === 0;
+}
+
+document.querySelector('section[data-pane="actions"]')?.addEventListener('click', async e => {
+  const open = e.target.closest('[data-action-open]');
+  if (open) { openTab(open.dataset.actionOpen); return; }
+  const id = e.target.closest('[data-action-stop]')?.closest('[data-action-id]')?.dataset.actionId;
+  const item = actionsRunning.find(running => running.id === id);
+  if (!item) return;
+  const ask = ACTION_STOP[item.kind].ask || 'What it has already done stays done.';
+  if (!(await askConfirm(`Stop “${item.title}”?`, ask, 'Stop'))) return;
+  const title = document.getElementById('actions-title');
+  try {
+    note(title, `${item.title}: ${await actionStop(item)}`, 'info');
+  } catch (error) {
+    note(title, `${item.title}: ${error.message}`, 'error');
+  }
+  activityTick();
+});
+
+document.getElementById('actions-clear')?.addEventListener('click', () => {
+  actionsCleared = new Set(actionsListed.values());
+  actionsEnded.clear();
+  activityTick();
+});
 
 // ────────────────────────────────────────────────────────────────
 // Toast helper

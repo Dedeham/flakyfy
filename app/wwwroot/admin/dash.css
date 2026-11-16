@@ -16,7 +16,8 @@
   --page: #090909;
   --surface: #141414;  /* surface-1: cards, inputs, secondary pills */
   --surface-2: #1c1c1c;  /* surface-2: selected tab, hover row, pill on a card */
-  --surface-3: #242424;  /* hover step above surface-2 */
+  --surface-3: #262626;  /* hover step above surface-2 */
+  --surface-4: #303030;                     /* hover step on a surface-3 pill */
   --surface-deep: #0e0e0e;  /* code wells, logs, recessed blocks */
   --hairline: #262626;  /* decorative dividers, never a control edge */
   --hairline-strong: #262626;
@@ -37,6 +38,7 @@
   --ok: #22c55e;
   --warn: #ffc53d;
   --bad: #ff5577;
+  --info-hover: #33adff;
   --info: #0099ff;  /* links and selection only */
   --focus: #0099ff;
   --bad-line: var(--bad);
@@ -83,10 +85,8 @@
   --btn-pad: 0 15px;
   --btn-size: 14px;
   --btn-weight: 500;
-  --btn-bg: var(--surface);
+  --btn-bg: var(--surface);                /* a pill is one step above its container: see the scoped rules after .btn */
   --btn-bg-hover: var(--surface-2);
-  --btn-on-card: var(--surface-2);
-  --btn-on-card-hover: var(--surface-3);
   --btn-line: transparent;
   --btn-line-hover: transparent;
   --btn-tonal: rgba(255, 255, 255, 0.14);
@@ -99,7 +99,7 @@
   --danger-bg-hover: var(--surface-2);
   --danger-fill-hover: #ff7790;
   --seg-track: var(--surface);
-  --seg-on-bg: var(--surface-2);
+  --seg-on-bg: var(--surface-3);
   --seg-on-ink: var(--ink);
   --input-h: 40px;
   --input-bg: var(--surface);
@@ -131,11 +131,11 @@
   --glyph-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z'/></svg>");
 
   /* The names this stylesheet used before, mapped onto the tokens above. */
-  --ink-1: var(--ink-body);
+  --ink-1: var(--ink);
   --ink-2: var(--mute);
   --ink-4: var(--hairline); /* meter tracks */
   --ink-5: var(--hairline-soft);
-  --text-secondary: var(--ink-body);
+  --text-secondary: var(--mute);
   --text-muted: var(--mute);
   --text-faint: var(--ash);
   --glass: var(--surface);
@@ -165,7 +165,7 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; min-height: 100%; }
 html { background: var(--page); scrollbar-gutter: stable; }
-html { scroll-padding-top: calc(var(--subnav-h) + var(--s-xl)); }
+html { scroll-padding-top: calc(var(--subnav-h) + var(--s-xl)); scroll-padding-bottom: calc(var(--dock-h, 0px) + 30px); }
 body {
   /* The page under the lights; .ambient paints the lights themselves. */
   background: var(--page);
@@ -180,7 +180,7 @@ body {
 }
 
 a { color: var(--info); text-decoration: underline; text-underline-offset: 2px; transition: color var(--t-hover); }
-a:hover { color: var(--ink); }
+a:hover { color: var(--info-hover); }
 
 code {
   font-family: var(--mono);
@@ -305,13 +305,13 @@ h1[tabindex="-1"]:focus-visible { outline-offset: 4px; border-radius: var(--r-ro
 }
 .sidebar-signed-in { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--s-xl); margin: 0 0 var(--s-m); font-size: var(--t-meta); }
 #signed-in-user { flex: 1 0 100%; color: var(--text-muted); overflow-wrap: anywhere; }
-.sidebar-signed-in .link-btn { min-height: 32px; font-size: var(--t-meta); text-decoration: underline; text-underline-offset: 3px; }
+.sidebar-signed-in .link-btn { min-height: 32px; color: var(--mute); font-size: var(--t-meta); text-decoration: underline; text-underline-offset: 3px; }
 
 /* --- Content: one column no wider than reads well -------------- */
 .content {
   --content-pad: 32px;
   --pad-inline: max(var(--content-pad), calc((100% - 1080px) / 2));
-  padding: 0 0 140px;
+  padding: 0 0 calc(var(--dock-h, 0px) + 40px);
   width: 100%;
   min-width: 0;
 }
@@ -372,15 +372,15 @@ h1[tabindex="-1"]:focus-visible { outline-offset: 4px; border-radius: var(--r-ro
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  border-radius: var(--r-pill);
-  font-size: 11px;
-  font-weight: 500;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 600;
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   visibility: hidden;
 }
-.subnav-item .sidebar-nav-badge { position: absolute; top: -5px; right: -6px; }
+.subnav-item .sidebar-nav-badge { position: absolute; top: -6px; right: -8px; }
 .sidebar-nav-badge.bad  { visibility: visible; background: var(--bad); color: var(--primary-ink); }
 .sidebar-nav-badge.good { visibility: visible; background: var(--good-wash); color: var(--good); }
 .nav-flag { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
@@ -430,12 +430,14 @@ section[data-pane].active { display: block; }
 }
 .page-header p {
   margin: 0;
-  color: var(--text-secondary);
+  color: var(--mute);
   font-size: var(--t-body);
   line-height: 1.5;
-  max-width: 62ch;
+  max-width:  68ch;
+  text-wrap: pretty;
+  min-height: 2.8em;
 }
-.page-header a { color: var(--accent-hover); }
+.page-header a { color: var(--info); }
 .page-header > div { flex: 1 1 auto; min-width: 0; }
 .page-header > .btn { flex: 0 0 auto; }
 /* The old per-page icon tile is gone: the tab strip already shows where you are. */
@@ -464,9 +466,9 @@ section[data-pane].active { display: block; }
 .btn:hover { background-color: var(--btn-bg-hover); border-color: var(--btn-line-hover); color: var(--ink); text-decoration: none; }
 .btn .icon { width: 16px; height: 16px; color: currentColor; }
 .btn:active { transform: scale(0.97); }
-/* On a card the pill steps up to surface-2. */
-:is(.set-card, .settings-card, .info-card, .callout, .status-card, .dl-list, .now-card, .imp-card, .modal) .btn:not(.btn-primary):not(.btn-danger) { background-color: var(--btn-on-card); }
-:is(.set-card, .settings-card, .info-card, .callout, .status-card, .dl-list, .now-card, .imp-card, .modal) .btn:not(.btn-primary):not(.btn-danger):hover { background-color: var(--btn-on-card-hover); }
+/* A pill is one lift above whatever it sits on: canvas -> cards -> raised bars and dialogs. */
+:is(.set-card, .settings-card, .info-card, .callout, .status-card, .dl-list, .now-card, .imp-card) { --btn-bg: var(--surface-2); --btn-bg-hover: var(--surface-3); }
+:is(.notice, .act, #toast, .cover-bar, .version-bar, .modal) { --btn-bg: var(--surface-3); --btn-bg-hover: var(--surface-4); }
 
 .btn-primary { background: var(--primary-bg); border-color: transparent; color: var(--primary-ink); }
 .btn-primary:hover { background-color: var(--primary-bg-hover); border-color: transparent; color: var(--primary-ink); }
@@ -485,9 +487,10 @@ section[data-pane].active { display: block; }
 
 .btn:disabled,
 .btn:disabled:hover {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
 }
+.btn-primary:disabled, .btn-primary:disabled:hover { background: var(--btn-bg); color: var(--ink); }
 
 /* Inline action that reads as a link inside running text. */
 .link-button {
@@ -495,12 +498,12 @@ section[data-pane].active { display: block; }
   border: none;
   padding: 0;
   font: inherit;
-  color: var(--accent-hover);
+  color: var(--info);
   text-decoration: underline;
-  text-decoration-color: var(--accent-line);
+  text-decoration-color: currentColor;
   text-underline-offset: 2px;
 }
-.link-button:hover { color: var(--ink); text-decoration-color: currentColor; }
+.link-button:hover { color: var(--info-hover); }
 
 /* -- Fields -- */
 .set-input,
@@ -613,7 +616,7 @@ input[type="number"].set-input { max-width: 160px; }
   font-weight: var(--btn-weight);
   padding: 0 14px;
   border-radius: var(--r-seg);
-  color: var(--text-secondary);
+  color: var(--mute);
   transition: background-color var(--t-hover) var(--ease), color var(--t-hover) var(--ease);
   white-space: nowrap;
 }
@@ -625,7 +628,7 @@ input[type="number"].set-input { max-width: 160px; }
 .set-section { margin-bottom: var(--s-section); scroll-margin-top: var(--s-xl); }
 .set-title:focus-visible { outline-offset: 4px; border-radius: var(--r-row); }
 
-.set-head { padding: 0 var(--s-2xs) var(--s-l); }
+.set-head { padding: 0 0 var(--s-l); }
 .set-title {
   margin: 0;
   font-size: 20px;
@@ -748,13 +751,15 @@ input[type="number"].set-input { max-width: 160px; }
   padding: 0 2px;
   border: none;
   background: none;
-  color: var(--accent-hover);
+  color: var(--info);
+  text-decoration: underline;
+  text-underline-offset: 2px;
   font-size: var(--t-meta);
   font-weight: 500;
   border-radius: var(--r-row);
   white-space: nowrap;
 }
-.hint-toggle:hover { color: var(--ink); }
+.hint-toggle:hover { color: var(--info-hover); }
 .hint-toggle .icon { width: 12px; height: 12px; transition: transform var(--t-swap) var(--ease); }
 .hint-toggle[aria-expanded="true"] .icon { transform: rotate(180deg); }
 .set-info-more {
@@ -870,10 +875,10 @@ input[type="number"].set-input { max-width: 160px; }
 .form-actions.unsaved .saved-status:not(.error):not(.busy) { display: none; }
 
 form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabled) {
-  background: var(--btn-on-card);
+  background: var(--btn-bg);
   color: var(--ink);
 }
-form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabled):hover { background-color: var(--btn-on-card-hover); }
+form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabled):hover { background-color: var(--btn-bg-hover); }
 .form-actions:not(.unsaved) .form-undo { display: none; }
 /* The unsaved bar follows the reader down a long card. */
 .set-card > .form-actions.unsaved {
@@ -921,16 +926,26 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: var(--s-page) var(--s-2xl);
+  min-height: 104px;
+  padding: 30px 20px;
   color: var(--text-muted);
   font-size: var(--t-meta);
   line-height: 1.5;
   text-align: center;
 }
-.state .icon { width: 18px; height: 18px; flex-shrink: 0; }
+.state .icon { width: 20px; height: 20px; flex-shrink: 0; }
+.state-empty .icon { color: var(--mute); }
 .state-error { color: var(--bad); }
 .state-error .icon { color: var(--bad); }
 .config-loading { padding: 0; }
+
+/* A list still loading keeps its rows' height: bars, no spinner. */
+.skel-row { height: 60px; display: flex; align-items: center; gap: 15px; padding: 0 20px; border-top: 1px solid var(--hairline); }
+.skel-row:first-child { border-top: 0; }
+.skel-row::before, .skel-row::after { content: ''; height: 12px; border-radius: var(--r-pill); background: var(--surface-2); }
+.skel-row::before { flex: 0 1 40%; }
+.skel-row::after { flex: 0 1 20%; }
+.skel-tall .skel-row { height: 85px; }
 
 /* Restart-required chip */
 .restart-badge {
@@ -975,9 +990,8 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .notice-warn::before { background: var(--warn); -webkit-mask-image: var(--glyph-warning); mask-image: var(--glyph-warning); }
 .notice-error::before { background: var(--bad); -webkit-mask-image: var(--glyph-error); mask-image: var(--glyph-error); }
 .app-banner::before { top: 50%; margin-top: -9px; }
-.notice a { color: var(--accent-hover); }
-.notice-warn { border-left: 2px solid var(--warn); color: var(--ink-1); }
-.notice-error { border-left: 2px solid var(--bad); color: var(--ink); }
+.notice a, .notice .link-btn { color: var(--info); }
+.notice .link-btn { text-decoration: underline; text-underline-offset: 2px; }
 
 /* Page banners (settings unavailable, settings.json unreadable, restart pending) */
 .app-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-m) 14px; }
@@ -1037,8 +1051,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  align-items: start;
-  gap: var(--s-l);
+  gap: 15px;
   margin-bottom: var(--s-xl);
 }
 .status-card {
@@ -1049,6 +1062,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   display: flex;
   flex-direction: column;
   gap: var(--s-m);
+  min-height: 164px;
   transition: border-color var(--t-card) var(--ease);
 }
 .status-card:hover { border-color: var(--line-control); }
@@ -1073,9 +1087,11 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   color: var(--ink-1);
   word-break: break-word;
   line-height: 1.5;
+  flex: 1;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
 }
 .status-card.off .status-card-body { color: var(--text-muted); }
-.status-card-foot { font-size: var(--t-label); color: var(--text-muted); margin-top: auto; }
+.status-card-foot { font-size: var(--t-label); color: var(--text-muted); margin-top: 12px; }
 .status-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .status-card-follows { display: flex; flex-direction: column; gap: var(--s-2xl); }
 .status-card-follow { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-s); }
@@ -1110,16 +1126,18 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 
 /* -- Setup checklist (Status) -- */
 .setup-checklist { margin-bottom: var(--s-page); }
+.setup-checklist { overflow: clip; }
 /* The Status page's downloads card: one line each, its glyph beside the line's first row. */
 .download-checks .set-info-t { display: flex; align-items: flex-start; gap: var(--s-m); }
 .download-checks .set-info-t > .icon { margin-top: 1.5px; color: var(--text-secondary); }
 .download-checks .is-warning .set-info-t > .icon { color: var(--warn); }
 .setup-checklist summary {
-  min-height: 48px;
+  height: 56px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   gap: var(--s-l);
-  padding: var(--s-l) var(--s-xl);
+  padding: 0 var(--s-xl);
   font-size: var(--t-body);
   font-weight: 500;
   color: var(--ink);
@@ -1141,7 +1159,9 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .setup-checklist[open] summary::before { transform: rotate(45deg); }
 .setup-checklist summary:focus-visible { outline-offset: -2px; }
 .setup-checklist.needs-attention .setup-summary-text::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: var(--s-l); vertical-align: 1px; background: var(--warn); transform: rotate(45deg); }
-.setup-summary-text { flex: 1 1 auto; min-width: 0; }
+.setup-summary-text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.setup-checklist.needs-attention summary { background: var(--surface-2); }
+.setup-checklist[open].needs-attention summary { border-radius: var(--r-panel) var(--r-panel) 0 0; }
 .setup-meter {
   flex: 0 0 96px;
   height: 6px;
@@ -1158,12 +1178,16 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--s-l);
-  padding: var(--s-l) var(--s-xl);
+  padding: 0 var(--s-xl);
+  height: 68px;
   border-top: 1px solid var(--hairline);
 }
+.setup-checklist[open] #setup-checklist { min-height: 340px; }
+.setup-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.setup-detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
 .setup-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .setup-title { font-size: var(--t-table); font-weight: 500; color: var(--ink); }
-.setup-detail { font-size: var(--t-meta); color: var(--text-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.setup-detail { font-size: var(--t-meta); color: var(--text-muted); line-height: 1.4; overflow-wrap: anywhere; }
 .setup-state { width: 8px; height: 8px; border-radius: 50%; justify-self: center; }
 .setup-state.ok { background: var(--good);  }
 .setup-state.bad { background: var(--bad);  }
@@ -1268,7 +1292,6 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .ask-label { font-size: var(--t-label); color: var(--ink-2); }
 .btn-primary.btn-destructive { background: var(--bad); color: var(--primary-ink); }
 .btn-primary.btn-destructive:hover { background: var(--danger-fill-hover); }
-.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* -- Better quality: lossy songs, five columns -- */
 .lossy-tool { padding: var(--s-xl); display: flex; flex-direction: column; gap: var(--s-l); }
@@ -1605,7 +1628,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .cover-title { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cover-artist { color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: -4px; }
 .cover-more { color: var(--ink-2); font-size: 12px; margin: 0; }
-.cover-bar { position: sticky; bottom: var(--s-l); z-index: 5; display: flex; align-items: center; gap: var(--s-l); flex-wrap: wrap; padding: 10px var(--s-l); border-radius: var(--r-panel); background: var(--surface-2); border: 1px solid var(--hairline);  }
+.cover-bar { position: sticky; bottom: calc(var(--dock-h, 0px) + 15px); z-index: 5; display: flex; align-items: center; gap: var(--s-l); flex-wrap: wrap; padding: 10px var(--s-l); border-radius: var(--r-panel); background: var(--surface-2); border: 1px solid var(--hairline);  }
 .cover-count { color: var(--ink); font-weight: 500; }
 .cover-hint { color: var(--ink-2); flex: 1; min-width: 160px; }
 .cover-how { color: var(--ink-2); font-size: 12px; }
@@ -2067,7 +2090,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 }
 .health-nav-item:hover { background: var(--hover); color: var(--ink); }
 .health-nav-item.active {
-  background: var(--surface-2);
+  background: var(--surface-3);
   color: var(--ink);
 }
 .health-nav-item:focus-visible { outline-offset: -2px; }
@@ -2301,7 +2324,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .activity {
   position: fixed;
   right: var(--s-page);
-  bottom: var(--s-page);
+  bottom: calc(var(--s-page) + var(--dock-h, 0px));
   z-index: 110;
   width: min(380px, calc(100vw - 2 * var(--s-xl)));
   display: flex;
@@ -2359,8 +2382,8 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   position: absolute;
   top: 10px;
   right: 10px;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   border: none;
@@ -2376,16 +2399,19 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 
 /* The Actions page: the same jobs as rows that stay, each with its buttons. */
 .actions-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-l); }
-.actions-list { padding: 0; }
-.action-row { display: flex; align-items: center; gap: var(--s-l); padding: var(--s-l); }
+.actions-list { padding: 0; overflow: clip; }
+.action-row { display: flex; align-items: center; gap: var(--s-l); padding: 15px 20px; min-height: 60px; }
 .action-row + .action-row { border-top: 1px solid var(--hairline); }
 .action-row .act-bar { margin: 6px 0 0; }
 .action-row[data-state="done"] .act-mark { color: var(--good); background: var(--good-wash); }
 .action-row[data-state="failed"] .act-mark { color: var(--bad); background: var(--bad-wash); }
 .action-row[data-state="stopped"] .act-mark { color: var(--text-secondary); background: var(--badge-bg); }
-.action-state { flex: 0 0 auto; font-size: var(--t-label); font-weight: 500; color: var(--text-secondary); }
-.action-row[data-state="running"] .action-state { color: var(--accent); }
-.action-row[data-state="failed"] .action-state { color: var(--bad); }
+.action-state { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding: var(--badge-pad); border-radius: var(--r-pill); background: var(--badge-bg); font-size: var(--t-label); font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+.action-state::before { content: ''; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--mute); }
+.action-row[data-state="running"] .action-state::before { background: var(--ink); border-color: var(--ink); }
+.action-row[data-state="done"] .action-state::before { background: var(--ok); border-color: var(--ok); }
+.action-row[data-state="failed"] .action-state::before { background: var(--bad); border-color: var(--bad); border-radius: 1px; }
+.action-row [data-action-stop] { color: var(--bad); }
 .action-buttons { flex: 0 0 auto; display: flex; gap: var(--s-2xs); }
 @media (max-width: 760px) {
   .action-row { flex-wrap: wrap; }
@@ -2405,12 +2431,15 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 #toast:not(.show) { display: none; }
 #toast.show { opacity: 1; transform: none; pointer-events: auto; cursor: pointer; }
 @media (max-width: 760px) {
-  .activity { right: var(--s-xl); left: var(--s-xl); bottom: var(--s-xl); width: auto; }
+  .activity { right: 15px; left: 15px; bottom: calc(15px + var(--dock-h, 0px)); width: auto; }
 }
 @media (prefers-reduced-motion: reduce) { .act, .act.leaving { animation: none; } .act-bar.indeterminate > span { animation: none; width: 100%; opacity: 0.5; } }
 
 /* -- Narrow windows -- */
 @media (max-width: 760px) {
+  .setup-row { height: 88px; }
+  .setup-detail { -webkit-line-clamp: 2; }
+  .setup-checklist[open] #setup-checklist { min-height: 440px; }
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .sidebar-nav { min-width: 0; }
   .sidebar {
@@ -2469,8 +2498,11 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   /* Jumps to a spot on the page stop below the top bar and the tab strip. */
   html { scroll-padding-top: calc(var(--strip-h, var(--topbar-h)) + var(--subnav-h)); }
   .version-bar { top: calc(var(--strip-h, var(--topbar-h)) + var(--subnav-h)); }
-  .banner-dock { left: 0; padding-bottom: var(--s-xl); }
-  .banner-dock > .notice { width: 100%; }
+  .banner-dock { left: 0; padding: 0 15px 15px; gap: var(--s-m); }
+  .banner-dock > .notice { width: 100%; padding: 12px 14px 12px 42px; }
+  .update-banner-actions { width: 100%; margin-left: 0; flex-wrap: nowrap; }
+  .update-banner-actions .btn { flex: 1 1 auto; padding: 0 6px; min-width: 0; font-size: var(--t-meta); }
+  #update-banner-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
   .page-header { flex-wrap: wrap; gap: var(--s-l); }
   .page-header > div { flex-basis: calc(100% - 60px); }
   .page-header > .btn { margin-left: 0; }
@@ -2542,7 +2574,6 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 }
 
 /* -- Updates: the banner, the About card, and the release notes -- */
-.notice-update { border-left: 2px solid var(--info); color: var(--ink-1); }
 .notice-update::before { background: var(--info); }
 .update-banner-actions { display: flex; flex-wrap: wrap; gap: var(--s-m); margin-left: auto; }
 .update-line { color: var(--ink-1); }
@@ -2946,27 +2977,29 @@ textarea.set-input.layout-template {
 /* ── Status: what arrives late goes last, so it can only push what is below it ── */
 section[data-pane="status"].active { display: flex; flex-direction: column; }
 section[data-pane="status"] > .page-header { order: 0; }
-section[data-pane="status"] > .set-head { order: 1; }
-section[data-pane="status"] > .status-grid { order: 2; }
-section[data-pane="status"] > .status-meta { order: 3; }
-section[data-pane="status"] > #point-at-flakyfy { order: 4; }
-section[data-pane="status"] > #setup-checklist-wrap { order: 5; }
+section[data-pane="status"] > #setup-checklist-wrap { order: 1; }
+section[data-pane="status"] > #point-at-flakyfy { order: 2; }
+section[data-pane="status"] > .set-head { order: 3; }
+section[data-pane="status"] > .status-grid { order: 4; }
+section[data-pane="status"] > .status-meta { order: 5; }
 section[data-pane="status"] > #download-checks { order: 6; }
 section[data-pane="status"] > #latest-fetched { order: 7; }
 
 /* ── Late notices and lists: reserve the room, or go last ── */
 /* Late notices go after the page's content. */
 section:is([data-pane="imports"], [data-pane="health"], [data-pane="lossy"], [data-pane="lastfm"], [data-pane="listenbrainz"], [data-pane="notifications"]).active { display: flex; flex-direction: column; }
-:is(#imp-library-problem, #health-gate, #health-result, #lossy-gate, #discovery-off-banner, #check-listenbrainz-result, #test-notification-result) { order: 9; }
+:is(#health-result, #check-listenbrainz-result, #test-notification-result) { order: 9; }
+/* A gate notice sits above the card it explains. Whether it shows comes late from the server, so its slot is
+ * held (blank, same height as its one-line, two-line and four-line text) rather than pushing the card down. */
+:is(#lossy-gate, #health-gate)[hidden] { display: block !important; visibility: hidden; height: 46px; margin-bottom: var(--s-xl); }
+@media (max-width: 1100px) { :is(#lossy-gate, #health-gate)[hidden] { height: 67px; } }
+@media (max-width: 760px) { :is(#lossy-gate, #health-gate)[hidden] { height: 108px; } }
 /* Lists that fill from the server keep their usual height while loading. */
-.imp-svc-grid { min-height: 216px; }
-#lossy-list { min-height: 200px; }
+.imp-svc-grid { min-height: 216px; grid-auto-rows: 92px; }
 #lossy-status { min-height: 3em; }
 .status-card-body { min-height: 3em; }
-.status-card-foot { min-height: 3em; }
 @media (max-width: 1000px) { .imp-svc-grid { min-height: 328px; } }
 @media (max-width: 760px) { .imp-svc-grid { min-height: 413px; } #lossy-status { min-height: 4.5em; } }
-#health-body { min-height: 535px; }
 
 /* -- Forced colors: borders and system colours replace fills -- */
 @media (forced-colors: active) {

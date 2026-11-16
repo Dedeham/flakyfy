@@ -186,6 +186,24 @@ if ('MutationObserver' in window) {
 }
 // End of the shell block.
 
+// Dock height: the banner dock floats over the page, so the page and the floating cards keep clear of it.
+// One observer writes --dock-h on <html> (0 when no notice shows), and only when the number changes.
+const dockEl = document.querySelector('.banner-dock');
+let dockHeight = -1;
+function syncDockHeight() {
+  const h = dockEl && dockEl.querySelector('.notice:not([hidden])') ? Math.round(dockEl.getBoundingClientRect().height) : 0;
+  if (h === dockHeight) return;
+  dockHeight = h;
+  document.documentElement.style.setProperty('--dock-h', `${h}px`);
+}
+if (dockEl && typeof ResizeObserver === 'function') {
+  const dockWatch = new ResizeObserver(syncDockHeight);
+  dockWatch.observe(dockEl);
+  new MutationObserver(syncDockHeight).observe(dockEl, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+  syncDockHeight();
+}
+// End of the dock block.
+
 // focus: true when the user chose the pane, so keyboard and screen-reader focus follows them
 // to its heading instead of being left on a sidebar button that no longer describes the page.
 function activateTab(name, { focus = false } = {}) {
@@ -694,9 +712,14 @@ function note(anchor, message, kind = 'ok') {
   if (kind === 'ok') noteTimers.set(holder, setTimeout(() => { holder.hidden = true; }, 8000));
 }
 
+// A list that is still loading keeps its rows' height: grey bars, no spinner.
+function skeletonRows(n = 3, tall = false) {
+  return `<div class="skel${tall ? ' skel-tall' : ''}" role="status" aria-label="Loading">${'<div class="skel-row"></div>'.repeat(n)}</div>`;
+}
+
 // Loading, empty and failed lists all look the same everywhere: an icon and a sentence.
 function stateBlock(kind, message) {
-  const glyph = { loading: 'i-circle-notch', empty: 'i-circle-dashed', error: 'i-warning-circle' }[kind] ?? 'i-info';
+  const glyph = { loading: 'i-circle-notch', empty: 'i-tray-arrow-down', error: 'i-warning-circle' }[kind] ?? 'i-info';
   return `<div class="state state-${kind}"${kind === 'error' ? ' role="alert"' : ''}>${icon(glyph)}<span>${esc(message)}</span></div>`;
 }
 
@@ -736,7 +759,7 @@ async function refreshStatus() {
       const dot = card.querySelector('.status-dot');
       const body = card.querySelector('.status-card-body');
       if (dot) dot.className = 'status-dot bad';
-      if (body) body.textContent = `Flakyfy did not answer: ${e.message}`;
+      if (body) { body.textContent = `Flakyfy did not answer: ${e.message}`; body.title = body.textContent; }
       card.querySelectorAll('[data-status-action]').forEach(action => { action.hidden = true; });
     });
     setStatusBadge('!', 'Flakyfy did not answer the status check');
@@ -761,7 +784,7 @@ function setStatusCard(svc, probe) {
   const dot = card.querySelector('.status-dot');
   const body = card.querySelector('.status-card-body');
   if (dot)  dot.className  = `status-dot ${state}`;
-  if (body) body.textContent = probe.detail || (probe.ok ? 'online' : 'unreachable');
+  if (body) { body.textContent = probe.detail || (probe.ok ? 'online' : 'unreachable'); body.title = body.textContent; }
   // Mornye's card leads to its page when a person can pass its check there.
   const action = card.querySelector('[data-status-action]');
   if (action) action.hidden = probe.action !== 'pass';
@@ -7080,6 +7103,12 @@ async function loadTrash() {
   const list = findEl('trash-list');
   const summary = findEl('trash-summary');
   if (!list) return;
+  const la = currentSettings?.LibraryActions;
+  if (la && !la.Enabled) {
+    if (summary) summary.textContent = 'Library actions are off, so nothing is moved to the trash.';
+    list.innerHTML = stateBlock('empty', 'Turn on Library actions above to use the trash.');
+    return;
+  }
   list.innerHTML = stateBlock('loading', 'Reading the trash…');
   try {
     const response = await parityFetch('/api/admin/trash', {}, list);
@@ -7735,7 +7764,7 @@ function renderSetupChecklist() {
       <span class="setup-state ${row.state}" aria-hidden="true"></span>
       <span class="setup-copy">
         <span class="setup-title">${esc(row.title)}<span class="visually-hidden">: ${stateLabel[row.state]}</span></span>
-        <span class="setup-detail">${esc(row.detail)}</span>
+        <span class="setup-detail" title="${esc(row.detail)}">${esc(row.detail)}</span>
       </span>
       <button type="button" class="btn ${row.state === 'bad' ? '' : 'btn-ghost '}btn-sm" data-open-tab="${row.tab}" aria-label="${row.state === 'bad' ? 'Fix' : 'Open'} ${esc(row.title)}">${row.state === 'bad' ? 'Fix' : 'Open'}${icon('i-caret-right')}</button>
     </li>`).join('')}</ol>`;
@@ -7753,7 +7782,7 @@ function renderSetupChecklist() {
       : 'Setup complete. Point your apps at the address below.';
   const done = required.filter(row => row.state === 'ok').length;
   const summaryMarkup = `<span class="setup-summary-text">${esc(summaryText)}</span>`
-    + (checking ? '' : `<span class="setup-meter" role="img" aria-label="${done} of ${required.length} required steps done"><span style="width:${Math.round(100 * done / required.length)}%"></span></span>`);
+    + `<span class="setup-meter" role="img" aria-label="${checking ? 'Checking' : `${done} of ${required.length} required steps done`}"><span style="width:${checking ? 0 : Math.round(100 * done / required.length)}%"></span></span>`;
   if (summary.innerHTML !== summaryMarkup) summary.innerHTML = summaryMarkup;
   wrap.classList.toggle('needs-attention', missing.length > 0);
   // The sidebar marks where each missing step is fixed, so setup is visible from every page.
@@ -7771,14 +7800,16 @@ function renderSetupChecklist() {
       flag.remove();
     }
   });
-  // Open when something required is missing; otherwise stay out of the way, unless the user
-  // opened it themselves.
-  if (!wrap.dataset.userToggled) wrap.open = missing.length > 0;
+  // Never opened or closed for the reader after first paint; a finished setup is remembered for the next load.
+  if (!checking && !missing.length) setSetupDone();
 }
-// Once the user opens or closes it themselves, stop opening and closing it for them.
-document.getElementById('setup-summary')?.addEventListener('click', () => {
-  document.getElementById('setup-checklist-wrap').dataset.userToggled = '1';
-});
+
+// Setup checklist open state: decided before first paint from what an earlier visit saw. A browser that
+// never finished setup shows the list open; one that did shows the collapsed row.
+function setupDone() { try { return localStorage.getItem('flakyfy.setupDone') === '1'; } catch { return false; } }
+function setSetupDone() { try { localStorage.setItem('flakyfy.setupDone', '1'); } catch { /* private window */ } }
+{ const wrap = document.getElementById('setup-checklist-wrap'); if (wrap) wrap.open = !setupDone(); }
+// End of the setup open-state block.
 
 // ---- Lyrics sources ------------------------------------------------------
 //
@@ -8444,7 +8475,7 @@ async function lossyFetch(path, options = {}) {
 async function loadLossy(refresh = false) {
   const list = document.getElementById('lossy-list');
   if (!list) return;
-  list.innerHTML = stateBlock('loading', 'Reading your library…');
+  list.innerHTML = skeletonRows(3);
   try {
     const response = await lossyFetch(`/api/admin/lossy${refresh ? '?refresh=true' : ''}`);
     const body = await response.json().catch(() => ({}));
@@ -10246,7 +10277,7 @@ async function loadHealth({ fresh = false } = {}) {
   healthLoading = true;
   const refresh = document.getElementById('health-refresh');
   if (refresh) refresh.disabled = true;
-  if (!healthReport || fresh) body.innerHTML = stateBlock('loading', fresh ? 'Reading your library from Navidrome again…' : 'Checking your library…');
+  if (!healthReport || fresh) body.innerHTML = skeletonRows(2, true);
   const { ok, data } = await healthCall(`/api/admin/health${fresh ? '?fresh=1' : ''}`);
   healthLoading = false;
   if (refresh) refresh.disabled = false;

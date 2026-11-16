@@ -180,10 +180,11 @@
           </div>
         </section>
 
-        <details class="set-card setup-checklist" id="setup-checklist-wrap">
-          <summary id="setup-summary">Checking setup…</summary>
+        <details class="set-card setup-checklist" id="setup-checklist-wrap" open>
+          <summary id="setup-summary"><span class="setup-summary-text">Checking setup…</span><span class="setup-meter" role="img" aria-label="Checking"><span style="width:0%"></span></span></summary>
           <div id="setup-checklist"></div>
         </details>
+        <script>try{if(localStorage.getItem('flakyfy.setupDone')==='1')document.getElementById('setup-checklist-wrap').open=false}catch(e){}</script>
 
         <!-- ─── Downloads: what Flakyfy's checks by sound cannot do right now ─── -->
         <div class="set-section download-checks" id="download-checks" hidden>
@@ -1555,7 +1556,7 @@
         </div>
 
         <div id="health-body">
-          <div class="state state-loading"><svg class="icon" aria-hidden="true"><use href="#i-circle-notch"/></svg><span>Checking your library…</span></div>
+          <div class="skel skel-tall" role="status" aria-label="Loading"><div class="skel-row"></div><div class="skel-row"></div></div>
         </div>
 
         <p class="set-desc health-foot">Copies a fix removes wait in the server's trash, where they can be put back from <button type="button" class="link-button" id="health-trash-link">Recently removed</button> under Library actions.</p>
@@ -1937,7 +1938,7 @@
               <button class="btn btn-ghost" type="button" id="lossy-refresh"><svg class="icon" aria-hidden="true"><use href="#i-arrows-clockwise"/></svg><span>Refresh</span></button>
             </div>
             <p class="set-info-d lossy-shown" id="lossy-shown" aria-live="polite"></p>
-            <div id="lossy-list"></div>
+            <div id="lossy-list"><div class="skel" role="status" aria-label="Loading"><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div></div></div>
             <div id="lossy-results"></div>
             <div class="cover-bar" id="lossy-bar">
               <span class="cover-count" id="lossy-count">Nothing picked</span>

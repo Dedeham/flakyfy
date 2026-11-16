@@ -56,9 +56,10 @@ once, beside the name.
 official release (github.com/rsms/inter, SIL Open Font License 1.1, text in `fonts/LICENSE.txt`). The
 dashboards serve them themselves, so no page asks a third party for a font.
 
-`dash.css` also uses these subset files, all SIL Open Font License 1.1, taken from the fontsource
-packages on npm (version 5.2.8) and served by the dashboard itself:
-`inter-latin-wght-normal.woff2` and `inter-latin-ext-wght-normal.woff2` (Inter, text in `fonts/LICENSE.txt`),
-`instrument-serif-latin-400-normal.woff2` (Instrument Serif, Instrument Serif Project Authors, text in
-`fonts/LICENSE-instrument-serif.txt`) and `geist-mono-latin-wght-normal.woff2` (Geist Mono, Geist Project
+`dash.css` also uses these font files, all SIL Open Font License 1.1 and served by the dashboard itself.
+`inter-latin-features.woff2` is cut by Flakyfy from the Inter 4.1 `InterVariable.woff2` above (text in
+`fonts/LICENSE.txt`): fonttools `varLib.instancer` drops the opsz axis (weight stays), then `pyftsubset`
+keeps the Latin range and the layout features kern, liga, calt, ccmp, locl, mark, mkmk, tnum, case, cv01,
+cv05, cv09, cv11, ss03 and ss07. `inter-latin-ext-wght-normal.woff2` is the fontsource subset (version
+5.2.8, Inter). `geist-mono-latin-wght-normal.woff2` is the fontsource subset of Geist Mono (Geist Project
 Authors, text in `fonts/LICENSE-geist-mono.txt`).

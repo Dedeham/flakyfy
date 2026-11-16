@@ -129,6 +129,63 @@ if (sidebarStrip && 'ResizeObserver' in window) {
   }).observe(sidebarStrip);
 }
 
+// ────────────────────────────────────────────────────────────────
+// Shell: the seven groups, the phone menu sheet and the group flags
+// ────────────────────────────────────────────────────────────────
+// The sidebar lists seven groups; each pane's own button now sits in its group's tab strip and is
+// still a .sidebar-nav-item, so everything above keeps finding it.
+const navGroups = document.querySelectorAll('.nav-group-item');
+const navSidebar = document.querySelector('.sidebar');
+const navToggle = document.querySelector('.nav-toggle');
+
+// On a phone the groups open as a sheet under the top bar.
+function setNavOpen(open) {
+  navSidebar?.classList.toggle('nav-open', open);
+  navToggle?.setAttribute('aria-expanded', String(open));
+}
+navToggle?.addEventListener('click', () => setNavOpen(!navSidebar.classList.contains('nav-open')));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && navSidebar?.classList.contains('nav-open')) { setNavOpen(false); navToggle?.focus(); }
+});
+document.addEventListener('click', e => {
+  if (navSidebar?.classList.contains('nav-open') && !navSidebar.contains(e.target)) setNavOpen(false);
+});
+
+// A group is flagged when one of its tabs is: unsaved changes, a setup step to do, a failed check.
+// Only when the flag changes, so a poll that rewrites a tab's text does nothing here.
+function syncGroupFlags() {
+  navGroups.forEach(g => {
+    const tabs = document.querySelector(`.pane-group[data-group="${g.dataset.group}"] .subnav-tabs`);
+    const flagged = !!tabs?.querySelector('.has-unsaved, .nav-flag, .sidebar-nav-badge.bad:not(:empty)');
+    if (g.classList.contains('has-flag') !== flagged) g.classList.toggle('has-flag', flagged);
+    const text = g.querySelector('.group-flag-text');
+    const want = flagged ? 'needs attention' : '';
+    if (text && text.textContent !== want) text.textContent = want;
+  });
+}
+function syncNavGroups(name) {
+  navGroups.forEach(g => {
+    const on = g.dataset.panes.split(' ').includes(name);
+    g.classList.toggle('active', on);
+    if (on) g.setAttribute('aria-current', 'page');
+    else g.removeAttribute('aria-current');
+    // The phone's top bar names the group, since the tab strip no longer shows it.
+    if (on && navSidebar) navSidebar.dataset.current = g.title;
+  });
+  setNavOpen(false);
+  syncGroupFlags();
+}
+navGroups.forEach(g => g.addEventListener('click', () => openTab(g.dataset.open)));
+if ('MutationObserver' in window) {
+  let flagFrame = 0;
+  const flagWatch = new MutationObserver(() => {
+    if (!flagFrame) flagFrame = requestAnimationFrame(() => { flagFrame = 0; syncGroupFlags(); });
+  });
+  document.querySelectorAll('.subnav-tabs').forEach(t =>
+    flagWatch.observe(t, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] }));
+}
+// End of the shell block.
+
 // focus: true when the user chose the pane, so keyboard and screen-reader focus follows them
 // to its heading instead of being left on a sidebar button that no longer describes the page.
 function activateTab(name, { focus = false } = {}) {
@@ -137,17 +194,20 @@ function activateTab(name, { focus = false } = {}) {
     b.classList.toggle('active', on);
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
-    // On a phone the nav is a sideways strip; keep the current pill in view. Only the strip
-    // scrolls: the page's scroll padding covers the strip itself, so scrollIntoView would move
-    // the page as well.
-    if (on && window.matchMedia('(max-width: 760px)').matches) {
-      const nav = b.closest('.sidebar-nav');
-      const pill = b.getBoundingClientRect();
-      const box = nav?.getBoundingClientRect();
-      if (box) nav.scrollBy({ left: pill.left + pill.width / 2 - (box.left + box.width / 2) });
-    }
   });
   panes.forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+  syncNavGroups(name);
+  // On a phone the tabs are a sideways strip; keep the current one in view. Only the strip
+  // scrolls (scrollIntoView would move the page), and only now that its group is showing.
+  if (window.matchMedia('(max-width: 760px)').matches) {
+    const tab = document.querySelector(`.subnav-item[data-tab="${name}"]`);
+    const strip = tab?.closest('.subnav-tabs');
+    if (strip) {
+      const pill = tab.getBoundingClientRect();
+      const box = strip.getBoundingClientRect();
+      strip.scrollBy({ left: pill.left + pill.width / 2 - (box.left + box.width / 2) });
+    }
+  }
   if (typeof activityTick === 'function' && activityCards) activityTick();
   if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
   // Segmented thumbs can only be measured once their pane is visible.

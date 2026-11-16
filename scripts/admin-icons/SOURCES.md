@@ -55,3 +55,10 @@ once, beside the name.
 `app/wwwroot/admin/fonts/InterVariable.woff2` and `InterVariable-Italic.woff2` are Inter 4.1 from the
 official release (github.com/rsms/inter, SIL Open Font License 1.1, text in `fonts/LICENSE.txt`). The
 dashboards serve them themselves, so no page asks a third party for a font.
+
+`dash.css` also uses these subset files, all SIL Open Font License 1.1, taken from the fontsource
+packages on npm (version 5.2.8) and served by the dashboard itself:
+`inter-latin-wght-normal.woff2` and `inter-latin-ext-wght-normal.woff2` (Inter, text in `fonts/LICENSE.txt`),
+`instrument-serif-latin-400-normal.woff2` (Instrument Serif, Instrument Serif Project Authors, text in
+`fonts/LICENSE-instrument-serif.txt`) and `geist-mono-latin-wght-normal.woff2` (Geist Mono, Geist Project
+Authors, text in `fonts/LICENSE-geist-mono.txt`).

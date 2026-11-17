@@ -131,7 +131,7 @@ jobs:
         run: for f in app/wwwroot/admin/*.js app/wwwroot/family/*.js; do node --check "$f"; done
 
       - name: Dashboard tests
-        run: node --test app/wwwroot/admin/tests/
+        run: node --test app/wwwroot/admin/tests/*.test.mjs
 
   # Flakyfy's Mornye image (mornye/) adds a launcher and an assist helper to Mornye's published
   # image; compose builds it on the server. The helper's rules (the token, which of Mornye's

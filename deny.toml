@@ -14,6 +14,7 @@ ignore = [
     # Both are unmaintained, not vulnerable, and come in only through the crates PLAN chose.
     { id = "RUSTSEC-2024-0436", reason = "paste: a compile-time macro helper inside lofty (tags); goes when lofty drops it" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser: read by fontdb under cosmic-text (cover text); goes when cosmic-text moves to skrifa" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, not vulnerable; dates and times across the workspace (282 files); goes with a move to jiff or time" },
 ]
 
 [licenses]

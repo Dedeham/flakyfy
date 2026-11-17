@@ -3079,3 +3079,7 @@ section:is([data-pane="imports"], [data-pane="health"], [data-pane="lossy"], [da
   .set-input:focus, #raw-editor:focus { box-shadow: none; }
   .btn-primary { border: 1px solid ButtonText; }
 }
+
+/* Listening draws its charts from --accent-rgb, which listening.js sets from the playing cover on
+   <html>. The dashboard has one accent (blue, for links and focus), so the charts stay white here. */
+section[data-pane="listening"] { --accent-rgb: 255 255 255; }

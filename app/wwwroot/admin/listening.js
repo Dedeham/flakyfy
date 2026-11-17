@@ -706,7 +706,8 @@
         return;
       }
       state.data = reply.data;
-      render();
+      // An answer of the wrong shape shows the error state, not a half-drawn page.
+      try { render(); } catch (e) { console.warn('Listening could not read the answer', e); renderError('Flakyfy answered with something this page cannot read.'); }
     }
 
     const onResize = () => {

@@ -5052,7 +5052,7 @@ async function loadRadioStatus() {
       ? `<p class="radio-carried-note">${escapeHtml(`${carried}. Flakyfy tries again every ${learning.carriedRetryMinutes} minutes.`)}</p>`
       : '';
     output.innerHTML = `<p class="radio-state-copy">${escapeHtml(stateMessage)}</p>` + carriedLine + ((data.stations || []).length
-      ? `<div class="radio-station-grid">${data.stations.map(station => `<article class="radio-station-item"><div><strong>${escapeHtml(station.name)}</strong><span>${escapeHtml(station.kind)} · ${station.trackCount} tracks</span></div><p>${(station.preview || []).map(track => `${escapeHtml(track.title)} by ${escapeHtml(track.artist)}`).join(' · ') || 'Snapshot has no preview yet.'}</p></article>`).join('')}</div>`
+      ? `<div class="radio-station-grid">${data.stations.map(station => `<article class="radio-station-item"><div><strong>${escapeHtml(station.name)}</strong><span>${[station.kind, Number.isFinite(station.trackCount) ? `${station.trackCount} tracks` : ''].filter(Boolean).map(escapeHtml).join(' · ')}</span></div><p>${(station.preview || []).map(track => `${escapeHtml(track.title)} by ${escapeHtml(track.artist)}`).join(' · ') || 'Snapshot has no preview yet.'}</p></article>`).join('')}</div>`
       : '<div class="radio-empty">No ready snapshots yet. Stations are offered automatically as listening signals arrive.</div>');
   } catch (error) { output.textContent = `Radio status unavailable: ${error.message}`; }
 }
@@ -5143,6 +5143,7 @@ const lfmChecking = new Set();   // users with a check out right now
 let lfmLastUsers = [];
 
 function lfmAgo(iso) {
+  if (Number.isNaN(Date.parse(iso))) return '';
   const seconds = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
   if (seconds < 90) return 'just now';
   if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
@@ -5187,7 +5188,7 @@ function lfmRow(u, ready) {
   let actions;
   if (u.connected) {
     const sent = u.lastSent
-      ? `<span class="set-info-d">Last sent: ${escapeHtml(u.lastSent.title)} by ${escapeHtml(u.lastSent.artist)}, ${lfmAgo(u.lastSent.playedAtUtc)}.</span>`
+      ? `<span class="set-info-d">Last sent: ${escapeHtml(u.lastSent.title)} by ${escapeHtml(u.lastSent.artist)}${lfmAgo(u.lastSent.playedAtUtc) ? `, ${lfmAgo(u.lastSent.playedAtUtc)}` : ''}.</span>`
       : '';
     detail = `<span class="set-info-d lfm-state"><span class="status-dot ok"></span><span>Connected as <strong>${escapeHtml(u.lastFmUser || 'a Last.fm account')}</strong>.</span></span>${sent}`;
     actions = `<button class="btn btn-ghost" type="button" data-lfm-action="disconnect" data-user="${name}">Disconnect</button>`;
@@ -8891,13 +8892,22 @@ function renderUpdate() {
   if (active && !updatePollTimer) pollUpdate();
 }
 
+// The update answer as the page reads it: "an update is out" needs the release it names, and
+// `newer` is a list. Anything that is not an object is an answer the page cannot use.
+function normalizeUpdate(info) {
+  if (!info || typeof info !== 'object') throw new Error('Unreadable update answer');
+  if (!Array.isArray(info.newer)) info.newer = [];
+  if (!info.latest) info.updateAvailable = false;
+  return info;
+}
+
 async function loadUpdate({ check = false } = {}) {
   try {
     const response = check
       ? await api('/api/admin/update/check', { method: 'POST' })
       : await api('/api/admin/update', { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    updateInfo = await response.json();
+    updateInfo = normalizeUpdate(await response.json());
   } catch {
     if (!updateInfo) document.getElementById('update-line').textContent = "Couldn't ask Flakyfy about new releases.";
     return;
@@ -8941,7 +8951,7 @@ async function pollUpdateNow() {
   try {
     const response = await api('/api/admin/update', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    updateInfo = await response.json();
+    updateInfo = normalizeUpdate(await response.json());
     updateOutageSince = null;
   } catch {
     updatePollBusy = false;
@@ -11019,6 +11029,8 @@ async function loadFamily() {
     const r = await api('/api/admin/family');
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
     data = await r.json();
+    if (!data || typeof data !== 'object') throw new Error('unreadable answer');
+    if (!Array.isArray(data.members)) data.members = [];
   } catch (e) {
     box.replaceChildren(familyEl('p', { class: 'notice notice-error', role: 'alert' }, `Flakyfy could not read the family: ${e.message}`));
     return;
@@ -11267,7 +11279,8 @@ async function loadArtWall(fromStart) {
   const count = fromStart ? Math.max(artShown, ART_PAGE) : artShown + ART_PAGE;
   const response = await api(`/api/admin/animated-art/albums?offset=0&limit=${Math.min(count, 200)}`).catch(() => null);
   if (!response?.ok) return;
-  const page = await response.json();
+  const page = await response.json().catch(() => null);
+  if (!Array.isArray(page?.albums)) return;
   artShown = page.albums.length;
   wall.innerHTML = page.albums.map(artTile).join('');
   document.getElementById('art-hint').hidden = artShown === 0;

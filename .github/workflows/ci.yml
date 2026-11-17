@@ -118,6 +118,21 @@ jobs:
       - name: Shim tests
         run: pytest yt-dlp-shim/tests -q
 
+  # The dashboards (app/wwwroot): plain JavaScript with no build step, tested with Node's own test
+  # runner against fake pages, so this needs no dependencies.
+  dashboard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Syntax check
+        run: for f in app/wwwroot/admin/*.js app/wwwroot/family/*.js; do node --check "$f"; done
+
+      - name: Dashboard tests
+        run: node --test app/wwwroot/admin/tests/
+
   # Flakyfy's Mornye image (mornye/) adds a launcher and an assist helper to Mornye's published
   # image; compose builds it on the server. The helper's rules (the token, which of Mornye's
   # pauses it ends, which browsers it shows, the order of pointer events) and the launcher are

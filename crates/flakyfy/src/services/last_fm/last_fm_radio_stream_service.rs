@@ -768,6 +768,14 @@ impl LastFmRadioStreamService {
     ) -> anyhow::Result<RadioWarmupResult> {
         let user = self.shared.state.get_user(username);
         let settings = self.shared.settings.current();
+        // With radio or its streams switched off nothing is served, so there is nothing to warm.
+        if !settings.last_fm.enable_radio || !settings.last_fm.expose_radio_as_streams {
+            return Ok(RadioWarmupResult {
+                station_count: 0,
+                ready_station_count: 0,
+                ready_track_count: 0,
+            });
+        }
         let stations: Vec<LastFmRadioStation> = user
             .stations
             .into_iter()

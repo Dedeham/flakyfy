@@ -530,6 +530,27 @@ async fn switched_off_stations_are_not_served() {
     assert!(fixture.service.get_ready_pool(&session).is_empty());
 }
 
+/// With radio streams switched off the warm has no stations, not stations it can never fill.
+#[tokio::test]
+async fn the_warm_counts_no_stations_while_radio_streams_are_off() {
+    let fixture = fixture(0).await;
+    fixture.service.shared.settings.set(AppSettings {
+        last_fm: LastFmSettings {
+            enable_radio: true,
+            expose_radio_as_streams: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let result = fixture
+        .service
+        .warm_stored_stations("alice", &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(result.station_count, 0);
+    assert!(fixture.downloads.asked.lock().is_empty());
+}
+
 /// The warmers of one service instance collapse; another instance has its own.
 #[tokio::test]
 async fn a_scope_warms_a_station_once() {

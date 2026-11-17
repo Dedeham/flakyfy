@@ -248,7 +248,23 @@ An override from 2026.10.05 or earlier that made Flakyfy pulled (`build: !reset 
 
 `http://<your-host>:5274/admin`
 
-Every setting has a form, every backing service has a live status indicator, and the **Raw Config** tab lets you edit the whole effective configuration as a JSON file if you'd rather work that way. Changes hot-reload: no rebuild, and no restart for most settings. The few that only apply after a restart are marked **Restart** where you edit them, and anything saved but still waiting on a restart is listed at the top of every page until you restart Flakyfy.
+![The Status page of the Flakyfy dashboard: setup steps, where to point your apps, and every service it depends on](docs/images/dashboard/status.webp)
+
+The sidebar has seven groups (**Overview**, **Downloads**, **Library**, **Metadata**, **Discovery**, **Server** and **System**), and each group's pages sit as tabs along the top. **Ctrl K** (**Cmd K** on a Mac) jumps to any page by name. **Status** shows what Flakyfy still needs, where to point your apps and whether every service answers; **Actions** lists everything Flakyfy is working on, running and finished, and stops what can be stopped; **Listening** shows what everyone on the server has been playing.
+
+Every setting has a form, every backing service has a live status indicator, and **System**, **Raw config** lets you edit the whole effective configuration as a JSON file if you'd rather work that way. Changes hot-reload: no rebuild, and no restart for most settings. The few that only apply after a restart are marked **Restart** where you edit them, and anything saved but still waiting on a restart is shown in a bar at the bottom of every page until you restart Flakyfy. A new Flakyfy release shows as a card at the foot of the sidebar.
+
+![Listening: hours, plays and the people on the server over the last 30 days](docs/images/dashboard/listening.webp)
+
+![Streams & hearts under Downloads: what plays when a song is missing and what a heart saves](docs/images/dashboard/downloads.webp)
+
+![Better quality under Library: songs that are not lossless, filtered and picked for a higher quality copy](docs/images/dashboard/better-quality.webp)
+
+<table>
+<tr><td width="66%"><img src="docs/images/dashboard/actions.webp" alt="Actions: the jobs Flakyfy is running, with their progress and a Stop button"></td><td width="33%"><img src="docs/images/dashboard/phone-menu.webp" alt="The dashboard on a phone, with its menu open"></td></tr>
+</table>
+
+The pictures use made-up example data.
 
 To use your own logo instead of the snowflake, upload it under **About**, **Logo**. It shows in the dashboard, the family pages, the browser tab and on the covers of songs outside your library.
 

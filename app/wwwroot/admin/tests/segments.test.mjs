@@ -34,6 +34,7 @@ function load() {
   const observers = [];
   const context = {
     document: {
+      querySelector: () => null,
       getElementById: id => (id === 'f-folder-structure' ? select : null),
       querySelectorAll: selector => (selector === '.seg[data-seg-for]' ? [seg] : []),
       createElement: () => ({
@@ -54,7 +55,7 @@ function load() {
     requestAnimationFrame: () => 0,
     decoratePageHeaders() {},
     buildHints() {},
-    labelSettingControls() {},
+    labelPane() {},
   };
   vm.createContext(context);
   vm.runInContext(block, context);

@@ -129,6 +129,143 @@ if (sidebarStrip && 'ResizeObserver' in window) {
   }).observe(sidebarStrip);
 }
 
+// ────────────────────────────────────────────────────────────────
+// Shell: the seven groups, the phone menu sheet and the group flags
+// ────────────────────────────────────────────────────────────────
+// The sidebar lists seven groups; each pane's own button now sits in its group's tab strip and is
+// still a .sidebar-nav-item, so everything above keeps finding it.
+const navGroups = document.querySelectorAll('.nav-group-item');
+const navSidebar = document.querySelector('.sidebar');
+const navToggle = document.querySelector('.nav-toggle');
+
+// On a phone the groups open as a sheet under the top bar.
+function setNavOpen(open) {
+  navSidebar?.classList.toggle('nav-open', open);
+  navToggle?.setAttribute('aria-expanded', String(open));
+}
+navToggle?.addEventListener('click', () => setNavOpen(!navSidebar.classList.contains('nav-open')));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && navSidebar?.classList.contains('nav-open')) { setNavOpen(false); navToggle?.focus(); }
+});
+document.addEventListener('click', e => {
+  if (navSidebar?.classList.contains('nav-open') && !navSidebar.contains(e.target)) setNavOpen(false);
+});
+
+// A group is flagged when one of its tabs is: unsaved changes, a setup step to do, a failed check.
+// Only when the flag changes, so a poll that rewrites a tab's text does nothing here.
+function syncGroupFlags() {
+  navGroups.forEach(g => {
+    const tabs = document.querySelector(`.pane-group[data-group="${g.dataset.group}"] .subnav-tabs`);
+    const flagged = !!tabs?.querySelector('.has-unsaved, .nav-flag, .sidebar-nav-badge.bad:not(:empty)');
+    if (g.classList.contains('has-flag') !== flagged) g.classList.toggle('has-flag', flagged);
+    const text = g.querySelector('.group-flag-text');
+    const want = flagged ? 'needs attention' : '';
+    if (text && text.textContent !== want) text.textContent = want;
+  });
+}
+function syncNavGroups(name) {
+  navGroups.forEach(g => {
+    const on = g.dataset.panes.split(' ').includes(name);
+    g.classList.toggle('active', on);
+    if (on) g.setAttribute('aria-current', 'page');
+    else g.removeAttribute('aria-current');
+    // The phone's top bar names the group, since the tab strip no longer shows it.
+    if (on && navSidebar) navSidebar.dataset.current = g.title;
+  });
+  setNavOpen(false);
+  syncGroupFlags();
+}
+navGroups.forEach(g => g.addEventListener('click', () => openTab(g.dataset.open)));
+if ('MutationObserver' in window) {
+  let flagFrame = 0;
+  const flagWatch = new MutationObserver(() => {
+    if (!flagFrame) flagFrame = requestAnimationFrame(() => { flagFrame = 0; syncGroupFlags(); });
+  });
+  document.querySelectorAll('.subnav-tabs').forEach(t =>
+    flagWatch.observe(t, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] }));
+}
+// End of the shell block.
+
+// Dock height: the banner dock floats over the page, so the page and the floating cards keep clear of it.
+// One observer writes --dock-h on <html> (0 when no notice shows), and only when the number changes.
+const dockEl = document.querySelector('.banner-dock');
+let dockHeight = -1;
+function syncDockHeight() {
+  const h = dockEl && dockEl.querySelector('.notice:not([hidden])') ? Math.round(dockEl.getBoundingClientRect().height) : 0;
+  if (h === dockHeight) return;
+  dockHeight = h;
+  document.documentElement.style.setProperty('--dock-h', `${h}px`);
+}
+if (dockEl && typeof ResizeObserver === 'function') {
+  const dockWatch = new ResizeObserver(syncDockHeight);
+  dockWatch.observe(dockEl);
+  new MutationObserver(syncDockHeight).observe(dockEl, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+  syncDockHeight();
+}
+// End of the dock block.
+
+// Jump palette: Ctrl/Cmd+K opens a native dialog that lists every group and page, read once from the sidebar and
+// the tab strips (no second list to keep), filtered as you type, driven from the keyboard.
+const jumpDialog = document.getElementById('jump');
+const jumpInput = document.getElementById('jump-q');
+const jumpList = document.getElementById('jump-list');
+let jumpAll = null;
+let jumpShown = [];
+let jumpAt = 0;
+const jumpLabel = el => (el.querySelector('span:not(.group-flag):not(.visually-hidden):not(.sidebar-nav-badge)') || el).textContent.trim();
+function jumpBuild() {
+  const groups = [...document.querySelectorAll('.nav-group-item')].map(el => ({ tab: el.dataset.open, name: el.title || jumpLabel(el), where: 'Group' }));
+  const pages = [...document.querySelectorAll('.pane-group')].flatMap(g => {
+    const where = g.querySelector('.subnav-title')?.textContent.trim() || '';
+    return [...g.querySelectorAll('.subnav-item[data-tab]')].map(el => ({ tab: el.dataset.tab, name: jumpLabel(el), where }));
+  });
+  return [...groups, ...pages];
+}
+function jumpFilter(items, query) {
+  const q = query.trim().toLowerCase();
+  return q ? items.filter(i => `${i.name} ${i.where} ${i.tab}`.toLowerCase().includes(q)) : items;
+}
+function jumpRender() {
+  jumpShown = jumpFilter(jumpAll, jumpInput.value);
+  jumpAt = Math.min(jumpAt, Math.max(jumpShown.length - 1, 0));
+  jumpList.innerHTML = jumpShown.length
+    ? jumpShown.map((item, n) => `<div role="option" class="jump-opt" id="jump-o${n}" data-i="${n}" aria-selected="${n === jumpAt}"><span>${esc(item.name)}</span><span class="jump-where">${esc(item.where)}</span></div>`).join('')
+    : '<div class="jump-none">No page matches</div>';
+  jumpInput.setAttribute('aria-activedescendant', jumpShown.length ? `jump-o${jumpAt}` : '');
+  jumpList.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' });
+}
+function jumpOpen() {
+  if (!jumpDialog || jumpDialog.open) return;
+  jumpAll = jumpAll || jumpBuild();
+  jumpInput.value = '';
+  jumpAt = 0;
+  jumpRender();
+  jumpDialog.showModal();
+  jumpInput.focus();
+}
+function jumpGo(n) {
+  const item = jumpShown[n];
+  if (!item) return;
+  jumpDialog.close();
+  openTab(item.tab);
+}
+document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); jumpOpen(); }
+});
+jumpInput?.addEventListener('input', () => { jumpAt = 0; jumpRender(); });
+jumpInput?.addEventListener('keydown', event => {
+  const last = jumpShown.length - 1;
+  const move = { ArrowDown: Math.min(jumpAt + 1, last), ArrowUp: Math.max(jumpAt - 1, 0), Home: 0, End: last }[event.key];
+  if (move !== undefined) { event.preventDefault(); jumpAt = move; jumpRender(); }
+  else if (event.key === 'Enter') { event.preventDefault(); jumpGo(jumpAt); }
+});
+jumpList?.addEventListener('click', event => {
+  const opt = event.target.closest('[data-i]');
+  if (opt) jumpGo(Number(opt.dataset.i));
+});
+document.getElementById('jump-open')?.addEventListener('click', jumpOpen);
+// End of the jump block.
+
 // focus: true when the user chose the pane, so keyboard and screen-reader focus follows them
 // to its heading instead of being left on a sidebar button that no longer describes the page.
 function activateTab(name, { focus = false } = {}) {
@@ -137,17 +274,21 @@ function activateTab(name, { focus = false } = {}) {
     b.classList.toggle('active', on);
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
-    // On a phone the nav is a sideways strip; keep the current pill in view. Only the strip
-    // scrolls: the page's scroll padding covers the strip itself, so scrollIntoView would move
-    // the page as well.
-    if (on && window.matchMedia('(max-width: 760px)').matches) {
-      const nav = b.closest('.sidebar-nav');
-      const pill = b.getBoundingClientRect();
-      const box = nav?.getBoundingClientRect();
-      if (box) nav.scrollBy({ left: pill.left + pill.width / 2 - (box.left + box.width / 2) });
-    }
   });
   panes.forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+  labelPane(document.querySelector(`section[data-pane="${name}"]`));
+  syncNavGroups(name);
+  // On a phone the tabs are a sideways strip; keep the current one in view. Only the strip
+  // scrolls (scrollIntoView would move the page), and only now that its group is showing.
+  if (window.matchMedia('(max-width: 760px)').matches) {
+    const tab = document.querySelector(`.subnav-item[data-tab="${name}"]`);
+    const strip = tab?.closest('.subnav-tabs');
+    if (strip) {
+      const pill = tab.getBoundingClientRect();
+      const box = strip.getBoundingClientRect();
+      strip.scrollBy({ left: pill.left + pill.width / 2 - (box.left + box.width / 2) });
+    }
+  }
   if (typeof activityTick === 'function' && activityCards) activityTick();
   if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
   // Segmented thumbs can only be measured once their pane is visible.
@@ -360,7 +501,7 @@ function renderActivity(items) {
     }
     if (running && item.kind === 'scan' && now - activitySeen.get(key).firstRunningAt < ACTIVITY_SCAN_GRACE) continue;
     if (activityDismissed.get(key) === item.id) continue;
-    if (activityPageOpen(item.page)) continue;
+    if (activityPageOpen(item.page) || activityPageOpen('actions')) continue;
 
     live.add(key);
     let el = activityCards.querySelector(`[data-act-key="${CSS.escape(key)}"]`);
@@ -409,6 +550,7 @@ async function activityTick() {
     if (r.ok) items = (await r.json()).items || [];
   } catch { /* Flakyfy away: the status cards say so */ }
   renderActivity(items);
+  renderActions(items);
   if (document.hidden) return;
   const busy = items.some(item => item.state === 'running') || Date.now() < activityFastUntil;
   activityTimer = setTimeout(activityTick, busy ? ACTIVITY_FAST : ACTIVITY_IDLE);
@@ -437,6 +579,153 @@ activityCards?.addEventListener('click', e => {
   }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) activityTick(); });
+
+// ────────────────────────────────────────────────────────────────
+// Actions: every job in one list, with its stop button
+// ────────────────────────────────────────────────────────────────
+// The jobs the activity cards show, from the same answer, as rows that stay: what runs now, and
+// what this page saw end. The server lists a finished job for two minutes; the page keeps the
+// last ACTIONS_KEPT it saw until it is reloaded or cleared.
+const ACTIONS_KEPT = 50;
+const actionsEnded = new Map();   // item id -> item, in the order they ended
+let actionsListed = new Map();    // job key -> the ended item id the last answer listed for it
+let actionsCleared = new Set();   // ended ids cleared while the server still lists them
+let actionsRunning = [];
+const actionsDrawn = new Map();   // list id -> the html it shows
+
+// How a kind of job is stopped: the call its own page makes, and what that page says after. A
+// kind that is not here has no stop (a download on its way, a scan), so its row only opens its
+// page. Better quality has no one run to stop: its waiting songs are taken back instead.
+const ACTION_STOP = {
+  genre: { path: '/api/admin/genre/backfill/cancel', said: 'Stopping after the current file.' },
+  tidy: { path: '/api/admin/tidy/cancel', said: 'Stopping after the current file.' },
+  covers: { path: '/api/admin/covers/upgrade/cancel', said: 'Stopping after the current album.' },
+  lyrics: { path: '/api/admin/lyrics/library/cancel', said: 'Stopping after the current song.' },
+  upgrades: { ask: 'The songs still waiting are taken back. The one being fetched finishes, and your copy stays until the new one passes every check.' },
+};
+const ACTION_STATE = { running: 'Running', done: 'Done', stopped: 'Stopped', failed: 'Failed' };
+
+// A stop needs the Navidrome sign-in its own page needs; asked for once, then tried again.
+async function actionsFetch(path, options = {}) {
+  let response = await api(path, options);
+  if (response.status === 401 && await browseAuthenticate(document.createElement('div'))) {
+    response = await api(path, options);
+  }
+  if (response.ok) return response;
+  if (response.status === 401) throw new Error('This needs a Navidrome admin sign-in.');
+  const body = await response.json().catch(() => ({}));
+  throw new Error(body.error || `Could not stop: HTTP ${response.status}`);
+}
+
+async function actionStop(item) {
+  const stop = ACTION_STOP[item.kind];
+  if (stop.path) {
+    await actionsFetch(stop.path, { method: 'POST' });
+    return stop.said;
+  }
+  const view = await (await actionsFetch('/api/admin/upgrades')).json();
+  const ids = (view.jobs || []).filter(job => ['queued', 'waiting'].includes(job.state)).map(job => job.id);
+  if (!ids.length) return 'Nothing is waiting to be taken back. The song being fetched finishes.';
+  const response = await actionsFetch('/api/admin/upgrades/cancel', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+  });
+  const { cancelled = 0 } = await response.json().catch(() => ({}));
+  return `Took back ${cancelled} ${cancelled === 1 ? 'song' : 'songs'}. The song being fetched finishes.`;
+}
+
+function actionRowHtml(item) {
+  const running = item.state === 'running';
+  const fraction = activityFraction(item);
+  const mark = item.state === 'done' ? icon('i-check-circle')
+    : item.state === 'failed' ? icon('i-warning-circle')
+    : activityIcon(item);
+  const bar = !running ? ''
+    : fraction === null
+      ? '<div class="act-bar indeterminate" aria-hidden="true"><span></span></div>'
+      : `<div class="act-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fraction * 100)}"><span style="width:${(fraction * 100).toFixed(1)}%"></span></div>`;
+  const when = running
+    ? (item.startedUtc ? `started ${relativeTime(item.startedUtc)}` : '')
+    : (item.finishedUtc ? relativeTime(item.finishedUtc) : '');
+  const title = escapeHtml(item.title);
+  const stop = running && ACTION_STOP[item.kind]
+    ? `<button class="btn btn-ghost btn-sm" type="button" data-action-stop aria-label="Stop: ${title}">Stop</button>` : '';
+  const open = document.querySelector(`section[data-pane="${item.page}"]`)
+    ? `<button class="btn btn-ghost btn-sm" type="button" data-action-open="${escapeHtml(item.page)}" aria-label="Open the page of: ${title}">Open</button>` : '';
+  return `<div class="action-row" data-state="${escapeHtml(item.state)}" data-action-id="${escapeHtml(item.id)}">
+      <span class="act-mark">${mark}</span>
+      <div class="act-text">
+        <span class="act-title">${title}</span>
+        <span class="act-line">${escapeHtml([activityLine(item), when].filter(Boolean).join(' · '))}</span>
+        ${bar}
+      </div>
+      <span class="action-state">${ACTION_STATE[item.state] || escapeHtml(item.state)}</span>
+      <span class="action-buttons">${stop}${open}</span>
+    </div>`;
+}
+
+// A list is redrawn only when it changed, and the keyboard stays on the button it was on.
+function drawActions(id, items, empty) {
+  const list = document.getElementById(id);
+  if (!list) return;
+  const html = items.length ? items.map(actionRowHtml).join('') : stateBlock('empty', empty);
+  if (actionsDrawn.get(id) === html) return;
+  const held = list.contains(document.activeElement) ? document.activeElement : null;
+  const heldRow = held?.closest('[data-action-id]')?.dataset.actionId;
+  const heldButton = held?.hasAttribute('data-action-stop') ? '[data-action-stop]' : '[data-action-open]';
+  actionsDrawn.set(id, html);
+  list.innerHTML = html;
+  if (heldRow) list.querySelector(`[data-action-id="${CSS.escape(heldRow)}"] ${heldButton}`)?.focus();
+}
+
+function renderActions(items) {
+  actionsRunning = items.filter(item => item.state === 'running');
+  const listed = new Map();
+  for (const item of items) {
+    if (item.state === 'running') continue;
+    const key = activityKey(item);
+    listed.set(key, item.id);
+    // A batch that grew (one more song added) is listed under a new id: it is still one row.
+    const before = actionsListed.get(key);
+    if (before && before !== item.id) actionsEnded.delete(before);
+    if (!actionsCleared.has(item.id)) actionsEnded.set(item.id, item);
+  }
+  actionsListed = listed;
+  for (const id of [...actionsEnded.keys()].slice(0, Math.max(0, actionsEnded.size - ACTIONS_KEPT))) actionsEnded.delete(id);
+
+  const badge = document.querySelector('[data-actions-badge]');
+  if (badge) {
+    badge.textContent = actionsRunning.length ? String(actionsRunning.length) : '';
+    badge.classList.toggle('good', actionsRunning.length > 0);
+  }
+  if (!activityPageOpen('actions')) return;
+  drawActions('actions-running', actionsRunning, 'Nothing is running.');
+  drawActions('actions-finished', [...actionsEnded.values()].reverse(), 'Nothing has finished since this page was opened.');
+  const clear = document.getElementById('actions-clear');
+  if (clear) clear.hidden = actionsEnded.size === 0;
+}
+
+document.querySelector('section[data-pane="actions"]')?.addEventListener('click', async e => {
+  const open = e.target.closest('[data-action-open]');
+  if (open) { openTab(open.dataset.actionOpen); return; }
+  const id = e.target.closest('[data-action-stop]')?.closest('[data-action-id]')?.dataset.actionId;
+  const item = actionsRunning.find(running => running.id === id);
+  if (!item) return;
+  const ask = ACTION_STOP[item.kind].ask || 'What it has already done stays done.';
+  if (!(await askConfirm(`Stop “${item.title}”?`, ask, 'Stop'))) return;
+  const title = document.getElementById('actions-title');
+  try {
+    note(title, `${item.title}: ${await actionStop(item)}`, 'info');
+  } catch (error) {
+    note(title, `${item.title}: ${error.message}`, 'error');
+  }
+  activityTick();
+});
+
+document.getElementById('actions-clear')?.addEventListener('click', () => {
+  actionsCleared = new Set(actionsListed.values());
+  actionsEnded.clear();
+  activityTick();
+});
 
 // ────────────────────────────────────────────────────────────────
 // Toast helper
@@ -486,9 +775,14 @@ function note(anchor, message, kind = 'ok') {
   if (kind === 'ok') noteTimers.set(holder, setTimeout(() => { holder.hidden = true; }, 8000));
 }
 
+// A list that is still loading keeps its rows' height: grey bars, no spinner.
+function skeletonRows(n = 3, tall = false) {
+  return `<div class="skel${tall ? ' skel-tall' : ''}" role="status" aria-label="Loading">${'<div class="skel-row"></div>'.repeat(n)}</div>`;
+}
+
 // Loading, empty and failed lists all look the same everywhere: an icon and a sentence.
 function stateBlock(kind, message) {
-  const glyph = { loading: 'i-circle-notch', empty: 'i-circle-dashed', error: 'i-warning-circle' }[kind] ?? 'i-info';
+  const glyph = { loading: 'i-circle-notch', empty: 'i-tray-arrow-down', error: 'i-warning-circle' }[kind] ?? 'i-info';
   return `<div class="state state-${kind}"${kind === 'error' ? ' role="alert"' : ''}>${icon(glyph)}<span>${esc(message)}</span></div>`;
 }
 
@@ -528,7 +822,7 @@ async function refreshStatus() {
       const dot = card.querySelector('.status-dot');
       const body = card.querySelector('.status-card-body');
       if (dot) dot.className = 'status-dot bad';
-      if (body) body.textContent = `Flakyfy did not answer: ${e.message}`;
+      if (body) { body.textContent = `Flakyfy did not answer: ${e.message}`; body.title = body.textContent; }
       card.querySelectorAll('[data-status-action]').forEach(action => { action.hidden = true; });
     });
     setStatusBadge('!', 'Flakyfy did not answer the status check');
@@ -553,7 +847,7 @@ function setStatusCard(svc, probe) {
   const dot = card.querySelector('.status-dot');
   const body = card.querySelector('.status-card-body');
   if (dot)  dot.className  = `status-dot ${state}`;
-  if (body) body.textContent = probe.detail || (probe.ok ? 'online' : 'unreachable');
+  if (body) { body.textContent = probe.detail || (probe.ok ? 'online' : 'unreachable'); body.title = body.textContent; }
   // Mornye's card leads to its page when a person can pass its check there.
   const action = card.querySelector('[data-status-action]');
   if (action) action.hidden = probe.action !== 'pass';
@@ -5849,7 +6143,7 @@ async function loadAcquisitions() {
       <div class="acq-art"><svg class="icon" aria-hidden="true"><use href="#${glyph}"/></svg></div>
       <div class="dl-main">
         <div class="acq-head">
-          <div class="dl-title">${escapeHtml(a.title || '?')}</div>
+          <div class="dl-title" title="${escapeHtml(a.title || '?')}">${escapeHtml(a.title || '?')}</div>
           <span class="dl-badge ${failed ? 'failed' : held ? 'waiting' : 'state'}">${escapeHtml(label)}</span>
         </div>
         <div class="dl-sub">${sub}</div>
@@ -5885,8 +6179,8 @@ function fetchedRow(d) {
   return `<div class="dl-item">
     ${art}
     <div class="dl-main">
-      <div class="dl-title">${escapeHtml(d.title)}</div>
-      <div class="dl-by">${by}</div>
+      <div class="dl-title" title="${escapeHtml(d.title)}">${escapeHtml(d.title)}</div>
+      <div class="dl-by" title="${escapeHtml([d.artist, d.album].filter(Boolean).join(' · '))}">${by}</div>
       <div class="dl-path" title="${escapeHtml(d.path)}"><bdi>${escapeHtml(d.path)}</bdi></div>
     </div>
     <div class="dl-side">
@@ -6872,6 +7166,12 @@ async function loadTrash() {
   const list = findEl('trash-list');
   const summary = findEl('trash-summary');
   if (!list) return;
+  const la = currentSettings?.LibraryActions;
+  if (la && !la.Enabled) {
+    if (summary) summary.textContent = 'Library actions are off, so nothing is moved to the trash.';
+    list.innerHTML = stateBlock('empty', 'Turn on Library actions above to use the trash.');
+    return;
+  }
   list.innerHTML = stateBlock('loading', 'Reading the trash…');
   try {
     const response = await parityFetch('/api/admin/trash', {}, list);
@@ -7298,7 +7598,7 @@ function syncSegments(animate) {
 }
 decoratePageHeaders();
 buildHints();
-labelSettingControls();
+labelPane(document.querySelector('section[data-pane].active'));
 buildSegments();
 window.addEventListener('resize', () => syncSegments(false));
 // A font can change the buttons' widths without changing the control's own width.
@@ -7423,14 +7723,21 @@ function buildHints() {
 // Most rows describe their control in a sibling .set-info rather than a <label>, which left
 // switches and inputs with no accessible name. Wire each one to its row's own title and text,
 // and mark every restart-only setting where it is edited, not only after saving it.
-function labelSettingControls() {
-  let n = 0;
-  document.querySelectorAll('.set-row').forEach(row => {
+// Only the pane on show is labelled, the first time it is shown: hidden panes are not in the tab order, so
+// their controls need no names until then, and start-up skips the work for the other 24.
+let labelCount = 0;
+function labelPane(pane) {
+  if (!pane || pane.dataset.labelled) return;
+  pane.dataset.labelled = '1';
+  labelSettingControls(pane);
+}
+function labelSettingControls(root = document) {
+  root.querySelectorAll('.set-row').forEach(row => {
     const title = row.querySelector(':scope > .set-info .set-info-t');
     if (!title) return;
-    if (!title.id) title.id = `set-t-${++n}`;
+    if (!title.id) title.id = `set-t-${++labelCount}`;
     const desc = row.querySelector(':scope > .set-info .set-info-d');
-    if (desc && !desc.id) desc.id = `set-d-${n}`;
+    if (desc && !desc.id) desc.id = `set-d-${labelCount}`;
     const more = row.querySelector(':scope > .set-info .set-info-more');
     const described = [desc?.id, more?.id].filter(Boolean).join(' ');
     row.querySelectorAll('input:not([type="hidden"]), select, textarea').forEach(ctrl => {
@@ -7526,8 +7833,8 @@ function renderSetupChecklist() {
     <li class="setup-row">
       <span class="setup-state ${row.state}" aria-hidden="true"></span>
       <span class="setup-copy">
-        <span class="setup-title">${esc(row.title)}<span class="visually-hidden">: ${stateLabel[row.state]}</span></span>
-        <span class="setup-detail">${esc(row.detail)}</span>
+        <span class="setup-title" title="${esc(row.title)}">${esc(row.title)}<span class="visually-hidden">: ${stateLabel[row.state]}</span></span>
+        <span class="setup-detail" title="${esc(row.detail)}">${esc(row.detail)}</span>
       </span>
       <button type="button" class="btn ${row.state === 'bad' ? '' : 'btn-ghost '}btn-sm" data-open-tab="${row.tab}" aria-label="${row.state === 'bad' ? 'Fix' : 'Open'} ${esc(row.title)}">${row.state === 'bad' ? 'Fix' : 'Open'}${icon('i-caret-right')}</button>
     </li>`).join('')}</ol>`;
@@ -7544,8 +7851,8 @@ function renderSetupChecklist() {
     : missing.length ? `Setup: ${missing.length} of ${required.length} required step${required.length === 1 ? '' : 's'} need${missing.length === 1 ? 's' : ''} attention`
       : 'Setup complete. Point your apps at the address below.';
   const done = required.filter(row => row.state === 'ok').length;
-  const summaryMarkup = `<span class="setup-summary-text">${esc(summaryText)}</span>`
-    + (checking ? '' : `<span class="setup-meter" role="img" aria-label="${done} of ${required.length} required steps done"><span style="width:${Math.round(100 * done / required.length)}%"></span></span>`);
+  const summaryMarkup = `<span class="setup-summary-text" title="${esc(summaryText)}">${esc(summaryText)}</span>`
+    + `<span class="setup-meter" role="img" aria-label="${checking ? 'Checking' : `${done} of ${required.length} required steps done`}"><span style="width:${checking ? 0 : Math.round(100 * done / required.length)}%"></span></span>`;
   if (summary.innerHTML !== summaryMarkup) summary.innerHTML = summaryMarkup;
   wrap.classList.toggle('needs-attention', missing.length > 0);
   // The sidebar marks where each missing step is fixed, so setup is visible from every page.
@@ -7563,14 +7870,16 @@ function renderSetupChecklist() {
       flag.remove();
     }
   });
-  // Open when something required is missing; otherwise stay out of the way, unless the user
-  // opened it themselves.
-  if (!wrap.dataset.userToggled) wrap.open = missing.length > 0;
+  // Never opened or closed for the reader after first paint; a finished setup is remembered for the next load.
+  if (!checking && !missing.length) setSetupDone();
 }
-// Once the user opens or closes it themselves, stop opening and closing it for them.
-document.getElementById('setup-summary')?.addEventListener('click', () => {
-  document.getElementById('setup-checklist-wrap').dataset.userToggled = '1';
-});
+
+// Setup checklist open state: decided before first paint from what an earlier visit saw. A browser that
+// never finished setup shows the list open; one that did shows the collapsed row.
+function setupDone() { try { return localStorage.getItem('flakyfy.setupDone') === '1'; } catch { return false; } }
+function setSetupDone() { try { localStorage.setItem('flakyfy.setupDone', '1'); } catch { /* private window */ } }
+{ const wrap = document.getElementById('setup-checklist-wrap'); if (wrap) wrap.open = !setupDone(); }
+// End of the setup open-state block.
 
 // ---- Lyrics sources ------------------------------------------------------
 //
@@ -8236,7 +8545,7 @@ async function lossyFetch(path, options = {}) {
 async function loadLossy(refresh = false) {
   const list = document.getElementById('lossy-list');
   if (!list) return;
-  list.innerHTML = stateBlock('loading', 'Reading your library…');
+  list.innerHTML = skeletonRows(3);
   try {
     const response = await lossyFetch(`/api/admin/lossy${refresh ? '?refresh=true' : ''}`);
     const body = await response.json().catch(() => ({}));
@@ -8876,7 +9185,7 @@ function renderUpdate() {
   const banner = byId('update-banner');
   banner.hidden = !(info.updateAvailable && !active && updateLater() !== latest?.tag);
   if (!banner.hidden) {
-    byId('update-banner-text').textContent = `Flakyfy ${latest.tag} is out. You run ${info.running}.`;
+    byId('update-banner-text').textContent = `${latest.tag} · you run ${info.running}`;
     // Without a helper that takes the update, the About page shows a command to run instead.
     byId('update-banner-go').textContent = updateHelperReady(info) ? 'Update' : 'How to update';
   }
@@ -10038,7 +10347,7 @@ async function loadHealth({ fresh = false } = {}) {
   healthLoading = true;
   const refresh = document.getElementById('health-refresh');
   if (refresh) refresh.disabled = true;
-  if (!healthReport || fresh) body.innerHTML = stateBlock('loading', fresh ? 'Reading your library from Navidrome again…' : 'Checking your library…');
+  if (!healthReport || fresh) body.innerHTML = skeletonRows(2, true);
   const { ok, data } = await healthCall(`/api/admin/health${fresh ? '?fresh=1' : ''}`);
   healthLoading = false;
   if (refresh) refresh.disabled = false;

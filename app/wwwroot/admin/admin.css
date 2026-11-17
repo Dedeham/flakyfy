@@ -2492,6 +2492,25 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .act-bar { height: 4px; margin: 0 var(--s-l) var(--s-l); border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.10); overflow: hidden; }
 .act-bar > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.7), var(--accent)); transition: width 600ms var(--ease); }
 .act-bar.indeterminate > span { width: 35%; animation: act-sweep 1.4s ease-in-out infinite; }
+
+/* The Actions page: the same jobs as rows that stay, each with its buttons. */
+.actions-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-l); }
+.actions-list { padding: 0; }
+.action-row { display: flex; align-items: center; gap: var(--s-l); padding: var(--s-l); }
+.action-row + .action-row { border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.action-row .act-bar { margin: 6px 0 0; }
+.action-row[data-state="done"] .act-mark { color: var(--good); background: var(--good-wash); }
+.action-row[data-state="failed"] .act-mark { color: var(--bad); background: var(--bad-wash); }
+.action-row[data-state="stopped"] .act-mark { color: var(--text-secondary); background: rgba(255, 255, 255, 0.08); }
+.action-state { flex: 0 0 auto; font-size: var(--t-label); font-weight: 650; color: var(--text-secondary); }
+.action-row[data-state="running"] .action-state { color: var(--accent); }
+.action-row[data-state="failed"] .action-state { color: var(--bad); }
+.action-buttons { flex: 0 0 auto; display: flex; gap: var(--s-2xs); }
+@media (max-width: 760px) {
+  .action-row { flex-wrap: wrap; }
+  .action-row .act-text { flex-basis: calc(100% - 60px); }
+  .action-buttons { margin-left: auto; }
+}
 @keyframes act-sweep { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
 
 /* The one-off toast: news from elsewhere (a restart), never for a result beside the button. */

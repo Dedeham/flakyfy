@@ -204,6 +204,68 @@ if (dockEl && typeof ResizeObserver === 'function') {
 }
 // End of the dock block.
 
+// Jump palette: Ctrl/Cmd+K opens a native dialog that lists every group and page, read once from the sidebar and
+// the tab strips (no second list to keep), filtered as you type, driven from the keyboard.
+const jumpDialog = document.getElementById('jump');
+const jumpInput = document.getElementById('jump-q');
+const jumpList = document.getElementById('jump-list');
+let jumpAll = null;
+let jumpShown = [];
+let jumpAt = 0;
+const jumpLabel = el => (el.querySelector('span:not(.group-flag):not(.visually-hidden):not(.sidebar-nav-badge)') || el).textContent.trim();
+function jumpBuild() {
+  const groups = [...document.querySelectorAll('.nav-group-item')].map(el => ({ tab: el.dataset.open, name: el.title || jumpLabel(el), where: 'Group' }));
+  const pages = [...document.querySelectorAll('.pane-group')].flatMap(g => {
+    const where = g.querySelector('.subnav-title')?.textContent.trim() || '';
+    return [...g.querySelectorAll('.subnav-item[data-tab]')].map(el => ({ tab: el.dataset.tab, name: jumpLabel(el), where }));
+  });
+  return [...groups, ...pages];
+}
+function jumpFilter(items, query) {
+  const q = query.trim().toLowerCase();
+  return q ? items.filter(i => `${i.name} ${i.where} ${i.tab}`.toLowerCase().includes(q)) : items;
+}
+function jumpRender() {
+  jumpShown = jumpFilter(jumpAll, jumpInput.value);
+  jumpAt = Math.min(jumpAt, Math.max(jumpShown.length - 1, 0));
+  jumpList.innerHTML = jumpShown.length
+    ? jumpShown.map((item, n) => `<div role="option" class="jump-opt" id="jump-o${n}" data-i="${n}" aria-selected="${n === jumpAt}"><span>${esc(item.name)}</span><span class="jump-where">${esc(item.where)}</span></div>`).join('')
+    : '<div class="jump-none">No page matches</div>';
+  jumpInput.setAttribute('aria-activedescendant', jumpShown.length ? `jump-o${jumpAt}` : '');
+  jumpList.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' });
+}
+function jumpOpen() {
+  if (!jumpDialog || jumpDialog.open) return;
+  jumpAll = jumpAll || jumpBuild();
+  jumpInput.value = '';
+  jumpAt = 0;
+  jumpRender();
+  jumpDialog.showModal();
+  jumpInput.focus();
+}
+function jumpGo(n) {
+  const item = jumpShown[n];
+  if (!item) return;
+  jumpDialog.close();
+  openTab(item.tab);
+}
+document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); jumpOpen(); }
+});
+jumpInput?.addEventListener('input', () => { jumpAt = 0; jumpRender(); });
+jumpInput?.addEventListener('keydown', event => {
+  const last = jumpShown.length - 1;
+  const move = { ArrowDown: Math.min(jumpAt + 1, last), ArrowUp: Math.max(jumpAt - 1, 0), Home: 0, End: last }[event.key];
+  if (move !== undefined) { event.preventDefault(); jumpAt = move; jumpRender(); }
+  else if (event.key === 'Enter') { event.preventDefault(); jumpGo(jumpAt); }
+});
+jumpList?.addEventListener('click', event => {
+  const opt = event.target.closest('[data-i]');
+  if (opt) jumpGo(Number(opt.dataset.i));
+});
+document.getElementById('jump-open')?.addEventListener('click', jumpOpen);
+// End of the jump block.
+
 // focus: true when the user chose the pane, so keyboard and screen-reader focus follows them
 // to its heading instead of being left on a sidebar button that no longer describes the page.
 function activateTab(name, { focus = false } = {}) {
@@ -214,6 +276,7 @@ function activateTab(name, { focus = false } = {}) {
     else b.removeAttribute('aria-current');
   });
   panes.forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+  labelPane(document.querySelector(`section[data-pane="${name}"]`));
   syncNavGroups(name);
   // On a phone the tabs are a sideways strip; keep the current one in view. Only the strip
   // scrolls (scrollIntoView would move the page), and only now that its group is showing.
@@ -6080,7 +6143,7 @@ async function loadAcquisitions() {
       <div class="acq-art"><svg class="icon" aria-hidden="true"><use href="#${glyph}"/></svg></div>
       <div class="dl-main">
         <div class="acq-head">
-          <div class="dl-title">${escapeHtml(a.title || '?')}</div>
+          <div class="dl-title" title="${escapeHtml(a.title || '?')}">${escapeHtml(a.title || '?')}</div>
           <span class="dl-badge ${failed ? 'failed' : held ? 'waiting' : 'state'}">${escapeHtml(label)}</span>
         </div>
         <div class="dl-sub">${sub}</div>
@@ -6116,8 +6179,8 @@ function fetchedRow(d) {
   return `<div class="dl-item">
     ${art}
     <div class="dl-main">
-      <div class="dl-title">${escapeHtml(d.title)}</div>
-      <div class="dl-by">${by}</div>
+      <div class="dl-title" title="${escapeHtml(d.title)}">${escapeHtml(d.title)}</div>
+      <div class="dl-by" title="${escapeHtml([d.artist, d.album].filter(Boolean).join(' · '))}">${by}</div>
       <div class="dl-path" title="${escapeHtml(d.path)}"><bdi>${escapeHtml(d.path)}</bdi></div>
     </div>
     <div class="dl-side">
@@ -7535,7 +7598,7 @@ function syncSegments(animate) {
 }
 decoratePageHeaders();
 buildHints();
-labelSettingControls();
+labelPane(document.querySelector('section[data-pane].active'));
 buildSegments();
 window.addEventListener('resize', () => syncSegments(false));
 // A font can change the buttons' widths without changing the control's own width.
@@ -7660,14 +7723,21 @@ function buildHints() {
 // Most rows describe their control in a sibling .set-info rather than a <label>, which left
 // switches and inputs with no accessible name. Wire each one to its row's own title and text,
 // and mark every restart-only setting where it is edited, not only after saving it.
-function labelSettingControls() {
-  let n = 0;
-  document.querySelectorAll('.set-row').forEach(row => {
+// Only the pane on show is labelled, the first time it is shown: hidden panes are not in the tab order, so
+// their controls need no names until then, and start-up skips the work for the other 24.
+let labelCount = 0;
+function labelPane(pane) {
+  if (!pane || pane.dataset.labelled) return;
+  pane.dataset.labelled = '1';
+  labelSettingControls(pane);
+}
+function labelSettingControls(root = document) {
+  root.querySelectorAll('.set-row').forEach(row => {
     const title = row.querySelector(':scope > .set-info .set-info-t');
     if (!title) return;
-    if (!title.id) title.id = `set-t-${++n}`;
+    if (!title.id) title.id = `set-t-${++labelCount}`;
     const desc = row.querySelector(':scope > .set-info .set-info-d');
-    if (desc && !desc.id) desc.id = `set-d-${n}`;
+    if (desc && !desc.id) desc.id = `set-d-${labelCount}`;
     const more = row.querySelector(':scope > .set-info .set-info-more');
     const described = [desc?.id, more?.id].filter(Boolean).join(' ');
     row.querySelectorAll('input:not([type="hidden"]), select, textarea').forEach(ctrl => {
@@ -7763,7 +7833,7 @@ function renderSetupChecklist() {
     <li class="setup-row">
       <span class="setup-state ${row.state}" aria-hidden="true"></span>
       <span class="setup-copy">
-        <span class="setup-title">${esc(row.title)}<span class="visually-hidden">: ${stateLabel[row.state]}</span></span>
+        <span class="setup-title" title="${esc(row.title)}">${esc(row.title)}<span class="visually-hidden">: ${stateLabel[row.state]}</span></span>
         <span class="setup-detail" title="${esc(row.detail)}">${esc(row.detail)}</span>
       </span>
       <button type="button" class="btn ${row.state === 'bad' ? '' : 'btn-ghost '}btn-sm" data-open-tab="${row.tab}" aria-label="${row.state === 'bad' ? 'Fix' : 'Open'} ${esc(row.title)}">${row.state === 'bad' ? 'Fix' : 'Open'}${icon('i-caret-right')}</button>
@@ -7781,7 +7851,7 @@ function renderSetupChecklist() {
     : missing.length ? `Setup: ${missing.length} of ${required.length} required step${required.length === 1 ? '' : 's'} need${missing.length === 1 ? 's' : ''} attention`
       : 'Setup complete. Point your apps at the address below.';
   const done = required.filter(row => row.state === 'ok').length;
-  const summaryMarkup = `<span class="setup-summary-text">${esc(summaryText)}</span>`
+  const summaryMarkup = `<span class="setup-summary-text" title="${esc(summaryText)}">${esc(summaryText)}</span>`
     + `<span class="setup-meter" role="img" aria-label="${checking ? 'Checking' : `${done} of ${required.length} required steps done`}"><span style="width:${checking ? 0 : Math.round(100 * done / required.length)}%"></span></span>`;
   if (summary.innerHTML !== summaryMarkup) summary.innerHTML = summaryMarkup;
   wrap.classList.toggle('needs-attention', missing.length > 0);
@@ -9115,7 +9185,7 @@ function renderUpdate() {
   const banner = byId('update-banner');
   banner.hidden = !(info.updateAvailable && !active && updateLater() !== latest?.tag);
   if (!banner.hidden) {
-    byId('update-banner-text').textContent = `Flakyfy ${latest.tag} is out. You run ${info.running}.`;
+    byId('update-banner-text').textContent = `${latest.tag} · you run ${info.running}`;
     // Without a helper that takes the update, the About page shows a command to run instead.
     byId('update-banner-go').textContent = updateHelperReady(info) ? 'Update' : 'How to update';
   }

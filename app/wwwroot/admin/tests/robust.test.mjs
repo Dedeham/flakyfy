@@ -1,4 +1,5 @@
-// Malformed or thin server answers draw an error or empty state and never throw. Pieces of admin.js and listening.js run against fakes.
+// Malformed or thin server answers draw an error or empty state and never throw, and clipped
+// text keeps its full form in a title. Pieces of admin.js and listening.js run against fakes.
 //
 //   node --test app/wwwroot/admin/tests/
 
@@ -97,6 +98,13 @@ test('animated art wall: an answer without albums changes nothing and does not t
   const { sandbox, els } = run(['loadArtWall'], { artShown: 0, ART_PAGE: 24, artTile: () => '' }, { '/api/admin/animated-art/albums': {} });
   await sandbox.loadArtWall(true);
   assert.equal(els['art-wall'].innerHTML, '');
+});
+
+test('Fetched row: title and by line carry the full text in a title', () => {
+  const { sandbox } = run(['fetchedRow'], { findArt: () => '', fetchedLog: () => '', fetchedLogOpen: () => false });
+  const html = sandbox.fetchedRow({ title: 'A very long title', artist: 'Some Artist', album: 'Album', path: '/x', source: 'soulseek' });
+  assert.match(html, /class="dl-title" title="A very long title"/);
+  assert.match(html, /class="dl-by" title="Some Artist · Album"/);
 });
 
 // ── Listening ────────────────────────────────────────────────────────────────────────

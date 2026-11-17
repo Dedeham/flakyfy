@@ -128,6 +128,7 @@
   --glyph-warning: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,188.09a23.51,23.51,0,0,0,0,23.72A24.35,24.35,0,0,0,40.55,224h174.9a24.35,24.35,0,0,0,21.33-12.19A23.51,23.51,0,0,0,236.8,188.09ZM222.93,203.8a8.5,8.5,0,0,1-7.48,4.2H40.55a8.5,8.5,0,0,1-7.48-4.2,7.59,7.59,0,0,1,0-7.72L120.52,44.21a8.75,8.75,0,0,1,15,0l87.45,151.87A7.59,7.59,0,0,1,222.93,203.8ZM120,144V104a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,180Z'/></svg>");
   --glyph-error: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M165.66,101.66,139.31,128l26.35,26.34a8,8,0,0,1-11.32,11.32L128,139.31l-26.34,26.35a8,8,0,0,1-11.32-11.32L116.69,128,90.34,101.66a8,8,0,0,1,11.32-11.32L128,116.69l26.34-26.35a8,8,0,0,1,11.32,11.32ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z'/></svg>");
   --glyph-info: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z'/></svg>");
+  --glyph-signout: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M112,216a8,8,0,0,1-8,8H48a16,16,0,0,1-16-16V48A16,16,0,0,1,48,32h56a8,8,0,0,1,0,16H48V208h56A8,8,0,0,1,112,216Zm109.66-93.66-40-40a8,8,0,0,0-11.32,11.32L196.69,120H104a8,8,0,0,0,0,16h92.69l-26.35,26.34a8,8,0,0,0,11.32,11.32l40-40A8,8,0,0,0,221.66,122.34Z'/></svg>");
   --glyph-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z'/></svg>");
 
   /* The names this stylesheet used before, mapped onto the tokens above. */
@@ -314,6 +315,7 @@ h1[tabindex="-1"]:focus-visible { outline-offset: 4px; border-radius: var(--r-ro
   padding: 0 0 calc(var(--dock-h, 0px) + 40px);
   width: 100%;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .pane-group > section[data-pane] { padding: 32px var(--pad-inline) 0; }
 
@@ -401,7 +403,14 @@ h1[tabindex="-1"]:focus-visible { outline-offset: 4px; border-radius: var(--r-ro
   padding: 0 max(var(--content-pad, 32px), calc((100vw - var(--sidebar-w) - 1080px) / 2)) var(--s-xl);
   pointer-events: none;
 }
-.banner-dock > .notice { width: min(640px, 100%); margin: 0; background: var(--surface-2); pointer-events: auto; }
+.banner-dock > .notice { width: min(640px, 100%); margin: 0; background: var(--surface-2); border: 1px solid var(--hairline-strong); pointer-events: auto; }
+/* Real warnings only: a solid bar under the content (the page keeps clear of it by --dock-h), so nothing shows through. */
+.banner-dock { background: var(--page); border-top: 1px solid var(--hairline-strong); padding-top: 15px; pointer-events: auto; animation: dock-in 180ms var(--ease); }
+.banner-dock:not(:has(> .notice:not([hidden]))) { display: none; }
+@keyframes dock-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.banner-dock .app-banner { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-m) var(--s-xl); }
+.banner-dock .app-banner > :is(span, p) { flex: 1 1 240px; min-width: 0; }
+.banner-dock .app-banner > .btn { flex: 0 0 auto; }
 
 section[data-pane] { display: none; animation: pane-in var(--t-swap) var(--ease); }
 section[data-pane].active { display: block; }
@@ -544,6 +553,10 @@ select.set-input {
 select.set-input option { background: var(--surface); color: var(--ink); }
 input[type="number"].set-input { max-width: 160px; }
 .set-grid2 input[type="number"].set-input { max-width: none; }
+
+input[type="file"] { max-width: 100%; color: var(--mute); font-size: var(--t-table); }
+input[type="file"]::file-selector-button { font: inherit; font-weight: var(--btn-weight); background: var(--btn-bg); color: var(--ink); border: 0; border-radius: var(--r-btn); padding: 10px 15px; margin-right: 10px; cursor: pointer; }
+input[type="file"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* Stored tokens are masked until the field is being edited. */
 .secret-text:not(:focus) { -webkit-text-security: disc; }
@@ -946,6 +959,10 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .skel-row::before { flex: 0 1 40%; }
 .skel-row::after { flex: 0 1 20%; }
 .skel-tall .skel-row { height: 85px; }
+#lossy-list .skel { height: 225px; display: flex; flex-direction: column; }
+#lossy-list .skel-row { flex: 1 1 0; height: auto; }
+.setup-skel .skel-row { height: 68px; }
+@media (max-width: 760px) { .setup-skel .skel-row { height: 88px; } }
 
 /* Restart-required chip */
 .restart-badge {
@@ -989,7 +1006,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 }
 .notice-warn::before { background: var(--warn); -webkit-mask-image: var(--glyph-warning); mask-image: var(--glyph-warning); }
 .notice-error::before { background: var(--bad); -webkit-mask-image: var(--glyph-error); mask-image: var(--glyph-error); }
-.app-banner::before { top: 50%; margin-top: -9px; }
+.app-banner::before { top: 14px; }
 .notice a, .notice .link-btn { color: var(--info); }
 .notice .link-btn { text-decoration: underline; text-underline-offset: 2px; }
 
@@ -1294,11 +1311,15 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .btn-primary.btn-destructive:hover { background: var(--danger-fill-hover); }
 
 /* -- Better quality: lossy songs, five columns -- */
-.lossy-tool { padding: var(--s-xl); display: flex; flex-direction: column; gap: var(--s-l); }
-.lossy-filters { display: flex; flex-wrap: wrap; gap: var(--s-m) var(--s-l); align-items: center; }
-.lossy-filters .set-input { width: auto; min-width: 180px; }
+.lossy-tool { padding: var(--s-2xl); display: flex; flex-direction: column; gap: var(--s-l); }
+.lossy-filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; align-items: center; }
+.lossy-filters .set-input { width: 100%; min-width: 0; }
+.lossy-filters .lossy-check { grid-column: span 2; }
+.lossy-filters #lossy-refresh { grid-column: -2 / -1; justify-self: end; }
 .lossy-check { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: var(--t-meta); cursor: pointer; user-select: none; }
 .lossy-check:hover { color: var(--ink-1); }
+:is(#notices-list, #ignored-ratings-list, #lyrics-song-results):empty { display: none; }
+.ls-big .ls-num { line-height: 1.25; }
 .lossy-shown { margin: calc(-1 * var(--s-m)) 0 0; }
 .lossy-unsure { color: var(--ink-body); }
 .lossy-amount { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--ink-2); }
@@ -1318,11 +1339,12 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .lossy-results h4 { margin: var(--s-m) 0 0; font-size: var(--t-meta); color: var(--ink-1); font-weight: 500; }
 .lossy-result { padding: 10px var(--s-l); border-radius: var(--r-card-in); background: var(--glass); border: 1px solid var(--glass-edge); }
 .lossy-result-head { display: flex; flex-wrap: wrap; gap: var(--s-m); align-items: baseline; justify-content: space-between; }
-.lossy-result-head strong { color: var(--ink); font-weight: 500; }
+.lossy-result-head strong { color: var(--ink); font-weight: 500; min-width: 0; }
 .lossy-result dl { margin: 6px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px var(--s-l); font-size: 12px; }
 .lossy-result dt { color: var(--ink-2); }
 .lossy-result dd { margin: 0; color: var(--ink-1); overflow-wrap: anywhere; }
-#lossy-list .config-table { max-height: 62vh; overflow-y: auto; }
+#lossy-list .config-table { max-height: 62vh; overflow-y: auto; border: 0; border-radius: 0; background: none; }
+#lossy-list .config-row-head { position: sticky; top: 0; z-index: 1; background: var(--surface); }
 @container (max-width: 640px) {
   .lossy-row { grid-template-columns: 28px 1fr 72px; }
   .lossy-row > span:nth-child(3), .lossy-row > span:nth-child(5) { grid-column: 2 / -1; }
@@ -1340,9 +1362,9 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--s-m);
-  min-height: 104px;
-  padding: var(--s-l) var(--s-m);
+  gap: 4px;
+  min-height: 92px;
+  padding: 6px var(--s-m);
   border: 1px solid transparent;
   border-radius: var(--r-control);
   background: var(--nest);
@@ -1355,7 +1377,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   transition: background-color var(--t-hover) var(--ease), border-color var(--t-hover) var(--ease);
 }
 .imp-svc:hover { background: var(--surface-2); border-color: var(--hairline-strong); color: var(--ink); }
-.imp-svc .imp-logo { width: 44px; height: 44px; }
+.imp-svc .imp-logo { width: 40px; height: 40px; }
 .imp-svc-name { overflow-wrap: anywhere; line-height: 1.25; }
 .imp-svc-check {
   position: absolute;
@@ -1586,11 +1608,12 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .cover-toolbar .btn .icon { width: 16px; height: 16px; }
 .cover-chip-group { display: inline-flex; align-items: center; gap: var(--s-m); }
 .cover-chip-label { color: var(--ink-2); font-size: 12px; white-space: nowrap; }
-.cover-options { position: relative; }
+.cover-options { position: static; }
+.cover-toolbar { position: relative; }
 .cover-options > summary { list-style: none; }
 .cover-options > summary::-webkit-details-marker { display: none; }
 .cover-options-panel {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 320px;
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: min(320px, 100%);
   background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--r-panel);
   padding: var(--s-l);
 }
@@ -1668,6 +1691,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .source-priority-row.is-disabled .source-step,
 .source-priority-row.is-disabled .source-title,
 .source-priority-row.is-disabled .source-detail,
+.source-priority-row.is-disabled .source-mark { opacity: 0.42; }
 .source-drag {
   width: 40px;
   height: 40px;
@@ -1817,10 +1841,11 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 .radio-state-copy:has(+ .radio-carried-note) { margin-bottom: var(--s-2xs); }
 .radio-carried-note { margin: 0 0 var(--s-l); color: var(--text-muted); font-size: var(--t-meta); line-height: 1.5; text-wrap: pretty; }
 .radio-station-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.radio-station-item { padding: var(--s-l); border-radius: var(--r-control); background: var(--surface-deep); border: 1px solid var(--hairline); }
-.radio-station-item div { display: flex; justify-content: space-between; gap: var(--s-l); }
+.radio-station-item { min-width: 0; padding: var(--s-l); border-radius: var(--r-control); background: var(--surface-deep); border: 1px solid var(--hairline); }
+.radio-station-item div { display: flex; justify-content: space-between; gap: var(--s-l); min-width: 0; }
+.radio-station-item div > strong { min-width: 0; }
 .radio-station-item strong { color: var(--ink); font-size: var(--t-table); }
-.radio-station-item span { color: var(--text-muted); font-size: var(--t-label); white-space: nowrap; }
+.radio-station-item span { color: var(--text-muted); font-size: var(--t-label); }
 .radio-station-item p { margin: var(--s-m) 0 0; color: var(--text-muted); font-size: 12.5px; line-height: 1.55; }
 .radio-empty { padding: var(--s-page) var(--s-2xl); color: var(--text-muted); text-align: center; line-height: 1.5; font-size: var(--t-meta); }
 .radio-status-toolbar .set-ctrl { min-width: min(100%, 380px); }
@@ -2327,12 +2352,11 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   bottom: calc(var(--s-page) + var(--dock-h, 0px));
   z-index: 110;
   width: min(380px, calc(100vw - 2 * var(--s-xl)));
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  height: 0;
   pointer-events: none;
 }
-.activity-cards { display: flex; flex-direction: column; gap: 10px; }
+/* Zero-height bottom anchor: a new card stacks above, older ones never move. */
+.activity-cards { position: absolute; left: 0; right: 0; bottom: 0; height: 0; display: flex; flex-direction: column-reverse; gap: 10px; }
 .act,
 #toast {
   position: relative;
@@ -2342,7 +2366,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   border: 1px solid var(--hairline-strong);
   color: var(--ink);
 }
-.act { overflow: hidden; animation: act-in var(--t-card) var(--ease); }
+.act { flex: none; overflow: hidden; animation: act-in var(--t-card) var(--ease); }
 .act.leaving { animation: act-out 200ms var(--ease) forwards; }
 @keyframes act-in  { from { opacity: 0; } to { opacity: 1; } }
 @keyframes act-out { to { opacity: 0; } }
@@ -2421,15 +2445,20 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 @keyframes act-sweep { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
 
 #toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--s-page) + var(--dock-h, 0px));
+  width: min(420px, calc(100vw - 30px));
+  z-index: 111;
   padding: var(--s-l) var(--s-xl);
   font-size: var(--t-meta);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(8px);
+  transform: translate(-50%, 8px);
   transition: opacity var(--t-card) var(--ease), transform var(--t-card) var(--ease);
 }
 #toast:not(.show) { display: none; }
-#toast.show { opacity: 1; transform: none; pointer-events: auto; cursor: pointer; }
+#toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; cursor: pointer; }
 @media (max-width: 760px) {
   .activity { right: 15px; left: 15px; bottom: calc(15px + var(--dock-h, 0px)); width: auto; }
 }
@@ -2482,6 +2511,8 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
     z-index: 56;
   }
   .sidebar.nav-open .sidebar-footer .btn-block { width: auto; }
+  .sidebar.nav-open:has(.update-card:not([hidden])) .sidebar-nav { padding-bottom: 320px; }
+  .sidebar.nav-open ~ .content .banner-dock { display: none; }
   .nav-group-item { height: 48px; }
   .content { --content-pad: 16px; }
   :root { --t-title: 28px; --subnav-h: 56px; }
@@ -2498,11 +2529,9 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   /* Jumps to a spot on the page stop below the top bar and the tab strip. */
   html { scroll-padding-top: calc(var(--strip-h, var(--topbar-h)) + var(--subnav-h)); }
   .version-bar { top: calc(var(--strip-h, var(--topbar-h)) + var(--subnav-h)); }
-  .banner-dock { left: 0; padding: 0 15px 15px; gap: var(--s-m); }
-  .banner-dock > .notice { width: 100%; padding: 12px 14px 12px 42px; }
-  .update-banner-actions { width: 100%; margin-left: 0; flex-wrap: nowrap; }
-  .update-banner-actions .btn { flex: 1 1 auto; padding: 0 6px; min-width: 0; font-size: var(--t-meta); }
-  #update-banner-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .banner-dock { left: 0; padding: 15px 15px; gap: var(--s-m); }
+  .banner-dock .app-banner > .btn { flex: 1 0 100%; }
+  .banner-dock > .notice { width: 100%; }
   .page-header { flex-wrap: wrap; gap: var(--s-l); }
   .page-header > div { flex-basis: calc(100% - 60px); }
   .page-header > .btn { margin-left: 0; }
@@ -2536,9 +2565,20 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   .nav-group-item .icon { width: 20px; height: 20px; }
   .group-flag { position: absolute; top: 6px; right: 8px; margin: 0; }
   .sidebar-footer { padding: var(--s-m); }
+  .sidebar .update-card { left: var(--s-m); right: var(--s-m); margin: 0 0 var(--s-m); padding: 0; background: none; }
+  .sidebar:has(.update-card:not([hidden])) .sidebar-nav { padding-bottom: 60px; }
+  .sidebar .update-card-head, .sidebar .update-card-text, .sidebar .update-card-actions .link-btn { display: none; }
+  .sidebar .update-card-actions { justify-content: center; }
+  #update-banner-go { width: var(--hit); height: var(--hit); padding: 0; font-size: 0; border-radius: 50%; }
+  #update-banner-go::before { content: '\2191'; font-size: 18px; }
   #signed-in-user { display: none; }
-  .sidebar-signed-in { flex-direction: column; align-items: center; gap: 0; font-size: 11px; word-break: normal; }
-  .sidebar-signed-in .link-btn { font-size: 11px; }
+  /* The rail has room for one 44px circle: sign out. "Sign out everywhere" lives in the wider layouts. */
+  .sidebar-signed-in { justify-content: center; margin: 0 0 var(--s-m); }
+  #sign-out-everywhere { display: none; }
+  #sign-out { width: var(--hit); height: var(--hit); padding: 0; font-size: 0; border-radius: 50%; background: var(--btn-bg); position: relative; }
+  #sign-out::before { content: ''; position: absolute; inset: 12px; background: var(--ink); -webkit-mask: var(--glyph-signout) center / contain no-repeat; mask: var(--glyph-signout) center / contain no-repeat; }
+  #jump-open { padding: 0; width: var(--hit); height: var(--hit); border-radius: 50%; margin: 0 auto var(--s-m); }
+  #jump-open span, #jump-open kbd { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   #restart-btn { padding: 0; }
   #restart-btn span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .content { --content-pad: 16px; }
@@ -2556,6 +2596,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 
 /* -- Less motion, everywhere, when asked for -- */
 @media (prefers-reduced-motion: reduce) {
+  .btn:active { transform: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
@@ -2563,6 +2604,17 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
     scroll-behavior: auto !important;
   }
 }
+
+/* -- Jump palette -- */
+.jump { width: min(560px, calc(100vw - 30px)); margin: 15vh auto 0; padding: 10px; border: 0; border-radius: var(--r-panel); background: var(--surface-2); color: var(--ink); animation: pane-in 120ms var(--ease); --btn-bg: var(--surface-3); }
+.jump::backdrop { background: var(--veil); }
+#jump-q { min-height: var(--hit); border-radius: var(--r-field); background: var(--surface); }
+#jump-list { max-height: 50vh; overflow-y: auto; margin-top: 8px; }
+.jump-opt { display: flex; align-items: center; justify-content: space-between; gap: var(--s-l); min-height: var(--hit); padding: 0 var(--s-l); border-radius: var(--r-field); font-size: var(--t-body); font-weight: 500; cursor: pointer; }
+.jump-opt[aria-selected="true"] { background: var(--surface-3); }
+.jump-where { color: var(--mute); font-size: var(--t-meta); font-weight: 400; }
+.jump-none { padding: var(--s-xl); color: var(--mute); text-align: center; }
+#jump-open kbd { margin-left: auto; font: inherit; font-size: var(--t-label); color: var(--mute); }
 
 /* -- Screen-reader-only text -- */
 .visually-hidden {
@@ -2575,6 +2627,19 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
 
 /* -- Updates: the banner, the About card, and the release notes -- */
 .notice-update::before { background: var(--info); }
+/* Out of flow above the footer: its late arrival moves nothing. */
+.sidebar-footer { position: relative; }
+.update-card { position: absolute; left: var(--s-l); right: var(--s-l); bottom: 100%; margin: 0 0 var(--s-l); padding: 15px; border-radius: var(--r-card-in); background: var(--surface-2); }
+.sidebar:has(.update-card:not([hidden])) .sidebar-nav { padding-bottom: 150px; }
+.update-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-m); font-size: var(--t-table); }
+.update-card-x { width: 28px; height: 28px; min-height: 0; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--mute); }
+.update-card-x:hover { background: var(--surface-3); color: var(--ink); }
+.update-card-x .icon { width: 14px; height: 14px; }
+.update-card-text { margin: 4px 0 var(--s-l); font-size: var(--t-meta); color: var(--mute); overflow-wrap: anywhere; }
+.update-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-l); }
+.update-card-actions .link-btn { color: var(--info); text-decoration: underline; text-underline-offset: 2px; font-size: var(--t-meta); white-space: nowrap; }
+.sidebar .nav-toggle { position: relative; }
+.sidebar:has(.update-card:not([hidden])) .nav-toggle::after { content: ''; position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--info); }
 .update-banner-actions { display: flex; flex-wrap: wrap; gap: var(--s-m); margin-left: auto; }
 .update-line { color: var(--ink-1); }
 .update-actions { display: flex; flex-wrap: wrap; gap: var(--s-m); margin-top: var(--s-l); }
@@ -2699,7 +2764,7 @@ form[data-section] .form-actions:not(.unsaved) button[type="submit"]:not(:disabl
   overflow-wrap: anywhere;
 }
 .now-sub { font-size: var(--t-body); color: var(--text-secondary); overflow-wrap: anywhere; }
-.now-chips { display: flex; flex-wrap: wrap; gap: var(--s-m); padding-top: var(--s-xs); }
+.now-chips { min-width: 0; display: flex; flex-wrap: wrap; gap: var(--s-m); padding-top: var(--s-xs); }
 .now-chip {
   padding: 5px 12px;
   border-radius: var(--r-pill);
@@ -2976,26 +3041,18 @@ textarea.set-input.layout-template {
 
 /* ── Status: what arrives late goes last, so it can only push what is below it ── */
 section[data-pane="status"].active { display: flex; flex-direction: column; }
-section[data-pane="status"] > .page-header { order: 0; }
-section[data-pane="status"] > #setup-checklist-wrap { order: 1; }
-section[data-pane="status"] > #point-at-flakyfy { order: 2; }
-section[data-pane="status"] > .set-head { order: 3; }
-section[data-pane="status"] > .status-grid { order: 4; }
-section[data-pane="status"] > .status-meta { order: 5; }
-section[data-pane="status"] > #download-checks { order: 6; }
-section[data-pane="status"] > #latest-fetched { order: 7; }
 
 /* ── Late notices and lists: reserve the room, or go last ── */
 /* Late notices go after the page's content. */
 section:is([data-pane="imports"], [data-pane="health"], [data-pane="lossy"], [data-pane="lastfm"], [data-pane="listenbrainz"], [data-pane="notifications"]).active { display: flex; flex-direction: column; }
 :is(#health-result, #check-listenbrainz-result, #test-notification-result) { order: 9; }
-/* A gate notice sits above the card it explains. Whether it shows comes late from the server, so its slot is
- * held (blank, same height as its one-line, two-line and four-line text) rather than pushing the card down. */
+/* A gate notice sits above its card; its slot is held blank (1, 2 or 4 lines of text) so a late answer pushes nothing. */
 :is(#lossy-gate, #health-gate)[hidden] { display: block !important; visibility: hidden; height: 46px; margin-bottom: var(--s-xl); }
 @media (max-width: 1100px) { :is(#lossy-gate, #health-gate)[hidden] { height: 67px; } }
 @media (max-width: 760px) { :is(#lossy-gate, #health-gate)[hidden] { height: 108px; } }
 /* Lists that fill from the server keep their usual height while loading. */
-.imp-svc-grid { min-height: 216px; grid-auto-rows: 92px; }
+.imp-svc-grid { min-height: 216px; grid-auto-rows: minmax(92px, auto); }
+.imp-svc-grid > :not(.imp-svc) { grid-column: 1 / -1; }
 #lossy-status { min-height: 3em; }
 .status-card-body { min-height: 3em; }
 @media (max-width: 1000px) { .imp-svc-grid { min-height: 328px; } }
@@ -3017,4 +3074,8 @@ section:is([data-pane="imports"], [data-pane="health"], [data-pane="lossy"], [da
   .set-input:focus, #raw-editor:focus { outline: 2px solid Highlight; outline-offset: -2px; }
   :focus-visible { outline-color: Highlight; }
   .set-card > .form-actions.unsaved { border-top: 2px solid Highlight; }
+  .update-card, .banner-dock > .notice, .now-card, .callout, .info-card, .settings-card { border: 1px solid CanvasText; }
+  #point-at-flakyfy { background: Canvas; border: 2px solid CanvasText; }
+  .set-input:focus, #raw-editor:focus { box-shadow: none; }
+  .btn-primary { border: 1px solid ButtonText; }
 }

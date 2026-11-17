@@ -88,11 +88,26 @@
       </nav>
 
       <div class="sidebar-footer">
+        <div class="update-card" id="update-banner" role="status" hidden>
+          <div class="update-card-head">
+            <strong>Update available</strong>
+            <button type="button" class="btn-icon update-card-x" id="update-banner-later" aria-label="Not now" title="Not now"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+          </div>
+          <p class="update-card-text" id="update-banner-text"></p>
+          <div class="update-card-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="update-banner-go">Update</button>
+            <button type="button" class="link-btn" id="update-banner-notes">What's new</button>
+          </div>
+        </div>
         <p class="sidebar-signed-in" id="signed-in" hidden>
           <span id="signed-in-user"></span>
           <button type="button" class="link-btn" id="sign-out">Sign out</button>
           <button type="button" class="link-btn" id="sign-out-everywhere">Sign out everywhere</button>
         </p>
+        <button id="jump-open" class="btn btn-sm btn-block" type="button" title="Jump to a page (Ctrl K)" aria-keyshortcuts="Control+K Meta+K">
+          <svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"/></svg>
+          <span>Jump to</span><kbd>Ctrl K</kbd>
+        </button>
         <button id="restart-btn" class="btn btn-ghost btn-block" title="Restart container so settings flagged 'restart required' take effect">
           <svg class="icon" aria-hidden="true"><use href="#i-arrow-clockwise"/></svg>
           <span>Restart</span>
@@ -116,14 +131,6 @@
           <span><strong>settings.json can't be read,</strong> so Flakyfy won't save over it, and changes stored there may not be in effect. Fix it under <button type="button" class="link-button" data-open-tab="raw">Raw config</button>.</span>
         </div>
         <div class="notice notice-warn app-banner" id="restart-pending" role="status" hidden></div>
-        <div class="notice notice-update app-banner" id="update-banner" role="status" hidden>
-          <span id="update-banner-text"></span>
-          <span class="update-banner-actions">
-            <button type="button" class="btn btn-ghost" id="update-banner-notes">What's new</button>
-            <button type="button" class="btn btn-primary" id="update-banner-go">Update</button>
-            <button type="button" class="btn btn-ghost" id="update-banner-later">Later</button>
-          </span>
-        </div>
       </div>
 
 
@@ -165,35 +172,11 @@
           </button>
         </header>
 
-        <section class="now-card" id="latest-fetched" aria-labelledby="latest-title" hidden>
-          <img class="now-art" id="latest-art" alt="" hidden />
-          <div class="now-text">
-            <span class="now-kicker" id="latest-kicker">Latest fetched</span>
-            <h2 class="now-title" id="latest-title"></h2>
-            <span class="now-sub" id="latest-sub"></span>
-            <div class="now-chips" id="latest-chips"></div>
-          </div>
-          <div class="now-recent">
-            <span class="now-kicker quiet" id="latest-covers-label">Recently added</span>
-            <div class="now-covers" id="latest-covers" role="group" aria-labelledby="latest-covers-label"></div>
-            <a class="now-all" href="#fetched">All fetched songs</a>
-          </div>
-        </section>
-
         <details class="set-card setup-checklist" id="setup-checklist-wrap" open>
           <summary id="setup-summary"><span class="setup-summary-text">Checking setup…</span><span class="setup-meter" role="img" aria-label="Checking"><span style="width:0%"></span></span></summary>
-          <div id="setup-checklist"></div>
+          <div id="setup-checklist"><div class="skel setup-skel" role="status" aria-label="Checking setup"><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div></div></div>
         </details>
         <script>try{if(localStorage.getItem('flakyfy.setupDone')==='1')document.getElementById('setup-checklist-wrap').open=false}catch(e){}</script>
-
-        <!-- ─── Downloads: what Flakyfy's checks by sound cannot do right now ─── -->
-        <div class="set-section download-checks" id="download-checks" hidden>
-          <div class="set-head">
-            <h3 class="set-title">Downloads</h3>
-            <p class="set-desc">How Flakyfy checks a download by its sound before it keeps it.</p>
-          </div>
-          <div class="set-card" id="download-checks-list" aria-live="polite"></div>
-        </div>
 
         <div class="callout callout-accent" id="point-at-flakyfy">
           <div class="callout-title">Point your music apps here</div>
@@ -317,6 +300,30 @@
           <span class="status-meta-label">Last refreshed</span>
           <span class="status-meta-time" id="status-last-checked">not yet</span>
         </div>
+
+        <!-- ─── Downloads: what Flakyfy's checks by sound cannot do right now ─── -->
+        <div class="set-section download-checks" id="download-checks" hidden>
+          <div class="set-head">
+            <h3 class="set-title">Downloads</h3>
+            <p class="set-desc">How Flakyfy checks a download by its sound before it keeps it.</p>
+          </div>
+          <div class="set-card" id="download-checks-list" aria-live="polite"></div>
+        </div>
+
+        <section class="now-card" id="latest-fetched" aria-labelledby="latest-title" hidden>
+          <img class="now-art" id="latest-art" alt="" hidden />
+          <div class="now-text">
+            <span class="now-kicker" id="latest-kicker">Latest fetched</span>
+            <h2 class="now-title" id="latest-title"></h2>
+            <span class="now-sub" id="latest-sub"></span>
+            <div class="now-chips" id="latest-chips"></div>
+          </div>
+          <div class="now-recent">
+            <span class="now-kicker quiet" id="latest-covers-label">Recently added</span>
+            <div class="now-covers" id="latest-covers" role="group" aria-labelledby="latest-covers-label"></div>
+            <a class="now-all" href="#fetched">All fetched songs</a>
+          </div>
+        </section>
       </section>
 
       <!-- ─── FETCHED SONGS ──────────────────────────────────── -->
@@ -1935,7 +1942,7 @@
               <select class="set-input" id="lossy-genre" aria-label="Genre"><option value="">Every genre</option></select>
               <label class="lossy-check"><input type="checkbox" class="pick" id="lossy-youtube" /><span>Only songs Flakyfy got from YouTube</span></label>
               <label class="lossy-check"><input type="checkbox" class="pick" id="lossy-hide-tried" /><span>Hide songs tried in the last 4 weeks</span></label>
-              <button class="btn btn-ghost" type="button" id="lossy-refresh"><svg class="icon" aria-hidden="true"><use href="#i-arrows-clockwise"/></svg><span>Refresh</span></button>
+              <button class="btn btn-ghost btn-icon" type="button" id="lossy-refresh" aria-label="Refresh the list" title="Refresh the list"><svg class="icon" aria-hidden="true"><use href="#i-arrows-clockwise"/></svg></button>
             </div>
             <p class="set-info-d lossy-shown" id="lossy-shown" aria-live="polite"></p>
             <div id="lossy-list"><div class="skel" role="status" aria-label="Loading"><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div></div></div>
@@ -3667,6 +3674,10 @@
   </div>
 
   <!-- Live progress of Flakyfy's background work, one card per job, and the one-off toast under them. -->
+  <dialog class="jump" id="jump" aria-label="Jump to a page">
+    <input id="jump-q" class="set-input" type="text" role="combobox" aria-expanded="true" aria-controls="jump-list" aria-autocomplete="list" aria-label="Jump to" placeholder="Jump to a page" autocomplete="off" spellcheck="false" />
+    <div id="jump-list" role="listbox" aria-label="Pages"></div>
+  </dialog>
   <div class="activity" id="activity" role="region" aria-label="Activity">
     <div class="activity-cards" id="activity-cards"></div>
     <div id="toast" role="status" aria-live="polite"></div>

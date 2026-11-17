@@ -318,7 +318,7 @@ async function inProgress(rows) {
   for (const block of [menusBlock, actionsBlock, inProgressBlock]) vm.runInContext(block, context);
   await context.loadAcquisitions();
   const cards = list.innerHTML.split('<div class="acq-card').slice(1);
-  return { wrap, cards: Object.fromEntries(cards.map(card => [card.match(/class="dl-title">([^<]*)</)[1], card])) };
+  return { wrap, cards: Object.fromEntries(cards.map(card => [card.match(/class="dl-title"[^>]*>([^<]*)</)[1], card])) };
 }
 
 test("a done row whose kept copy waits for Lidarr stays in progress with its line, and says Kept", async () => {

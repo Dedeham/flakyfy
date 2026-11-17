@@ -91,6 +91,8 @@ impl LastFmRadioWarmupService {
             };
             let Some(username) = username else { break };
             match self.process(&username, &stopping).await {
+                // Nothing to warm (radio or its streams off, or no stations): nothing to say.
+                Ok(result) if result.station_count == 0 => {}
                 Ok(result) if result.ready_station_count == result.station_count => info!(
                     "Radio cache warm for {username}: {}/{} stations, {} ready tracks",
                     result.ready_station_count, result.station_count, result.ready_track_count

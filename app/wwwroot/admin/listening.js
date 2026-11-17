@@ -458,7 +458,7 @@
         const genre = p.topGenre ? ` · mostly ${esc(p.topGenre)}` : '';
         return `<button type="button" class="ls-person" data-person="${i}" aria-label="Open ${esc(p.name)}">
           <span class="ls-avatar" style="--hue:${[...(p.name || '')].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7)}" aria-hidden="true">${esc((p.name || '?').slice(0, 1).toUpperCase())}</span>
-          <span class="ls-text"><span class="ls-n">${esc(p.name)}</span><span class="ls-s">${fmt1(p.hours)} h${genre}</span>
+          <span class="ls-text"><span class="ls-n" title="${esc(p.name)}">${esc(p.name)}</span><span class="ls-s" title="${esc(`${fmt1(p.hours)} h${p.topGenre ? ` · mostly ${p.topGenre}` : ''}`)}">${fmt1(p.hours)} h${genre}</span>
           ${pts ? `<svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><path d="M${pts}"/></svg>` : ''}</span></button>`;
       }).join('');
       panel.querySelectorAll('[data-person]').forEach((b) => b.addEventListener('click', () => {
@@ -506,6 +506,7 @@
         light(src);
       }
       part('top-name').textContent = top ? top.name : '';
+      part('top-name').title = top ? top.name : '';
       part('top-meta').textContent = top ? `${plural(top.plays, 'play', 'plays')} · ${fmt0(top.minutes)} min` : '';
     }
 
@@ -616,11 +617,11 @@
     function renderTop(r) {
       const ma = r.topArtists[0] ? r.topArtists[0].plays : 1;
       rows(part('artists-list'), r.topArtists, (a, i) => `<div class="ls-row"><span class="ls-rank">${i + 1}</span>${art(a)}
-        <div class="ls-t"><div class="ls-n">${esc(a.name)}</div><div class="ls-s">${fmt0(a.minutes)} min</div><div class="ls-bar"><i data-w="${(a.plays / ma) * 100}%"></i></div></div>
+        <div class="ls-t"><div class="ls-n" title="${esc(a.name)}">${esc(a.name)}</div><div class="ls-s">${fmt0(a.minutes)} min</div><div class="ls-bar"><i data-w="${(a.plays / ma) * 100}%"></i></div></div>
         <span class="ls-val">${plural(a.plays, 'play', 'plays')}</span></div>`);
       const ms = r.topSongs[0] ? r.topSongs[0].plays : 1;
       rows(part('songs-list'), r.topSongs, (s, i) => `<div class="ls-row"><span class="ls-rank">${i + 1}</span>${art(s)}
-        <div class="ls-t"><div class="ls-n">${esc(s.title)}</div><div class="ls-s">${esc(s.artist)}${s.local ? '' : '<span class="ls-pill">Outside</span>'}</div><div class="ls-bar"><i data-w="${(s.plays / ms) * 100}%"></i></div></div>
+        <div class="ls-t"><div class="ls-n" title="${esc(s.title)}">${esc(s.title)}</div><div class="ls-s" title="${esc(s.artist)}">${esc(s.artist)}${s.local ? '' : '<span class="ls-pill">Outside</span>'}</div><div class="ls-bar"><i data-w="${(s.plays / ms) * 100}%"></i></div></div>
         <span class="ls-val">${plural(s.plays, 'play', 'plays')}</span></div>`);
     }
 
@@ -650,7 +651,7 @@
       const top = r.genres[0];
       part('ring-n').textContent = top ? top.name : 'None yet';
       part('ring-k').textContent = top ? `${Math.round((top.hours / total) * 100)}% of the time` : '';
-      part('legend').innerHTML = r.genres.map((g, i) => `<div class="ls-li"><span class="ls-sw" style="background:rgb(var(--accent-rgb) / ${GENRE_SHADES[i]})"></span><span>${esc(g.name)}</span><span class="ls-v">${fmt1(g.hours)} h</span></div>`).join('');
+      part('legend').innerHTML = r.genres.map((g, i) => `<div class="ls-li"><span class="ls-sw" style="background:rgb(var(--accent-rgb) / ${GENRE_SHADES[i]})"></span><span title="${esc(g.name)}">${esc(g.name)}</span><span class="ls-v">${fmt1(g.hours)} h</span></div>`).join('');
       part('untagged').textContent = r.untaggedHours >= 0.05
         ? `${fmt1(r.untaggedHours)} h of songs have no genre at all, from the song, its album or its artist, so they aren't counted here.`
         : '';
@@ -660,7 +661,7 @@
       const iconFor = (a) => (a.name === 'Internet radio' ? 'radio' : a.platform === 'iphone' ? 'phone' : a.platform === 'android' ? 'android'
         : ['windows', 'macos', 'linux'].includes(a.platform) ? 'desktop' : 'notes');
       rows(part('apps'), r.apps, (a) => `<div class="ls-app"><span class="ls-ic">${svg(iconFor(a))}</span>
-        <div><div class="ls-n">${esc(a.name)}</div><div class="ls-bar"><i data-w="${a.share * 100}%"></i></div></div>
+        <div><div class="ls-n" title="${esc(a.name)}">${esc(a.name)}</div><div class="ls-bar"><i data-w="${a.share * 100}%"></i></div></div>
         <span class="ls-val">${a.share < 0.01 ? '<1' : Math.round(a.share * 100)}%</span></div>`);
     }
 

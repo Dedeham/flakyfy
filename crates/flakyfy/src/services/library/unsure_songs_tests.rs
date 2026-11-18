@@ -157,6 +157,28 @@ fn an_answer_heard_against_no_video_teaches_no_rule() {
 }
 
 #[test]
+fn a_kind_of_doubt_that_found_a_wrong_video_is_never_taken_as_right_or_replaced() {
+    let kinds = |store: &UnsureStore| -> Vec<RuleKind> {
+        store.read(suggestions).into_iter().map(|s| s.kind).collect()
+    };
+    let store = UnsureStore::new(None);
+    answered(&store, 0, 10, 0.31, UnsureLabel::Right);
+    assert_eq!(kinds(&store), [RuleKind::Settle]);
+    store.record("other.flac", &song(), "1:1", video("w", 0.31), now());
+    let id = store.song_at("other.flac").unwrap().id;
+    store.decide(id, Some(UnsureLabel::PreviewWrong), Some("w"), "bob", now());
+    assert!(kinds(&store).is_empty(), "its comparison may say nothing");
+
+    // Sending them to Review stays on offer: it decides nothing.
+    let store = UnsureStore::new(None);
+    answered(&store, 0, 50, 0.31, UnsureLabel::Wrong);
+    store.record("other.flac", &song(), "1:1", video("w", 0.31), now());
+    let id = store.song_at("other.flac").unwrap().id;
+    store.decide(id, Some(UnsureLabel::PreviewWrong), Some("w"), "bob", now());
+    assert_eq!(kinds(&store), [RuleKind::Ask]);
+}
+
+#[test]
 fn turning_down_a_video_of_no_such_song_is_nothing() {
     let store = UnsureStore::new(None);
     assert!(

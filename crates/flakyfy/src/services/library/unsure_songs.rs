@@ -268,10 +268,13 @@ pub fn report(state: &UnsureState) -> Vec<BucketReport> {
 }
 
 /// The rules the answers allow and nobody has ruled on yet: only where every answer agrees.
+/// A turned-down video disagrees too: where this kind of doubt has found a wrong video, its
+/// comparison may say nothing, so no rule takes its songs as right or replaces them unheard.
 pub fn suggestions(state: &UnsureState) -> Vec<RuleSuggestion> {
     let mut found = Vec::new();
     for row in report(state) {
         let answers = row.answers();
+        let videos_right = row.video_wrong == 0;
         let mut suggest = |kind: RuleKind| {
             let id = format!("{}|{}", row.bucket, kind.name());
             if !state.rules.iter().any(|rule| rule.id == id) {
@@ -283,13 +286,13 @@ pub fn suggestions(state: &UnsureState) -> Vec<RuleSuggestion> {
                 });
             }
         };
-        if answers >= MIN_ANSWERS_TO_SUGGEST && row.right == answers {
+        if answers >= MIN_ANSWERS_TO_SUGGEST && row.right == answers && videos_right {
             suggest(RuleKind::Settle);
         }
         if answers >= MIN_ANSWERS_TO_SUGGEST && row.wrong == answers {
             suggest(RuleKind::Ask);
         }
-        if answers >= MIN_ANSWERS_TO_SUGGEST_REPLACING && row.wrong == answers {
+        if answers >= MIN_ANSWERS_TO_SUGGEST_REPLACING && row.wrong == answers && videos_right {
             suggest(RuleKind::Replace);
         }
     }

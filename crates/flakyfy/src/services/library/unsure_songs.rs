@@ -123,12 +123,12 @@ pub struct UnsureSong {
 }
 
 impl UnsureSong {
-    /// What the song's answer is filed under: its first video nobody turned down.
+    /// What the song's answer is filed under: its first video nobody turned down. None once
+    /// every video is turned down: an answer heard against no video teaches no rule.
     pub fn bucket(&self) -> Option<String> {
         self.videos
             .iter()
             .find(|video| !video.rejected)
-            .or(self.videos.first())
             .map(HeardVideo::bucket)
     }
 
@@ -242,15 +242,21 @@ pub enum RuleAction {
 /// What each bucket's answers from people came to. A rule's decisions are not answers.
 pub fn report(state: &UnsureState) -> Vec<BucketReport> {
     let mut buckets: BTreeMap<String, BucketReport> = BTreeMap::new();
+    fn row(buckets: &mut BTreeMap<String, BucketReport>, bucket: String) -> &mut BucketReport {
+        buckets.entry(bucket.clone()).or_insert_with(|| BucketReport {
+            bucket,
+            ..Default::default()
+        })
+    }
     for song in &state.songs {
+        // A turned-down video counts in its own bucket: it is what that kind of doubt found.
+        for video in song.videos.iter().filter(|video| video.rejected) {
+            row(&mut buckets, video.bucket()).video_wrong += 1;
+        }
         let Some(bucket) = song.bucket() else {
             continue;
         };
-        let row = buckets.entry(bucket.clone()).or_insert_with(|| BucketReport {
-            bucket,
-            ..Default::default()
-        });
-        row.video_wrong += song.videos.iter().filter(|video| video.rejected).count();
+        let row = row(&mut buckets, bucket);
         match song.decision.as_ref().filter(|decision| decision.rule.is_none()) {
             Some(decision) if decision.label == UnsureLabel::Right => row.right += 1,
             Some(decision) if decision.label == UnsureLabel::Wrong => row.wrong += 1,

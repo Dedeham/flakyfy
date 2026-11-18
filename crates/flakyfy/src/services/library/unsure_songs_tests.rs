@@ -140,6 +140,23 @@ fn a_video_turned_down_stays_turned_down_and_the_song_stays_open() {
 }
 
 #[test]
+fn an_answer_heard_against_no_video_teaches_no_rule() {
+    let store = UnsureStore::new(None);
+    answered(&store, 0, 9, 0.31, UnsureLabel::Wrong);
+    // Both wrong: the person turns the video down, then says the file is another song too.
+    store.record("both.flac", &song(), "1:1", video("v", 0.31), now());
+    let id = store.song_at("both.flac").unwrap().id;
+    store.decide(id, Some(UnsureLabel::PreviewWrong), Some("v"), "bob", now());
+    store.decide(id, Some(UnsureLabel::Wrong), None, "bob", now());
+
+    assert!(store.song(id).unwrap().bucket().is_none());
+    assert!(store.read(suggestions).is_empty(), "nine answers, not ten");
+    let rows = store.read(report);
+    let row = rows.iter().find(|row| row.bucket == "name|search|30").unwrap();
+    assert_eq!((row.wrong, row.video_wrong), (9, 1));
+}
+
+#[test]
 fn turning_down_a_video_of_no_such_song_is_nothing() {
     let store = UnsureStore::new(None);
     assert!(

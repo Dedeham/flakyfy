@@ -7187,20 +7187,20 @@ async function loadTrash() {
       const sidecars = (song.sidecars || []).length ? `with ${song.sidecars.join(', ')}` : '';
       const replaced = song.kind === 'replaced';
       const sub = [`${replaced ? 'Replaced' : 'Removed'} ${relTime(song.removedAt)} by ${song.removedBy || 'someone'}`, sidecars].filter(Boolean).join(' · ');
-      const both = replaced ? `<div class="dl-sub">Was ${escapeHtml(song.was || 'the old copy')}, now ${escapeHtml(song.now || 'the new copy')}. Put back swaps them.</div>` : '';
-      return `<div class="dl-item trash-item">
-        <div class="acq-art">${icon('i-trash')}</div>
-        <div class="dl-main">
-          <div class="dl-title">${escapeHtml(song.title || '?')}</div>
-          <div class="dl-by">${[song.artist, song.album].filter(Boolean).map(escapeHtml).join(' <span class="dl-dash">·</span> ')}</div>
-          <div class="dl-sub">${escapeHtml(sub)}</div>
-          ${both}${song.blocksDownloads ? '<div class="dl-sub">Removed from disk, so a heart does not download it again.</div>' : ''}
+      const notes = [replaced ? `Was ${song.was || 'the old copy'}, now ${song.now || 'the new copy'}. Put back swaps them.` : '', song.blocksDownloads ? 'Removed from disk, so a heart does not download it again.' : '']
+        .filter(Boolean).map(t => `<div class="trash-note">${escapeHtml(t)}</div>`).join('');
+      return `<div class="trash-row">
+        <div class="trash-main">
+          <div class="trash-title">${escapeHtml(song.title || '?')}</div>
+          <div class="trash-by">${[song.artist, song.album].filter(Boolean).map(escapeHtml).join(' <span class="dl-dash">·</span> ')}</div>
+          <div class="trash-meta">${escapeHtml(sub)}</div>
+          ${notes}
         </div>
-        <div class="dl-side">
-          <div class="dl-tags"><span class="dl-badge ${left.tone}">${escapeHtml(left.text)}</span></div>
+        <div class="trash-side">
+          <span class="trash-left ${left.tone === 'warn' ? 'soon' : ''}">${escapeHtml(left.text)}</span>
           <div class="trash-actions">
             ${song.blocksDownloads ? `<button type="button" class="btn btn-ghost btn-sm" data-trash-allow="${escapeHtml(song.key || '')}">Allow downloading again</button>` : ''}
-            <button type="button" class="btn btn-primary btn-sm" data-trash-restore="${escapeHtml(song.id)}">${icon('i-arrow-counter-clockwise')}<span>Put back</span></button>
+            <button type="button" class="btn btn-ghost btn-sm" data-trash-restore="${escapeHtml(song.id)}">${icon('i-arrow-counter-clockwise')}<span>Put back</span></button>
           </div>
         </div>
       </div>`;
@@ -9314,7 +9314,7 @@ async function startUpdate() {
     ? `\n\nYou have unsaved changes on ${unsavedCards} card${unsavedCards === 1 ? '' : 's'}; the restart discards them.`
     : '';
   if (!(await askConfirm(`Update to ${tag}?`,
-    `Flakyfy fetches ${tag}, builds it, and restarts. Playback through Flakyfy stops for a minute or two. If the build fails, nothing changes.${unsavedNote}`,
+    `Flakyfy pulls ${tag}'s images and restarts. Playback through Flakyfy stops for a minute or two. If the pull fails, nothing changes.${unsavedNote}`,
     'Update now'))) return;
   const response = await api('/api/admin/update', {
     method: 'POST',

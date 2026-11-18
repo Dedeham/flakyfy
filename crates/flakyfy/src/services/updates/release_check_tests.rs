@@ -485,11 +485,12 @@ async fn the_worker_waits_then_checks_when_due_and_stops_on_shutdown() {
     assert_eq!(attempted(&check), Some(first));
     assert!(path.exists(), "the attempt is saved");
 
-    *now.lock() += TimeDelta::hours(1);
+    // That attempt failed, so it is retried after RETRY, not a full interval.
+    *now.lock() += TimeDelta::minutes(5);
     tokio::time::sleep(Duration::from_secs(5 * 60)).await;
-    assert_eq!(attempted(&check), Some(first), "not due for 6 hours");
+    assert_eq!(attempted(&check), Some(first), "not due before the retry");
 
-    *now.lock() += TimeDelta::hours(6);
+    *now.lock() += ReleaseCheck::RETRY;
     let second = *now.lock();
     tokio::time::sleep(Duration::from_secs(5 * 60)).await;
     assert_eq!(attempted(&check), Some(second));

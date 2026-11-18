@@ -76,11 +76,22 @@ jobs:
       # fingerprint tests; Noto CJK, Symbola and DejaVu, as in the image, so the cover tests
       # draw names in other scripts with the same fallback fonts. Tests that need a missing
       # tool skip themselves, so a gap here shows up as a skip, not a failure.
+      # The packages are 129 MB, and a slow Ubuntu mirror once took 16 minutes to send them, so
+      # the .debs are cached once; apt then downloads only what Ubuntu updated since. Bump v1
+      # when that grows large again.
+      - name: Cache the apt packages
+        uses: actions/cache@v6
+        with:
+          path: ~/apt-debs
+          key: apt-debs-${{ runner.os }}-v1
+
       - name: Install ffmpeg, fpcalc and cover fonts
         run: |
+          mkdir -p ~/apt-debs/partial
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools \
-            fonts-noto-cjk fonts-symbola fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends -o Dir::Cache::Archives="$HOME/apt-debs" \
+            ffmpeg libchromaprint-tools fonts-noto-cjk fonts-symbola fonts-dejavu-core
+          sudo chown -R "$USER" ~/apt-debs
 
       - name: Test
         run: cargo test --workspace

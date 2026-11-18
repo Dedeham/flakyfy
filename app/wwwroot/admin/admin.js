@@ -298,6 +298,8 @@ function activateTab(name, { focus = false } = {}) {
   if ((name === 'status' || name === 'fetched') && typeof loadAmbient === 'function') loadAmbient();
   if (name === 'lossy' && typeof loadLossy === 'function') loadLossy();
   if (name === 'health' && typeof loadHealth === 'function') loadHealth();
+  if (name === 'unsure' && typeof loadUnsure === 'function') loadUnsure();
+  if (name !== 'unsure' && typeof unsureTeardown === 'function') unsureTeardown();
   if (name === 'imports' && typeof loadImports === 'function') loadImports();
   if (name === 'raw' && typeof loadRawConfig === 'function') loadRawConfig();
   if (name === 'sources' && typeof loadConfigSources === 'function') loadConfigSources();
@@ -1576,6 +1578,11 @@ function updateRadioPublicationSettings() {
 }
 
 document.getElementById('f-radio-streams')?.addEventListener('change', updateRadioPublicationSettings);
+
+// Open Review from an unsure answer: Library actions, scrolled to its questions.
+document.addEventListener('click', event => {
+  if (event.target.closest('[data-unsure-review]')) requestAnimationFrame(() => document.getElementById('notices-refresh')?.closest('.set-section')?.scrollIntoView({ block: 'start' }));
+});
 
 // Delegated, so buttons rendered later (the setup checklist) work the same way.
 document.addEventListener('click', event => {
@@ -3832,23 +3839,75 @@ document.getElementById('youtube-check-pause')?.addEventListener('click', (event
 ready.then(loadYoutubeCheck);
 setInterval(() => { if (document.visibilityState === 'visible' && !gatePromise) loadYoutubeCheck(); }, 30000);
 
-// Unsure songs: hear a song the YouTube check could not settle next to its video, and say what it
-// is. The two players jump to the same moment of the song, so a comparison takes seconds.
+// Unsure songs: one song at a time. Is the YouTube video this song, then does the file sound like it.
+// One card at a time owns two Audio objects (the file and the video) and one shared position, so
+// switching between A and B lands on the same moment of the song.
 const unsureBase = '/api/admin/youtube-check/unsure';
 const unsureReasons = {
   between: 'The video names this song, but sounds neither alike nor clearly different.',
   length: 'The video is too long or too short to be believed.',
   name: 'The video does not name this song, or someone else uploaded it.',
 };
-const unsureLabels = { right: 'Right song', wrong: 'Wrong song', version: 'Other version', cant_tell: "Can't tell" };
+const unsureLabels = {
+  right: 'Marked as the right song',
+  wrong: 'Sent to Review',
+  version: 'Marked as another version',
+  cant_tell: 'Left open',
+};
 const unsureKinds = { settle: 'take these as right', ask: 'ask about these in Review', replace: 'replace these (needs its switch)' };
-let unsureShow = 'open';
-let unsureSongs = [];
 
-function unsureVideoLine(video) {
-  const who = [video.title, video.artist].filter(Boolean).join(' · ');
-  return `${who || video.videoId} (${Math.round(video.bitError * 100)}% apart)`;
+// Unsure songs: pure logic (tested in tests/unsure.test.mjs).
+function unsureCloseness(bitError) {
+  if (typeof bitError !== 'number' || !Number.isFinite(bitError)) return '';
+  return bitError <= 0.25 ? 'sounds alike' : bitError < 0.38 ? 'sounds somewhat alike' : 'sounds different';
 }
+const unsureRemaining = song => (song.videos || []).filter(video => !video.rejected);
+const unsureIsOpen = song => !song.decision || song.decision.label === 'cant_tell';
+// Open songs: the ones heard as closest first, "can't tell" at the end. Answered ones keep that order.
+function unsureSplit(songs) {
+  const closeness = song => unsureRemaining(song)[0]?.bitError ?? 9;
+  const order = (a, b) => (a.decision ? 1 : 0) - (b.decision ? 1 : 0) || closeness(a) - closeness(b);
+  const sorted = [...songs].sort(order);
+  return { open: sorted.filter(unsureIsOpen), answered: sorted.filter(song => !unsureIsOpen(song)) };
+}
+// The intro is often silence or talk, so a long song starts 45 s in; a short one at the start.
+const unsureStart = seconds => (Number(seconds) >= 60 ? 45 : 0);
+// The video's moment for the file's moment t: the file's start sits offset seconds into the video.
+function unsureVideoTime(t, offset, duration) {
+  const raw = (Number(t) || 0) + (Number(offset) || 0);
+  if (raw < 0) return { time: 0, clamped: true };
+  if (duration > 0 && raw > duration) return { time: duration, clamped: true };
+  return { time: raw, clamped: false };
+}
+const unsureFileTime = (videoTime, offset) => Math.max(0, (Number(videoTime) || 0) - (Number(offset) || 0));
+function unsureStepNext(state, action) {
+  if (action.type === 'yes') return { ...state, step: 2 };
+  if (action.type === 'back') return { ...state, step: 1 };
+  if (action.type === 'video') return { step: 1, videoId: action.videoId };
+  return state;
+}
+function unsureShiftVideo(videos, videoId, delta) {
+  const at = videos.findIndex(video => video.videoId === videoId);
+  const to = at + delta;
+  return at < 0 || to < 0 || to >= videos.length ? videoId : videos[to].videoId;
+}
+function unsureClock(seconds) {
+  const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(whole / 3600), m = Math.floor(whole / 60) % 60, s = whole % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+function unsureSpoken(seconds) {
+  const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+  const parts = [[Math.floor(whole / 3600), 'hour'], [Math.floor(whole / 60) % 60, 'minute'], [whole % 60, 'second']]
+    .filter(([n]) => n > 0).map(([n, word]) => `${n} ${word}${n === 1 ? '' : 's'}`);
+  return parts.join(' ') || '0 seconds';
+}
+// End of the unsure pure logic.
+
+const unsureUi = { show: 'open', limit: 20, focusId: null, steps: new Map(), loadId: 0 };
+let unsureSongs = [];
+// var on purpose: pane activation can run before this line, and it must not hit a dead zone.
+var unsureAudio = null;
 
 function unsureBucketWords(bucket) {
   const [reason, source, band] = bucket.split('|');
@@ -3856,60 +3915,366 @@ function unsureBucketWords(bucket) {
   return `${why}, ${source === 'row' ? 'YouTube Music row' : 'search result'}, ${band}-${Number(band) + 5}% apart`;
 }
 
-function unsureCard(song) {
-  const videos = song.videos.filter(video => !video.rejected);
-  const video = videos[0] || song.videos[0];
-  const answer = song.decision;
-  const options = videos.map(v => `<option value="${esc(v.videoId)}">${esc(unsureVideoLine(v))}</option>`).join('');
-  const heard = answer
-    ? `<div class="set-info-d">Answered: ${esc(unsureLabels[answer.label] || answer.label)}${answer.rule ? ' (by a rule you accepted)' : ` by ${esc(answer.by)}`}.</div>`
-    : '';
-  const settled = answer && answer.label !== 'cant_tell';
-  const buttons = settled
-    ? `<button type="button" class="btn btn-ghost btn-sm" data-unsure-take-back="${song.id}"><span>Take back</span></button>`
-    : `${Object.entries(unsureLabels).map(([label, words]) =>
-        `<button type="button" class="btn btn-ghost btn-sm" data-unsure-answer="${label}"><span>${esc(words)}</span></button>`).join('')}
-       <button type="button" class="btn btn-ghost btn-sm" data-unsure-answer="preview_wrong"><span>YouTube is wrong</span></button>`;
-  const youtube = video ? `https://youtu.be/${encodeURIComponent(video.videoId)}` : '';
-  return `<article class="unsure-card" data-unsure-id="${song.id}" data-unsure-offset="${video?.offsetSeconds ?? 0}">
-    <div class="set-info-t">${esc(song.artist)} - ${esc(song.title)}</div>
-    <div class="set-info-d">${esc(song.album)}${video ? ` · ${esc(unsureReasons[video.reason] || '')}` : ''}</div>
-    ${heard}
-    ${video ? `<div class="unsure-players">
-      <label class="unsure-player"><span>Your file</span>
-        <audio controls preload="none" data-unsure-player="file" src="${unsureBase}/${song.id}/audio"></audio></label>
-      <label class="unsure-player"><span>YouTube</span>
-        <audio controls preload="none" data-unsure-player="video" src="${unsureBase}/${song.id}/preview?video=${encodeURIComponent(video.videoId)}"></audio></label>
+function unsureTeardown() {
+  const audio = unsureAudio;
+  unsureAudio = null;
+  if (!audio) return;
+  for (const el of [audio.file, audio.video]) {
+    el.pause();
+    el.removeAttribute('src');
+    el.load();
+  }
+}
+
+function unsureView(song) {
+  const steps = unsureUi.steps.get(song.id) || { step: 1, videoId: null };
+  const videos = unsureRemaining(song);
+  const video = videos.find(v => v.videoId === steps.videoId) || videos[0] || null;
+  return { steps, videos, video, index: video ? videos.indexOf(video) : -1 };
+}
+function unsureFocus() {
+  const song = unsureSongs.find(item => item.id === unsureUi.focusId);
+  return song ? { song, ...unsureView(song) } : null;
+}
+const unsureSong = id => unsureSongs.find(item => String(item.id) === String(id));
+const unsureById = id => document.getElementById('unsure-list')?.querySelector(`[data-unsure-id="${CSS.escape(String(id))}"]`);
+
+function unsureSay(text) {
+  const live = document.getElementById('unsure-live');
+  if (!live) return;
+  live.textContent = '';
+  setTimeout(() => { live.textContent = text; }, 40);
+}
+
+const unsureIcons = {
+  play: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4.5 2.5v11l9-5.5z" fill="currentColor"/></svg>',
+  pause: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3.5 2h3.2v12H3.5zM9.3 2h3.2v12H9.3z" fill="currentColor"/></svg>',
+};
+
+// ---- audio ----
+function unsureAudioFor(song) {
+  if (unsureAudio && unsureAudio.songId === song.id) return unsureAudio;
+  unsureTeardown();
+  const audio = unsureAudio = {
+    songId: song.id, file: new Audio(), video: new Audio(), videoId: null,
+    side: 'file', t: unsureStart(song.seconds), playing: false, loading: false,
+    err: { file: false, video: false }, noAudio: false, dragging: false,
+  };
+  audio.file.preload = 'none';
+  audio.video.preload = 'none';
+  audio.file.src = `${unsureBase}/${song.id}/audio`;
+  for (const side of ['file', 'video']) {
+    const el = audio[side];
+    const live = fn => () => { if (unsureAudio === audio) fn(); };
+    el.addEventListener('timeupdate', live(() => unsureOnTime(audio, side)));
+    el.addEventListener('waiting', live(() => { if (audio.side === side && audio.playing) { audio.loading = true; unsureSync(); } }));
+    el.addEventListener('playing', live(() => { audio.loading = false; unsureSync(); }));
+    el.addEventListener('loadedmetadata', live(() => unsureSync()));
+    el.addEventListener('ended', live(() => { if (audio.side === side) { audio.playing = false; unsureSync(); } }));
+    el.addEventListener('error', live(() => {
+      audio.err[side] = true;
+      if (audio.side === side) { audio.playing = false; audio.loading = false; }
+      unsureSync();
+    }));
+  }
+  return audio;
+}
+
+function unsureDuration(audio, side, video) {
+  return side === 'file'
+    ? Number(unsureSong(audio.songId)?.seconds) || (Number.isFinite(audio.file.duration) ? audio.file.duration : 0)
+    : Number(video?.seconds) || (Number.isFinite(audio.video.duration) ? audio.video.duration : 0);
+}
+
+function unsureOnTime(audio, side) {
+  if (audio.side !== side || audio.dragging) return;
+  const offset = unsureFocus()?.video?.offsetSeconds ?? 0;
+  audio.t = side === 'file' ? audio.file.currentTime : unsureFileTime(audio.video.currentTime, offset);
+  unsureSync();
+}
+
+// The video follows the file by offsetSeconds; where that leaves the video, it has no audio.
+function unsureSeek(audio, focus) {
+  const el = audio[audio.side];
+  const mapped = audio.side === 'file'
+    ? { time: audio.t, clamped: false }
+    : unsureVideoTime(audio.t, focus.video?.offsetSeconds, unsureDuration(audio, 'video', focus.video));
+  audio.noAudio = mapped.clamped;
+  if (mapped.clamped) { el.pause(); audio.playing = false; audio.loading = false; return false; }
+  try { el.currentTime = mapped.time; } catch { /* not seekable yet; play starts it */ }
+  return true;
+}
+
+function unsurePlay(audio, focus) {
+  const side = audio.side;
+  const el = audio[side];
+  if (audio.err[side] && el.error) { el.load(); audio.err[side] = false; }
+  if (!unsureSeek(audio, focus)) return;
+  audio.playing = true;
+  audio.loading = el.readyState < 3;
+  el.play().catch(error => {
+    if (error?.name === 'AbortError' || unsureAudio !== audio || audio.side !== side) return;
+    audio.playing = false;
+    audio.loading = false;
+    unsureSync();
+  });
+}
+
+// The card's video changed: the old one stops, the file keeps its place.
+function unsureSetVideo(audio, song, video) {
+  const id = video?.videoId ?? null;
+  if (audio.videoId === id) return;
+  audio.videoId = id;
+  audio.video.pause();
+  if (id) audio.video.src = `${unsureBase}/${song.id}/preview?video=${encodeURIComponent(id)}`;
+  else audio.video.removeAttribute('src');
+  audio.err.video = false;
+  audio.noAudio = false;
+  if (audio.side === 'video' || audio.playing) { audio.file.pause(); audio.side = 'file'; audio.playing = false; audio.loading = false; }
+}
+
+function unsurePrepare() {
+  const focus = unsureFocus();
+  if (!focus) return null;
+  const audio = unsureAudioFor(focus.song);
+  unsureSetVideo(audio, focus.song, focus.video);
+  return { audio, focus };
+}
+
+function unsureToggle() {
+  const ready = unsurePrepare();
+  if (!ready) return;
+  const { audio, focus } = ready;
+  if (audio.playing) { audio[audio.side].pause(); audio.playing = false; audio.loading = false; } else unsurePlay(audio, focus);
+  unsureSync();
+}
+
+function unsureSide(side) {
+  const ready = unsurePrepare();
+  if (!ready) return false;
+  const { audio, focus } = ready;
+  if (side === audio.side || audio.err[side] || (side === 'video' && !focus.video)) return false;
+  const was = audio.playing;
+  audio[audio.side].pause();
+  audio.side = side;
+  audio.playing = false;
+  audio.noAudio = false;
+  if (was) unsurePlay(audio, focus); else unsureSeek(audio, focus);
+  unsureSync();
+  return true;
+}
+
+function unsureScrub(value, commit) {
+  const ready = unsurePrepare();
+  if (!ready) return;
+  const { audio, focus } = ready;
+  audio.t = Number(value) || 0;
+  audio.dragging = !commit;
+  if (commit) {
+    unsureSeek(audio, focus);
+  }
+  unsureSync();
+}
+
+// Brings the focus card's player in line with the state; text is written only when it changes.
+function unsureSync() {
+  const focus = unsureFocus();
+  const card = focus && unsureById(focus.song.id);
+  if (!card) return;
+  const audio = unsureAudio && unsureAudio.songId === focus.song.id ? unsureAudio : null;
+  const view = audio || { side: 'file', t: unsureStart(focus.song.seconds), playing: false, loading: false, err: {}, noAudio: false };
+  const set = (el, text) => { if (el && el.textContent !== text) el.textContent = text; };
+  const attr = (el, name, value) => { if (el && el.getAttribute(name) !== value) el.setAttribute(name, value); };
+  const play = card.querySelector('[data-unsure-play]');
+  if (play) {
+    const html = view.playing ? unsureIcons.pause : unsureIcons.play;
+    if (play.dataset.shown !== (view.playing ? 'pause' : 'play')) { play.innerHTML = html; play.dataset.shown = view.playing ? 'pause' : 'play'; }
+    attr(play, 'aria-label', view.playing ? 'Pause' : 'Play');
+    attr(play, 'aria-pressed', String(view.playing));
+  }
+  card.querySelectorAll('[data-unsure-side]').forEach(radio => {
+    const on = radio.dataset.unsureSide === view.side;
+    attr(radio, 'aria-checked', String(on));
+    attr(radio, 'tabindex', on ? '0' : '-1');
+    radio.classList.toggle('active', on);
+    const dead = !!view.err[radio.dataset.unsureSide] || (radio.dataset.unsureSide === 'video' && !focus.video);
+    attr(radio, 'aria-disabled', String(dead));
+  });
+  const known = Number(focus.song.seconds) || (audio && Number.isFinite(audio.file.duration) ? audio.file.duration : 0);
+  const max = Math.max(1, Math.floor(known || 600));
+  const range = card.querySelector('[data-unsure-scrub]');
+  if (range) {
+    if (range.max !== String(max)) range.max = String(max);
+    const at = String(Math.min(max, Math.floor(view.t)));
+    if (range.value !== at) range.value = at;
+    attr(range, 'aria-valuetext', unsureSpoken(view.t));
+  }
+  set(card.querySelector('[data-unsure-time]'),
+    view.err[view.side] ? 'Cannot play'
+      : view.noAudio ? 'YouTube has no audio here'
+        : view.loading ? 'Loading...'
+          : `${unsureClock(view.t)} / ${unsureClock(max)}`);
+  set(card.querySelector('[data-unsure-player-note]'),
+    view.err.file ? 'Could not play your file here (ALAC, for example). Open it in your music app to compare.'
+      : view.err.video ? 'Could not play the YouTube clip. Try again or open it on YouTube.' : '');
+}
+
+// ---- rendering ----
+const unsureName = song => `${song.artist} - ${song.title}`;
+
+function unsurePlayerHtml() {
+  return `<div class="unsure-player" role="group" aria-label="Compare your file with the video">
+      <button type="button" class="unsure-play" data-unsure-play aria-label="Play" aria-pressed="false" data-shown="play">${unsureIcons.play}</button>
+      <div class="unsure-ab" role="radiogroup" aria-label="What you hear">
+        <button type="button" role="radio" aria-checked="true" tabindex="0" data-unsure-side="file" class="active"><b>A</b> Your file</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-unsure-side="video"><b>B</b> YouTube</button>
+      </div>
+      <div class="unsure-scrub">
+        <input type="range" min="0" max="600" step="1" value="0" data-unsure-scrub aria-label="Position in your file" aria-valuetext="0 seconds" />
+        <output class="unsure-time" data-unsure-time></output>
+        <button type="button" class="link-button unsure-start" data-unsure-start>Start</button>
+      </div>
     </div>
-    <div class="unsure-actions">
-      <button type="button" class="btn btn-sm" data-unsure-swap><span>Switch at the same moment</span></button>
-      ${videos.length > 1 ? `<label class="unsure-pick"><span class="visually-hidden">Which video</span><select class="set-input" data-unsure-video>${options}</select></label>` : `<span class="set-info-d">${esc(unsureVideoLine(video))}</span>`}
-      <a class="btn btn-ghost btn-sm" href="${youtube}" target="_blank" rel="noopener noreferrer"><span>Open on YouTube</span></a>
-      ${settled ? '' : `<button type="button" class="btn btn-ghost btn-sm" data-unsure-look><span>Look for another video</span></button>`}
-    </div>` : ''}
-    <div class="unsure-actions">${buttons}</div>
-    <div class="set-info-d" data-unsure-note role="status"></div>
+    <p class="unsure-line unsure-bad" role="alert" data-unsure-player-note></p>`;
+}
+
+function unsureQuestionHtml(song, view) {
+  const id = esc(song.id);
+  if (!view.video) {
+    return `<h3 class="unsure-q" id="unsure-q-${id}" tabindex="-1">Is your file this song?</h3>
+      <p class="unsure-help">An answer without a video teaches no rule.</p>
+      <div class="unsure-answers" role="group" aria-labelledby="unsure-q-${id}">
+        <button type="button" class="btn btn-primary" data-unsure-answer="right"><span>Yes, it is this song</span></button>
+        <button type="button" class="btn" data-unsure-answer="wrong"><span>No, another song</span></button>
+        <button type="button" class="btn btn-ghost" data-unsure-answer="cant_tell"><span>Not sure</span></button>
+      </div>`;
+  }
+  if (view.steps.step === 1) {
+    return `<h3 class="unsure-q" id="unsure-q-${id}" tabindex="-1">Is the YouTube video this song? <span class="unsure-chip">1 of 2</span></h3>
+      <p class="unsure-help">Say no to live takes, covers, remixes and fan edits. Your file cannot be judged against them.</p>
+      <div class="unsure-answers" role="group" aria-labelledby="unsure-q-${id}">
+        <button type="button" class="btn btn-primary" data-unsure-yes><span>Yes, it is this song</span></button>
+        <button type="button" class="btn" data-unsure-no><span>No, it is something else</span></button>
+        <button type="button" class="btn btn-ghost" data-unsure-answer="cant_tell"><span>Not sure</span></button>
+      </div>`;
+  }
+  return `<h3 class="unsure-q" id="unsure-q-${id}" tabindex="-1">Does your file sound like the video? <span class="unsure-chip">2 of 2</span></h3>
+    <p class="unsure-help">Yes to the first question and No here means YouTube is right.</p>
+    <div class="unsure-answers" role="group" aria-labelledby="unsure-q-${id}">
+      <button type="button" class="btn btn-primary" data-unsure-answer="right"><span>Yes, the same recording</span></button>
+      <button type="button" class="btn" data-unsure-answer="wrong" aria-describedby="unsure-wrong-${id}"><span>No, my file is another song</span></button>
+      <p class="unsure-sub" id="unsure-wrong-${id}">The video is right, your file is not. Flakyfy asks you in Review before replacing anything.</p>
+      <button type="button" class="btn" data-unsure-answer="version"><span>Same song, other version</span></button>
+      <button type="button" class="btn btn-ghost" data-unsure-answer="cant_tell"><span>Can't tell</span></button>
+      <button type="button" class="link-button unsure-back" data-unsure-back>Back</button>
+    </div>`;
+}
+
+function unsureFocusCard(song) {
+  const view = unsureView(song);
+  const id = esc(song.id);
+  const { video, videos, index } = view;
+  const nav = videos.length > 1
+    ? `<span class="unsure-vnav"><button type="button" class="btn btn-ghost btn-sm btn-icon unsure-prev" data-unsure-video="-1" aria-label="Previous video"${index <= 0 ? ' disabled' : ''}>${icon('i-caret-right')}</button>
+        <span>Video ${index + 1} of ${videos.length}</span>
+        <button type="button" class="btn btn-ghost btn-sm btn-icon" data-unsure-video="1" aria-label="Next video"${index >= videos.length - 1 ? ' disabled' : ''}>${icon('i-caret-right')}</button></span>`
+    : '';
+  const who = video ? [video.title, video.artist].filter(Boolean).join(' - ') || video.videoId : '';
+  const videoLine = video
+    ? `<div class="unsure-video">${nav}
+        <p class="unsure-vline"><span>Video: ${esc(who)}</span> <span class="unsure-close">${esc(unsureCloseness(video.bitError))}</span></p>
+        <div class="unsure-links"><a class="link-button" href="https://youtu.be/${encodeURIComponent(video.videoId)}" target="_blank" rel="noopener noreferrer">Open on YouTube</a>
+          <button type="button" class="btn btn-ghost btn-sm" data-unsure-look><span>Look for another video</span></button></div>
+      </div>`
+    : `<div class="unsure-video"><p class="unsure-vline">No YouTube video fits any more.</p>
+        <div class="unsure-links"><button type="button" class="btn btn-ghost btn-sm" data-unsure-look><span>Look for another video</span></button></div></div>`;
+  return `<article class="unsure-card is-focus" data-unsure-id="${id}" aria-labelledby="unsure-h-${id}">
+    <header class="unsure-head">
+      <h2 class="unsure-name" id="unsure-h-${id}" tabindex="-1">${esc(unsureName(song))}</h2>
+      ${song.album ? `<p class="unsure-album">${esc(song.album)}</p>` : ''}
+      ${video ? `<p class="unsure-why">${esc(unsureReasons[video.reason] || '')}</p>` : ''}
+    </header>
+    ${videoLine}
+    ${unsurePlayerHtml()}
+    ${unsureQuestionHtml(song, view)}
+    <p class="unsure-line unsure-bad" role="alert" data-unsure-note></p>
   </article>`;
 }
 
-function showUnsure(body) {
-  const list = document.getElementById('unsure-list');
-  unsureSongs = body.songs || [];
-  const open = unsureSongs.filter(song => !song.decision || song.decision.label === 'cant_tell');
-  const answered = unsureSongs.filter(song => song.decision && song.decision.label !== 'cant_tell');
-  const status = document.getElementById('unsure-status');
-  status.textContent = unsureSongs.length
-    ? `${open.length} waiting for you, ${answered.length} answered.`
-    : 'No unsure songs yet. They appear here as the YouTube check finds them.';
-  const shown = (unsureShow === 'open' ? open : answered)
-    .slice()
-    .sort((a, b) => (a.videos[0]?.bitError ?? 0) - (b.videos[0]?.bitError ?? 0));
-  list.innerHTML = shown.slice(0, 50).map(unsureCard).join('')
-    + (shown.length > 50 ? `<div class="set-info-d">Showing the first 50 of ${shown.length}.</div>` : '');
+function unsureRow(song) {
+  const id = esc(song.id);
+  const word = unsureCloseness(unsureRemaining(song)[0]?.bitError) || 'no video';
+  const again = song.decision ? ', not sure before' : '';
+  return `<article class="unsure-row" data-unsure-id="${id}">
+    <h2 class="unsure-row-h"><button type="button" class="unsure-row-btn" aria-expanded="false" data-unsure-expand="${id}" title="${esc(unsureName(song))}">
+      <span class="unsure-row-name">${esc(unsureName(song))}</span><span class="unsure-row-why">${esc(word + again)}</span>${icon('i-caret-right')}</button></h2>
+  </article>`;
+}
 
+function unsureAnsweredRow(song) {
+  const id = esc(song.id);
+  const answer = song.decision;
+  const by = answer.rule ? 'Answered by a rule you accepted' : `${unsureLabels[answer.label] || answer.label} by ${answer.by}`;
+  return `<article class="unsure-row is-answered" data-unsure-id="${id}">
+    <div class="unsure-row-main"><h2 class="unsure-row-h"><span class="unsure-row-name" title="${esc(unsureName(song))}">${esc(unsureName(song))}</span></h2>
+      <p class="unsure-row-why">${esc(answer.rule ? `${unsureLabels[answer.label] || answer.label}. ${by}` : by)}</p></div>
+    <button type="button" class="btn btn-ghost btn-sm" data-unsure-take-back="${id}"><span>Take back</span></button>
+  </article>`;
+}
+
+function unsureUpdateCounts(open, answered) {
+  const text = unsureSongs.length ? `${open} waiting, ${answered} answered.` : 'No unsure songs yet.';
+  const status = document.getElementById('unsure-status');
+  if (status && status.textContent !== text) status.textContent = text;
+  const badge = open > 99 ? '99+' : open ? String(open) : '';
+  document.querySelectorAll('[data-unsure-badge], [data-unsure-group-badge]').forEach(el => {
+    if (el.textContent !== badge) el.textContent = badge;
+  });
+  const link = document.getElementById('unsure-link-text');
+  const words = open ? `${open} waiting. Listen and answer them on their own page.` : 'Nothing is waiting. Songs the YouTube check cannot settle appear on their own page.';
+  if (link && link.textContent !== words) link.textContent = words;
+}
+
+// focus: 'card' moves the keyboard to the card heading (or the empty state), a selector to that element.
+function renderUnsureList(focus) {
+  const list = document.getElementById('unsure-list');
+  if (!list) return;
+  list.removeAttribute('aria-busy');
+  const { open, answered } = unsureSplit(unsureSongs);
+  unsureUpdateCounts(open.length, answered.length);
+  const rows = unsureUi.show === 'open' ? open : answered;
+  let html;
+  if (!rows.length) {
+    unsureTeardown();
+    unsureUi.focusId = null;
+    html = unsureUi.show === 'open'
+      ? `<div class="unsure-empty"><h2 id="unsure-empty-h" tabindex="-1">Nothing is waiting.</h2><p>Songs the YouTube check cannot settle appear here.</p>${answered.length ? `<button type="button" class="link-button" data-unsure-show-answered>See the ${answered.length} answered</button>` : ''}</div>`
+      : '<div class="unsure-empty"><h2 id="unsure-empty-h" tabindex="-1">Nothing answered yet.</h2><p>Your answers show up here, where you can take one back.</p></div>';
+  } else if (unsureUi.show === 'open') {
+    const current = rows.find(song => song.id === unsureUi.focusId) || rows[0];
+    unsureUi.focusId = current.id;
+    if (unsureAudio && unsureAudio.songId !== current.id) unsureTeardown();
+    const others = rows.filter(song => song !== current);
+    html = unsureFocusCard(current) + others.slice(0, unsureUi.limit).map(unsureRow).join('')
+      + (others.length > unsureUi.limit ? `<button type="button" class="btn btn-ghost" data-unsure-more><span>Show 20 more</span></button>` : '');
+  } else {
+    unsureTeardown();
+    html = rows.slice(0, unsureUi.limit).map(unsureAnsweredRow).join('')
+      + (rows.length > unsureUi.limit ? `<button type="button" class="btn btn-ghost" data-unsure-more><span>Show 20 more</span></button>` : '');
+  }
+  list.innerHTML = html;
+  unsureSync();
+  if (focus === 'card') (list.querySelector('.unsure-name') || list.querySelector('#unsure-empty-h') || list.querySelector('[data-unsure-take-back]'))?.focus();
+  else if (focus) list.querySelector(focus)?.focus();
+}
+
+function renderUnsureMeta(body) {
   const suggestions = body.suggestions || [];
   const active = (body.rules || []).filter(rule => rule.state === 'active');
   const off = (body.rules || []).filter(rule => rule.state === 'contradicted');
+  const sug = document.getElementById('unsure-sug');
+  const sugText = suggestions.length ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'}` : '';
+  if (sug && sug.textContent !== sugText) sug.textContent = sugText;
   document.getElementById('unsure-rules').innerHTML = [
     ...suggestions.map(found => `<div class="set-row"><div class="set-info"><div class="set-info-t">Suggestion: ${esc(unsureKinds[found.kind])}</div><div class="set-info-d">${esc(unsureBucketWords(found.bucket))}. All ${found.answers} of your answers agree.</div></div>
       <div class="set-buttons"><button type="button" class="btn btn-ghost btn-sm" data-unsure-rule="reject" data-id="${esc(found.id)}"><span>No</span></button><button type="button" class="btn btn-sm" data-unsure-rule="accept" data-id="${esc(found.id)}"><span>Use this rule</span></button></div></div>`),
@@ -3921,30 +4286,46 @@ function showUnsure(body) {
     .map(row => `<div class="set-info-d">${esc(unsureBucketWords(row.bucket))}: ${row.right} right, ${row.wrong} wrong, ${row.version} other version, ${row.videoWrong} video wrong.</div>`).join('');
 }
 
+function showUnsure(body, focus) {
+  unsureSongs = body.songs || [];
+  renderUnsureList(focus);
+  renderUnsureMeta(body);
+}
+
 async function loadUnsure() {
   const list = document.getElementById('unsure-list');
   if (!list) return;
+  const mine = ++unsureUi.loadId;
   try {
     const response = await api(unsureBase, { cache: 'no-store' });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       throw new Error(body.error || `HTTP ${response.status}`);
     }
-    showUnsure(await response.json());
+    const body = await response.json();
+    if (mine === unsureUi.loadId) showUnsure(body);
   } catch (error) {
-    document.getElementById('unsure-status').textContent = `Could not read the unsure songs: ${error.message}`;
+    if (mine !== unsureUi.loadId) return;
+    list.removeAttribute('aria-busy');
+    list.innerHTML = `<div class="unsure-fail" role="alert"><span>Could not read the unsure songs: ${esc(error.message)}</span><button type="button" class="btn btn-sm" data-unsure-retry><span>Try again</span></button></div>`;
+    document.getElementById('unsure-status').textContent = 'The unsure songs did not load.';
   }
 }
 
 async function unsurePost(path, body, card) {
-  const response = await api(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body ?? {}),
-  });
+  let response;
+  try {
+    response = await api(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    });
+  } catch (error) {
+    response = { ok: false, status: 0, json: async () => ({ error: error.message }) };
+  }
   const answer = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = answer.error || `HTTP ${response.status}`;
+    const message = answer.error || `HTTP ${response.status || 'error'}`;
     const note = card?.querySelector('[data-unsure-note]');
     if (note) note.textContent = message;
     else toast(message, 'err');
@@ -3953,88 +4334,167 @@ async function unsurePost(path, body, card) {
   return answer;
 }
 
-// The moment the other player should be at: the file's start sits offset seconds into the video.
-function unsureSwap(card) {
-  const file = card.querySelector('[data-unsure-player="file"]');
-  const video = card.querySelector('[data-unsure-player="video"]');
-  const offset = Number(card.dataset.unsureOffset) || 0;
-  const fromFile = !file.paused || video.paused;
-  const [from, to] = fromFile ? [file, video] : [video, file];
-  if (from.paused && from.currentTime === 0 && to.currentTime === 0) {
-    // Nothing has played yet: the start is often an intro, so begin a little in.
-    from.currentTime = 45;
-    from.play().catch(() => {});
+const unsureBusy = (card, on) => card?.querySelectorAll('button').forEach(button => { button.disabled = on; });
+
+// An answer: save it, then move on to the next song with the keyboard following.
+async function unsureDecide(song, label, card) {
+  const view = unsureView(song);
+  const note = card.querySelector('[data-unsure-note]');
+  if (note) note.textContent = '';
+  unsureBusy(card, true);
+  const saved = await unsurePost(`${unsureBase}/${song.id}/decide`, {
+    label,
+    videoId: label === 'preview_wrong' ? view.video?.videoId ?? null : null,
+  }, card);
+  if (!saved) {
+    unsureBusy(card, false);
+    unsureSync();
     return;
   }
-  const moment = from.currentTime + (fromFile ? offset : -offset);
-  from.pause();
-  to.currentTime = Math.max(0, moment);
-  to.play().catch(() => {});
+  const at = unsureSongs.findIndex(item => item.id === song.id);
+  if (at < 0) return;
+  unsureSongs[at] = saved.id === song.id ? saved : { ...song, decision: label ? { label, by: 'you' } : null };
+  unsureUi.steps.delete(song.id);
+  const { open } = unsureSplit(unsureSongs);
+  if (label === 'preview_wrong') {
+    if (unsureAudio?.songId === song.id) unsureSetVideo(unsureAudio, song, unsureView(unsureSongs[at]).video);
+    const left = unsureRemaining(unsureSongs[at]).length;
+    unsureSay(left ? 'Set aside. Next video.' : 'Set aside. No video is left.');
+    renderUnsureList(`#unsure-q-${song.id}`);
+    return;
+  }
+  const next = open.find(item => item.id !== song.id);
+  unsureUi.focusId = next ? next.id : null;
+  unsureTeardown();
+  const last = document.getElementById('unsure-last');
+  const said = label === null ? 'Taken back. It is open again.'
+    : label === 'wrong' ? 'Sent to Review. Nothing was changed.'
+      : label === 'cant_tell' ? 'Left open.' : `${unsureLabels[label]}.`;
+  if (last) last.innerHTML = `${esc(said)}${label === 'wrong' ? ' <button type="button" class="link-button" data-open-tab="libraryactions" data-unsure-review>Open Review</button>' : ''}`;
+  unsureSay(`${said} ${open.length} waiting.`);
+  renderUnsureList('card');
+  loadUnsureMeta();
 }
 
-document.getElementById('unsure-section')?.addEventListener('click', async (event) => {
-  const show = event.target.closest('[data-unsure-show]');
-  if (show) {
-    unsureShow = show.dataset.unsureShow;
-    document.querySelectorAll('[data-unsure-show]').forEach(button =>
-      button.setAttribute('aria-pressed', String(button === show)));
-    loadUnsure();
+// The rules and the report change with answers; the list is left alone so nothing moves under the keyboard.
+async function loadUnsureMeta() {
+  try {
+    const response = await api(unsureBase, { cache: 'no-store' });
+    if (response.ok) renderUnsureMeta(await response.json());
+  } catch { /* the next full load shows it */ }
+}
+
+const unsureSection = document.getElementById('unsure-section');
+unsureSection?.addEventListener('click', async (event) => {
+  const target = event.target;
+  const on = selector => target.closest(selector);
+  const card = on('[data-unsure-id]');
+  const song = card ? unsureSong(card.dataset.unsureId) : null;
+  const show = on('[data-unsure-show]');
+  if (show || on('[data-unsure-show-answered]')) {
+    unsureUi.show = show ? show.dataset.unsureShow : 'answered';
+    unsureUi.limit = 20;
+    document.querySelectorAll('[data-unsure-show]').forEach(button => {
+      const pressed = button.dataset.unsureShow === unsureUi.show;
+      button.setAttribute('aria-pressed', String(pressed));
+      button.classList.toggle('active', pressed);
+    });
+    renderUnsureList(show ? null : 'card');
     return;
   }
-  const card = event.target.closest('[data-unsure-id]');
-  const swap = event.target.closest('[data-unsure-swap]');
-  if (swap) {
-    unsureSwap(card);
+  if (on('[data-unsure-retry]')) { loadUnsure(); return; }
+  const expand = on('[data-unsure-expand]');
+  if (expand) {
+    unsureUi.focusId = unsureSong(expand.dataset.unsureExpand)?.id ?? unsureUi.focusId;
+    unsureTeardown();
+    renderUnsureList('card');
     return;
   }
-  const rule = event.target.closest('[data-unsure-rule]');
+  if (on('[data-unsure-more]')) {
+    const before = document.querySelectorAll('#unsure-list .unsure-row').length;
+    unsureUi.limit += 20;
+    renderUnsureList(null);
+    document.querySelectorAll('#unsure-list .unsure-row')[before]?.querySelector('button')?.focus();
+    return;
+  }
+  if (on('[data-unsure-play]')) { unsureToggle(); return; }
+  const side = on('[data-unsure-side]');
+  if (side) { unsureSide(side.dataset.unsureSide); return; }
+  if (on('[data-unsure-start]')) { unsureScrub(0, true); return; }
+  const rule = on('[data-unsure-rule]');
   if (rule) {
     rule.disabled = true;
     const body = await unsurePost(`${unsureBase}/rules/${rule.dataset.unsureRule}`, { id: rule.dataset.id });
-    if (body) showUnsure(body);
-    else rule.disabled = false;
+    if (body) { renderUnsureMeta(body); loadUnsure(); } else rule.disabled = false;
     return;
   }
-  const answer = event.target.closest('[data-unsure-answer], [data-unsure-take-back]');
-  if (answer) {
-    answer.disabled = true;
-    const video = card.querySelector('[data-unsure-video]')?.value;
-    const label = answer.dataset.unsureAnswer ?? null;
-    const saved = await unsurePost(`${unsureBase}/${card.dataset.unsureId}/decide`, { label, videoId: label === 'preview_wrong' ? video ?? null : null }, card);
-    if (saved) loadUnsure();
-    else answer.disabled = false;
+  if (!song) return;
+  const step = action => {
+    unsureUi.steps.set(song.id, unsureStepNext(unsureView(song).steps, action));
+    renderUnsureList(`#unsure-q-${song.id}`);
+  };
+  if (on('[data-unsure-yes]')) { step({ type: 'yes' }); return; }
+  if (on('[data-unsure-back]')) { step({ type: 'back' }); return; }
+  const shift = on('[data-unsure-video]');
+  if (shift) {
+    const view = unsureView(song);
+    step({ type: 'video', videoId: unsureShiftVideo(view.videos, view.video?.videoId, Number(shift.dataset.unsureVideo)) });
+    if (unsureAudio?.songId === song.id) unsureSetVideo(unsureAudio, song, unsureView(song).video);
+    unsureSync();
     return;
   }
-  const look = event.target.closest('[data-unsure-look]');
-  if (look) {
-    look.disabled = true;
-    const note = card.querySelector('[data-unsure-note]');
-    note.textContent = 'Looking for another video.';
-    const found = await unsurePost(`${unsureBase}/${card.dataset.unsureId}/look-again`, {}, card);
-    if (found) loadUnsure();
-    else look.disabled = false;
+  if (on('[data-unsure-no]')) { unsureDecide(song, 'preview_wrong', card); return; }
+  const answer = on('[data-unsure-answer]');
+  if (answer) { unsureDecide(song, answer.dataset.unsureAnswer, card); return; }
+  const back = on('[data-unsure-take-back]');
+  if (back) {
+    const index = [...document.querySelectorAll('#unsure-list [data-unsure-take-back]')].indexOf(back);
+    unsureBusy(card, true);
+    const saved = await unsurePost(`${unsureBase}/${song.id}/decide`, { label: null, videoId: null }, card);
+    if (!saved) { unsureBusy(card, false); return; }
+    const at = unsureSongs.findIndex(item => item.id === song.id);
+    if (at < 0) return;
+    unsureSongs[at] = saved.id === song.id ? saved : { ...song, decision: null };
+    unsureUi.steps.delete(song.id);
+    renderUnsureList(null);
+    unsureSay(`Taken back. ${unsureSplit(unsureSongs).open.length} waiting.`);
+    const buttons = document.querySelectorAll('#unsure-list [data-unsure-take-back]');
+    (buttons[Math.min(index, buttons.length - 1)] || document.getElementById('unsure-empty-h'))?.focus();
+    loadUnsureMeta();
+    return;
+  }
+  if (on('[data-unsure-look]')) {
+    unsureBusy(card, true);
+    unsureSay('Looking for another video.');
+    const found = await unsurePost(`${unsureBase}/${song.id}/look-again`, {}, card);
+    if (found) { await loadUnsure(); document.getElementById(`unsure-h-${song.id}`)?.focus(); } else unsureBusy(card, false);
   }
 });
-document.getElementById('unsure-section')?.addEventListener('change', (event) => {
-  const pick = event.target.closest('[data-unsure-video]');
-  if (!pick) return;
-  const card = pick.closest('[data-unsure-id]');
-  const song = unsureSongs.find(item => String(item.id) === card.dataset.unsureId);
-  const video = song?.videos.find(item => item.videoId === pick.value);
-  if (!video) return;
-  card.dataset.unsureOffset = video.offsetSeconds;
-  const player = card.querySelector('[data-unsure-player="video"]');
-  player.pause();
-  player.src = `${unsureBase}/${song.id}/preview?video=${encodeURIComponent(video.videoId)}`;
+unsureSection?.addEventListener('input', (event) => {
+  if (event.target.matches('[data-unsure-scrub]')) unsureScrub(event.target.value, false);
 });
-// A media error does not bubble, so it is caught on the way down.
-document.getElementById('unsure-section')?.addEventListener('error', (event) => {
-  if (event.target.tagName !== 'AUDIO') return;
-  const note = event.target.closest('[data-unsure-id]')?.querySelector('[data-unsure-note]');
-  if (note) note.textContent = event.target.dataset.unsurePlayer === 'file'
-    ? 'This browser cannot play your file (ALAC, for example). Open it in your music app to compare.'
-    : 'YouTube did not send this video. Try another, or open it on YouTube.';
-}, true);
+unsureSection?.addEventListener('change', (event) => {
+  if (event.target.matches('[data-unsure-scrub]')) unsureScrub(event.target.value, true);
+});
+// Space plays and pauses, A and B pick the side, only while the keyboard is in the card and not in a
+// field. There is no shortcut for an answer: one stray key would raise a question in Review.
+unsureSection?.addEventListener('keydown', (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+  const target = event.target;
+  if (!target.closest('.unsure-card.is-focus') || target.closest('input, textarea, select, [contenteditable]')) return;
+  const key = event.key.toLowerCase();
+  if (key === 'a' || key === 'b') {
+    unsureSide(key === 'a' ? 'file' : 'video');
+  } else if (key === ' ' && !target.closest('button, a, summary')) {
+    event.preventDefault();
+    unsureToggle();
+  } else if (target.matches('[role="radio"]') && /^arrow(left|right|up|down)$/.test(key)) {
+    event.preventDefault();
+    if (unsureSide(target.dataset.unsureSide === 'file' ? 'video' : 'file')) target.parentElement.querySelector('[aria-checked="true"]')?.focus();
+  }
+});
+unsureSection?.addEventListener('pointerup', () => { if (unsureAudio) unsureAudio.dragging = false; });
+window.addEventListener('pagehide', unsureTeardown);
 ready.then(loadUnsure);
 
 // ---- Tags against the audio: the library tag check ----

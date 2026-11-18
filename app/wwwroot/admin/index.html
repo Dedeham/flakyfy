@@ -173,30 +173,6 @@
           </button>
         </header>
 
-        <!-- ─── Downloads: what Flakyfy's checks by sound cannot do right now ─── -->
-        <div class="set-section download-checks" id="download-checks" hidden>
-          <div class="set-head">
-            <h3 class="set-title">Downloads</h3>
-            <p class="set-desc">How Flakyfy checks a download by its sound before it keeps it.</p>
-          </div>
-          <div class="set-card" id="download-checks-list" aria-live="polite"></div>
-        </div>
-
-        <section class="now-card" id="latest-fetched" aria-labelledby="latest-title">
-          <img class="now-art" id="latest-art" alt="" hidden />
-          <div class="now-text">
-            <span class="now-kicker" id="latest-kicker">Latest fetched</span>
-            <h2 class="now-title" id="latest-title"></h2>
-            <span class="now-sub" id="latest-sub"></span>
-            <div class="now-chips" id="latest-chips"></div>
-          </div>
-          <div class="now-recent">
-            <span class="now-kicker quiet" id="latest-covers-label">Recently added</span>
-            <div class="now-covers" id="latest-covers" role="group" aria-labelledby="latest-covers-label"></div>
-            <a class="now-all" href="#fetched">All fetched songs</a>
-          </div>
-        </section>
-
         <details class="set-card setup-checklist" id="setup-checklist-wrap" open>
           <summary id="setup-summary"><span class="setup-summary-text">Checking setup…</span><span class="setup-meter" role="img" aria-label="Checking"><span style="width:0%"></span></span></summary>
           <div id="setup-checklist"><div class="skel setup-skel" role="status" aria-label="Checking setup"><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div></div></div>
@@ -325,6 +301,30 @@
           <span class="status-meta-label">Last refreshed</span>
           <span class="status-meta-time" id="status-last-checked">not yet</span>
         </div>
+
+        <!-- ─── Downloads: what Flakyfy's checks by sound cannot do right now ─── -->
+        <div class="set-section download-checks" id="download-checks" hidden>
+          <div class="set-head">
+            <h3 class="set-title">Downloads</h3>
+            <p class="set-desc">How Flakyfy checks a download by its sound before it keeps it.</p>
+          </div>
+          <div class="set-card" id="download-checks-list" aria-live="polite"></div>
+        </div>
+
+        <section class="now-card" id="latest-fetched" aria-labelledby="latest-title" hidden>
+          <img class="now-art" id="latest-art" alt="" hidden />
+          <div class="now-text">
+            <span class="now-kicker" id="latest-kicker">Latest fetched</span>
+            <h2 class="now-title" id="latest-title"></h2>
+            <span class="now-sub" id="latest-sub"></span>
+            <div class="now-chips" id="latest-chips"></div>
+          </div>
+          <div class="now-recent">
+            <span class="now-kicker quiet" id="latest-covers-label">Recently added</span>
+            <div class="now-covers" id="latest-covers" role="group" aria-labelledby="latest-covers-label"></div>
+            <a class="now-all" href="#fetched">All fetched songs</a>
+          </div>
+        </section>
 
       </section>
 

@@ -170,7 +170,7 @@ don't own → Apps that hide songs without a size** in the admin dashboard
 
 ## Updating
 
-Flakyfy checks GitHub every 6 hours for a newer release. When one is out, the dashboard says so at the top of every page, and **About** shows what's new.
+Flakyfy checks GitHub every 6 hours (and again within minutes after a failed check) for a newer release. When one is out, the dashboard says so at the top of every page, and **About** shows what's new.
 
 ### From the dashboard
 
@@ -203,6 +203,8 @@ git fetch --tags && git checkout --detach 2026.11.17
 docker compose pull flakyfy yt-dlp-shim flakyfy-sonic || docker compose --profile source build flakyfy-source yt-dlp-shim-source flakyfy-sonic-source
 docker compose up -d
 ```
+
+If `FLAKYFY_IMAGE_TAG` in `.env` names a release, the pull fetches that one and the update changes nothing: remove the line, or set it to `latest`. If `git checkout` refuses because Flakyfy's own files have changes, move them into `docker-compose.override.yml` and undo the edits. The commands do not get Mornye (the `spotiflac` profile) ready; run `docker compose build spotiflac` after them, or use `./install.sh`, which does.
 
 Flakyfy, the yt-dlp shim and flakyfy-sonic are pulled, already built, for the release you have checked out; the part after `||` builds them from the folder only when the pull fails, for example with no network to `ghcr.io`. Re-running `./install.sh` also works: it does the same, and keeps your answers and every other line in `.env`, including ones you added or changed by hand.
 

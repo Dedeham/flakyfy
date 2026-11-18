@@ -105,6 +105,10 @@ impl ReleaseCheck {
 
     pub const INTERVAL: TimeDelta = TimeDelta::hours(6);
 
+    /// After a check that failed (no network, GitHub down), the next one is this soon, not a full
+    /// interval later: the answer kept is the last good one, which may name an old release.
+    pub const RETRY: TimeDelta = TimeDelta::minutes(10);
+
     /// Check now is honored at most this often, so a busy button cannot spend GitHub's limit.
     pub const MANUAL_SPACING: TimeDelta = TimeDelta::minutes(1);
 
@@ -373,11 +377,12 @@ impl ReleaseCheck {
             _ = token.cancelled() => return Ok(()),
         }
         while !token.is_cancelled() {
-            let (attempted, state_repo) = {
+            let (attempted, state_repo, failed) = {
                 let state = self.state.lock();
-                (state.attempted_utc, state.repo.clone())
+                (state.attempted_utc, state.repo.clone(), state.error.is_some())
             };
-            let due = attempted.unwrap_or_else(datetime::min_value) + Self::INTERVAL;
+            let wait = if failed { Self::RETRY } else { Self::INTERVAL };
+            let due = attempted.unwrap_or_else(datetime::min_value) + wait;
             let settings = self.settings.current().updates.clone();
             let repo_changed = !state_repo
                 .as_deref()

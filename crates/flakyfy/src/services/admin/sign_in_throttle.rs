@@ -202,6 +202,8 @@ impl SignInThrottle {
 
 /// Drops entries of `map` until at most `keep` are left, the ones whose `newest` is oldest (or
 /// None) first. A table of tries or log times stays bounded however many keys a flood brings.
+/// Once over `keep` it trims a tenth below it, so a flood of new keys sorts the table once per
+/// keep/10 keys rather than on every one (that sort per key took minutes in the flood tests).
 pub fn trim_oldest<K, V, T>(map: &mut HashMap<K, V>, keep: usize, newest: impl Fn(&V) -> Option<T>)
 where
     K: Clone + Eq + std::hash::Hash,
@@ -215,7 +217,7 @@ where
         .map(|(key, value)| (newest(value), key.clone()))
         .collect();
     ages.sort_by(|a, b| a.0.cmp(&b.0));
-    let extra = map.len() - keep;
+    let extra = map.len() - (keep - keep / 10);
     for (_, key) in ages.into_iter().take(extra) {
         map.remove(&key);
     }
@@ -317,6 +319,14 @@ mod tests {
         assert_eq!(kept, ["mid", "new"]);
         trim_oldest(&mut map, 5, |at| *at);
         assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn trimming_a_full_table_leaves_room_so_the_next_keys_do_not_sort_it_again() {
+        let mut map: HashMap<u32, u32> = (0..101).map(|n| (n, n)).collect();
+        trim_oldest(&mut map, 100, |at| Some(*at));
+        assert_eq!(map.len(), 90);
+        assert!(map.contains_key(&100) && !map.contains_key(&10));
     }
 
     #[test]

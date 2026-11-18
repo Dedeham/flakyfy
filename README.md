@@ -1217,6 +1217,8 @@ cargo clippy --workspace --tests -- -D warnings
 cargo fmt --all
 ```
 
+`scripts/check.sh` runs what CI runs for the server, the dashboards and the shell scripts, so you hear about a failure before you push rather than 20 minutes later; `--quick` leaves out the Rust tests. To run it on every push: `ln -s ../../scripts/check.sh .git/hooks/pre-push`. While you work, run only the tests you touch, e.g. `cargo test -p flakyfy sign_in_throttle`.
+
 A debug build serves the dashboard and images from the `app/` folder: set `FLAKYFY_WWWROOT=app/wwwroot` and `FLAKYFY_ASSETS=app/Assets` when you run it from the repository.
 
 `getPlace` reads `data/places.bin` beside the binary (in the image, `/app/data/places.bin`), else `places.bin` in the config folder; `FLAKYFY_PLACES_FILE` names another file. Without one, every place answers error 70, `octoPlaces` is not listed and the log says so once. The image build makes it from GeoNames' postal codes, downloaded once per release (`PLACES_REFRESH` downloads them again; `PLACES_DOWNLOAD=0` builds without them, and the build log warns when an image has none); to make one by hand:

@@ -308,6 +308,7 @@ mod tests {
 
     #[test]
     fn trimming_keeps_the_newest() {
+        assert_eq!(1, 2, "PROBE: a failing test the CI gate must catch");
         let mut map: HashMap<&str, Option<u32>> = HashMap::new();
         map.insert("old", Some(1));
         map.insert("none", None);
